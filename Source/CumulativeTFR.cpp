@@ -34,20 +34,35 @@ CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float win
 	, nfft(int(fftSec * Fs))
 	, ifftBuffer(nfft)
 	, alpha(alpha)
-	, pxys(ng1 * ng2,
+	, freqStep(freqStep)
+	, freqStart(freqStart)
+	, windowLen(winLen)
+	, pxys(ng1* ng2,
 		vector<vector<ComplexWeightedAccum>>(nf,
 			vector<ComplexWeightedAccum>(nt, ComplexWeightedAccum(alpha))))
-	, windowLen(winLen)
-	, waveletArray(nf, vector<std::complex<double>>(nfft))
-	, spectrumBuffer(ng1 + ng2,
-		vector<vector<std::complex<double>>>(nf,
-			vector<std::complex<double>>(nt)))
 	, powBuffer(ng1 + ng2,
 		vector<vector<RealWeightedAccum>>(nf,
 			vector<RealWeightedAccum>(nt, RealWeightedAccum(alpha))))
-	, freqStep(freqStep)
-	, freqStart(freqStart)
 {
+
+	std::cout << "Creating new TFR" << std::endl;
+
+	std::cout << "Creating waveletArray" << std::endl;
+
+	vector<vector<std::complex<double>>> wv(nf, vector<std::complex<double>>(nfft));
+
+	waveletArray = wv;
+	
+	std::cout << "Creating spectrum buffer" << std::endl;
+
+	vector<vector<vector<std::complex<double>>>> specBuff(ng1 + ng2,
+		vector<vector<std::complex<double>>>(nf,
+			vector<std::complex<double>>(nt)));
+
+	spectrumBuffer = specBuff;
+
+	std::cout << "Generating wavelets" << std::endl;
+
 	// Create array of wavelets
 	generateWavelet();
 
@@ -57,41 +72,67 @@ CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float win
 
 void CumulativeTFR::addTrial(FFTWArrayType& fftBuffer, int chanIt)
 {
-	float winsPerSegment = (segmentLen - windowLen) / stepLen;
+	//float winsPerSegment = (segmentLen - windowLen) / stepLen; not used
 
 	//// Execute fft ////
-	fftBuffer.fftReal();
+	//std::cout << "Computing FFT " << std::endl;
+	fftBuffer.fftReal(); // len = 40000
+
 	float nWindow = Fs * windowLen;
+
 	//// Use freqData to find generate spectrum and get power ////
 	for (int freq = 0; freq < nFreqs; freq++)
 	{
+		//std::cout << "freq = " << freq << std::endl;
+
 		// Multiple fft data by wavelet
 		for (int n = 0; n < nfft; n++)
 		{
 			ifftBuffer.set(n, fftBuffer.getAsComplex(n) * waveletArray[freq][n]);
 		}
 		// Inverse FFT on data multiplied by wavelet
+
+		//std::cout << "Computing ifft " << std::endl;
 		ifftBuffer.ifft();
 
+		//std::cout << "nfft: " << nfft << std::endl;
+
+		powBuffer[chanIt][freq][0].reset();
+
 		// Loop over time of interest
-		for (int t = 0; t < nTimes; t++)
+		for (int t = 0; t < 100; t++)
 		{
-			int tIndex = int(((t * stepLen) + trimTime)  * Fs); // get index of time of interest
-			std::complex<double> complex = ifftBuffer.getAsComplex(tIndex);
+			//int tIndex = int(((t * stepLen) + trimTime)  * Fs); // get index of time of interest
+
+			std::complex<double> complex = ifftBuffer.getAsComplex(t);
+
 			complex *= sqrt(2.0 / nWindow) / double(nfft); // divide by nfft from matlab ifft
 														   // sqrt(2/nWindow) from ft_specest_mtmconvol.m 
-			// Save convOutput for crss later
-			spectrumBuffer[chanIt][freq][t] = complex;
-			// Get power
+
 			double power = std::norm(complex);
 
-			powBuffer[chanIt][freq][t].addValue(power);
+			//if ((t == 0))
+			//{
+			//	std::cout << "FREQ: " << freq << " t: " << t << std::endl;
+			//	std::cout << complex << std::endl;
+			//	std::cout << power << std::endl;
+			//}
+				
+			powBuffer[chanIt][freq][0].addValue(power);
+
 		}
+
+		//if (freq % 10 == 0)
+		//	std::cout << "Freq: " << freq << ", power: " << powBuffer[chanIt][freq][0].getAverage() << std::endl;
+		///Save convOutput for crss later
+	    //spectrumBuffer[chanIt][freq][t] = complex;
 	}
 }
 
-void CumulativeTFR::getMeanCoherence(int itX, int itY, double* meanDest, int comb)
+void CumulativeTFR::getMeanCoherence(int itX, int itY, AtomicallyShared<std::vector<double>>& coherence, int comb)
 {
+	AtomicScopedWritePtr<std::vector<double>> dataWriter(coherence);
+
 	// Cross spectra
 	for (int f = 0; f < nFreqs; ++f)
 	{
@@ -104,7 +145,6 @@ void CumulativeTFR::getMeanCoherence(int itX, int itY, double* meanDest, int com
 	}
 
 	// Coherence
-	std::vector<double> stdDest(nFreqs); // Not used yet.. Probably add it as input to function
 	for (int f = 0; f < nFreqs; ++f)
 	{
 		// compute coherence at each time
@@ -118,42 +158,43 @@ void CumulativeTFR::getMeanCoherence(int itX, int itY, double* meanDest, int com
 				pxys[comb][f][t].getAverage()));
 		}
 
-		meanDest[f] = coh.getAverage();
+		dataWriter->assign(f, coh.getAverage());
+
 		if (nTimes < 2)
 		{
-			stdDest[f] = 0;
+			dataWriter->assign(f, 0);
 		}
 		else
 		{
-			stdDest[f] = std::sqrt(coh.getVariance() * nTimes / (nTimes - 1));
+			dataWriter->assign(f, std::sqrt(coh.getVariance() * nTimes / (nTimes - 1)));
 		}
 	}
 
-	return;
+	dataWriter.pushUpdate();
 }
 
-std::vector<std::vector<float>> CumulativeTFR::getPowerForChannels()
+void CumulativeTFR::getPowerForChannels(AtomicallyShared<std::vector<std::vector<float>>>& power)
 {
-	int channels = powBuffer.size();
-	int Frequency = powBuffer[0].size();
-	int Time = powBuffer[0][0].size();
+	//std::cout << "Getting power." << std::endl;
 
-	std::vector<std::vector<std::vector<float>>> Totalpower(channels, std::vector<std::vector<float>>(Frequency, std::vector<float>(Time, 0)));
-	std::vector<std::vector<float>> PwrIndFreqAvg(channels, std::vector<float>(Frequency, 0));
-	for (int chn = 0; chn < channels; ++chn)
+	AtomicScopedWritePtr<std::vector<std::vector<float>>> dataWriter(power);
+
+	int numChans = powBuffer.size();
+	int numFreqs = powBuffer[0].size();
+	int numTimes = powBuffer[0][0].size();
+
+	for (int chn = 0; chn < numChans; ++chn)
 	{
-		for (int frq = 0; frq < Frequency; ++frq)
+		for (int frq = 0; frq < numFreqs; ++frq)
 		{
-			float avg = 0;
-			for (int pr = 0; pr < Time; ++pr)
-			{
-				Totalpower[chn][frq][pr] = Totalpower[chn][frq][pr] + (float)powBuffer[chn][frq][pr].getAverage();
-				avg = avg + Totalpower[chn][frq][pr];
-			}
-			PwrIndFreqAvg[chn][frq] = (avg / Time);
+			dataWriter->at(chn)[frq] = (float) powBuffer[chn][frq][0].getAverage();
+
+			//std::cout << "Freq: " << frq << ", power: " << dataWriter->at(chn).at(frq) << std::endl; // [chanIt] [freqaWrit] [0] .getAverage() << std::endl;
 		}
 	}
-	return PwrIndFreqAvg;
+
+	//std::cout << "Pushing update!" << std::endl;
+	dataWriter.pushUpdate();
 }
 
 

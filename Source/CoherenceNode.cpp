@@ -25,33 +25,37 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CoherenceNodeEditor.h"
 /********** node ************/
 CoherenceNode::CoherenceNode()
-	: GenericProcessor("TFR-Coherence & Spectrogram")
+	: GenericProcessor("Spectrogram Viewer")
 	, Thread("Coherence Calc")
-	, segLen(4)
-	, freqStart(1)
-	, freqEnd(40)
-	, stepLen(0.1)
-	, winLen(2)
-	, interpRatio(2)
-    , freqStep(1.0 / float(winLen*interpRatio))
-    , nGroup1Chans(0)
-	, nGroup2Chans(0)
-	, Fs(0)
-	, alpha(0)
-	, numArtifacts(0)
-	, ready(false)
-	, group1Channels({})
-	, group2Channels({})
 	, nSamplesWait(0)
-    , WhatisIT(1)
+    , displayType(POWER_SPECTRUM)
 {
 	setProcessorType(PROCESSOR_TYPE_SINK);
+
+	tfrParams.segLen = 0.25;
+	tfrParams.freqStart = 4;
+	tfrParams.freqEnd = 1000;
+	tfrParams.stepLen = 0.1;
+	tfrParams.winLen = 0.25;
+	tfrParams.interpRatio = 2;
+	tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
+	tfrParams.Fs = 2000;
+	tfrParams.alpha = 0;
+
+	channels.add(0);
+	channels.add(1);
+
+	bufferIdx.add(0);
+	bufferIdx.add(0);
+
+	sampleIdx.add(0);
+	sampleIdx.add(0);
+
+	lastValue.add(0.0f);
+	lastValue.add(0.0f);
 }
 
 CoherenceNode::~CoherenceNode()
-{}
-
-void CoherenceNode::createEventChannels()
 {}
 
 AudioProcessorEditor* CoherenceNode::createEditor()
@@ -62,10 +66,10 @@ AudioProcessorEditor* CoherenceNode::createEditor()
 
 void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 {
-	// Upkeep coherence file
-	checkCohFile();
+	// Update coherence file
+	//checkCohFile();
 
-	///// Add incoming data to data buffer. Let thread get the ok to start at 8seconds of data ////
+	///// Add incoming data to data buffer. Let thread get the ok to start at 8 seconds of data ////
 	AtomicScopedWritePtr<Array<FFTWArrayType>> dataWriter(dataBuffer);
 	// Check writer
 	if (!dataWriter.isValid())
@@ -74,72 +78,54 @@ void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 	}
 
 	//for loop over active channels and update buffer with new data
-	Array<int> activeInputs = getActiveInputs();
-	int nActiveInputs = activeInputs.size();
-	int nSamples = 0;
-	for (int activeChan = 0; activeChan < nActiveInputs; ++activeChan)
+	int nSamples = getNumSamples(channels[0]); // all channels the same?
+	int maxSamples = dataWriter->getReference(0).getLength();
+
+	for (int i = 0; i < 2; i++)
 	{
-		int chan = activeInputs[activeChan];
-		int groupNum = getChanGroup(chan);
-		if (groupNum != -1)
+
+		if (nSamples == 0)
 		{
-			int groupIt = (groupNum == 1 ? getGroupIt(groupNum, chan) : getGroupIt(groupNum, chan) + nGroup1Chans);
+			continue;
+		}
 
-			nSamples = getNumSamples(chan); // all channels the same?
-			if (nSamples == 0)
+		const float* incomingDataPointer = continuousBuffer.getReadPointer(channels[i]);
+
+		float value = lastValue[i];
+
+		// loop through available samples
+		for (int n = 0; n < nSamples; n++)
+		{
+			if (sampleIdx[i] % downsampleFactor > 0) // average adjacent samples
 			{
-				continue;
+				value += incomingDataPointer[n];
+				sampleIdx.set(i, sampleIdx[i] + 1);
 			}
-
-			// Get read pointer of incoming data to move to the stored data buffer
-			const float* rpIn = continuousBuffer.getReadPointer(chan);
-
-			if (nSamplesWaited < nSamplesWait)
+			else
 			{
-				for (int n = 0; n < nSamples; n++)
-				{
-					if (std::abs(dataWriter->getReference(groupIt).getAsReal(n - 1) - rpIn[n]) > artifactThreshold)
-					{
-						// Artifact after a previous artifact, reset again. Then wait to let signals settle.
-						discardCurBuffer(nSamplesWaited + n);
-						break;
-					}
-				}
-				nSamplesWaited += nSamples;
-				break;
-			}
+				value += incomingDataPointer[n];
+				value /= downsampleFactor;
+				dataWriter->getReference(i).set(bufferIdx[i], value);
+				bufferIdx.set(i, bufferIdx[i] + 1);
+				sampleIdx.set(i, 0);
+				value = 0;
 
-			// Handle overflow
-			if (nSamplesAdded + nSamples >= segLen * Fs)
-			{
-				nSamples = segLen * Fs - nSamplesAdded;
-			}
-
-			// Add to buffer the new samples.
-			for (int n = 0; n < nSamples; n++)
-			{
-				if (std::abs(dataWriter->getReference(groupIt).getAsReal(n - 1) - rpIn[n]) < artifactThreshold)
-				{
-					dataWriter->getReference(groupIt).set(nSamplesAdded + n, rpIn[n]);
-				}
-				else // Large change. Most likely an artifact. Discard buffer and restart data collection.
-				{
-					discardCurBuffer(nSamplesAdded + n);
-					return;
-				}
+				if (bufferIdx[i] == maxSamples)
+					break;
 			}
 		}
+
+		lastValue.set(i, value);
 	}
 
-	nSamplesAdded += nSamples;
-
 	// channel buf is full. Update buffer.
-	if (nSamplesAdded >= segLen * Fs)
+	if (bufferIdx[0] >= maxSamples)
 	{
+		//std::cout << "Pushing buffer update" << std::endl;
 		dataWriter.pushUpdate();
-		// Reset samples added
-		nSamplesAdded = 0;
-		//updateDataBufferSize();
+		// Reset samples added and increment trial number
+		bufferIdx.set(0, 0);
+		bufferIdx.set(1, 0);
 		numTrials++;
 	}
 }
@@ -147,122 +133,28 @@ void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 void CoherenceNode::run()
 {
 	AtomicScopedReadPtr<Array<FFTWArrayType>> dataReader(dataBuffer);
-	AtomicScopedWritePtr<std::vector<std::vector<double>>> coherenceWriter(meanCoherence);
 
 	while (!threadShouldExit())
 	{
 		//// Check for new filled data buffer and run stats ////        
 		if (dataBuffer.hasUpdate())
 		{
+			//std::cout << "Got buffer update, adding trial" << std::endl;
 			dataReader.pullUpdate();
-			Array<int> activeInputs = getActiveInputs();
-			int nActiveInputs = activeInputs.size();
-			// Isolation of two entities Coherenece and Spectrogram here
-			if (WhatisIT == 1)
+
+			for (int activeChan = 0; activeChan < 2; activeChan++)
 			{
-				for (int activeChan = 0; activeChan < nActiveInputs; ++activeChan)
-				{
-					int chan = activeInputs[activeChan];
-					// get buffer and send it to TFR
-					// Check to make sure channel is in one of our groups
-					int groupNum = getChanGroup(chan);
-					if (groupNum != -1)
-					{
-						int groupIt = (groupNum == 1 ? getGroupIt(groupNum, chan) : getGroupIt(groupNum, chan) + nGroup1Chans);
-						TFR->addTrial(dataReader->getReference(groupIt), groupIt);
-					}
-					else
-					{
-						// channel isn't part of group 1 or 2
-						jassertfalse; // ungrouped channel
-					}
-				}
-
-
-				//// Get and send updated coherence  ////
-				if (!coherenceWriter.isValid())
-				{
-					jassertfalse; // atomic sync coherence writer broken
-				}
-
-				// Calc coherence at each combination of interest
-				for (int itX = 0, comb = 0; itX < nGroup1Chans; itX++)
-				{
-					for (int itY = 0; itY < nGroup2Chans; itY++, comb++)
-					{
-						TFR->getMeanCoherence(itX, itY + nGroup1Chans, coherenceWriter->at(comb).data(), comb);
-						if (CoreServices::getRecordingStatus())
-						{
-							for (int i = 0; i < coherenceWriter->at(comb).size(); i++)
-							{
-								const char * buffer = (String(coherenceWriter->at(comb)[i]) + ",").toRawUTF8();
-								cohFile << buffer;
-
-							}
-							cohFile << "\n";
-						}
-
-					}
-				}
-				cohFile << "\n";
+				//std::cout << "Adding channel " << activeChan << std::endl;
+				TFR->addTrial(dataReader->getReference(activeChan), activeChan);
 			}
-			else
-			{
-				for (int activeChan = 0; activeChan < nActiveInputs; ++activeChan)
-				{
-					TFR->addTrial(dataReader->getReference(activeChan), activeChan);
-				}
-				ttlpwr = TFR->getPowerForChannels();
-			}
-			// Update coherence and reset data buffer           
-			coherenceWriter.pushUpdate();
+
+			if (displayType == POWER_SPECTRUM)
+				TFR->getPowerForChannels(power);
+
+			else if (displayType == COHERENCE)
+				TFR->getMeanCoherence(0, 1, coherence, 0); // check "comb" value
 		}
 	}
-}
-
-void CoherenceNode::updateDataBufferSize(int newSize)
-{
-	int totalChans;
-	if (WhatisIT == 1)
-		totalChans = nGroup1Chans + nGroup2Chans;
-	else if (WhatisIT == 0)
-	{
-		int tt1 = nGroup1Chans + nGroup2Chans;
-		int NumOfChanChan = (TotalNumofChannels).size();
-		if (tt1 != (TotalNumofChannels).size())
-		{
-			totalChans = NumOfChanChan;
-		}
-		else
-			totalChans = nGroup1Chans + nGroup2Chans;
-	}
-	/*End*/
-	// no writers or readers can exist here
-	// so this can't be called during acquisition
-	dataBuffer.map([=](Array<FFTWArrayType>& arr)
-	{
-		arr.resize(totalChans);
-
-		for (int i = 0; i < totalChans; i++)
-		{
-			arr.getReference(i).resize(newSize);
-		}
-	});
-}
-
-void CoherenceNode::updateMeanCoherenceSize()
-{
-	meanCoherence.map([=](std::vector<std::vector<double>>& vec)
-	{
-		// Update meanCoherence size to new num combinations
-		vec.resize(nGroupCombs);
-
-		// Update meanCoherence to new num freq at each existing combination
-		for (int comb = 0; comb < nGroupCombs; comb++)
-		{
-			vec[comb].resize(nFreqs);
-		}
-	});
 }
 
 void CoherenceNode::updateSettings()
@@ -270,59 +162,98 @@ void CoherenceNode::updateSettings()
 	// Array of samples per channel and if ready to go
 	nSamplesAdded = 0;
 
+	std::cout << "Updating coherence node settings" << std::endl;
+
+	float Fs1 = getDataChannel(channels[0])->getSampleRate();
+	float Fs2 = getDataChannel(channels[1])->getSampleRate();
+
+	downsampleFactor = (int)Fs1 / targetRate;
+
+	int size1 = int(Fs1 / downsampleFactor * tfrParams.winLen);
+	int size2 = int(Fs2 / downsampleFactor * tfrParams.winLen);
+
+	std::cout << "Updating data buffers for " << Fs1 << " Hz, downsample factor of " << downsampleFactor << std::endl;
+	updateDataBufferSize(size1, size2);
+
+	tfrParams.Fs = Fs1 / downsampleFactor;
+
 	// (Start - end freq) / stepsize
-	freqStep = 1.0/float(winLen*interpRatio);
+	tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
+
 	//freqStep = 1; // for debugging
-	nFreqs = int((freqEnd - freqStart) / freqStep) + 1;
-	//foi = 0.5:1 / (win_len*interp_ratio) : 30
+	tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep) + 1;
 
-	artifactThreshold = 3000; //250
+	std::cout << "Updating display buffers to " << tfrParams.nFreqs << " frequencies." << std::endl;
+	updateDisplayBufferSize(tfrParams.nFreqs);
 
-	int numInputs = getNumInputs();
-	// Default selected groups
-	if (numInputs > 0)
-	{
-		if (group1Channels.size() == 0) // only if groups are empty currently
-		{
-			for (int i = 0; i < numInputs; i++)
-			{
-				if (i < numInputs / 2)
-				{
-					group1Channels.add(i);
-				}
-				else
-				{
-					group2Channels.add(i);
-				}
-			}
-		}
-		// Set number of channels in each group
-		nGroup1Chans = group1Channels.size();
-		nGroup2Chans = group2Channels.size();
-		nGroupCombs = nGroup1Chans * nGroup2Chans;
+	resetTFR();
 
-		if (nGroup1Chans > 0)
-		{
-			float newFs = getDataChannel(group1Channels[0])->getSampleRate();
-			if (newFs != Fs)
-			{
-				Fs = newFs;
-				updateDataBufferSize(segLen * Fs);
-			}
-		}
-
-
-		updateMeanCoherenceSize();
-	}
 }
+
+void CoherenceNode::updateDataBufferSize(int size1, int size2)
+{
+	// no writers or readers can exist here
+	// so this can't be called during acquisition
+
+	dataBuffer.map([=](Array<FFTWArrayType>& arr)
+	{
+		std::cout << "Resizing data buffer to " << size1 << ", " << size2 << std::endl;
+		arr.resize(2);
+		arr.getReference(0).resize(size1);
+		arr.getReference(1).resize(size2);
+	});
+
+	///// Add incoming data to data buffer. Let thread get the ok to start at 8 seconds of data ////
+	AtomicScopedWritePtr<Array<FFTWArrayType>> dataWriter(dataBuffer);
+	// Check writer
+	if (!dataWriter.isValid())
+	{
+		jassertfalse; // atomic sync data writer broken
+	}
+
+
+	int maxSamples = dataWriter->getReference(0).getLength();
+
+	std::cout << "TOTAL BUFFER SIZE: " << maxSamples << std::endl;
+
+}
+
+void CoherenceNode::updateDisplayBufferSize(int newSize)
+{
+	power.map([=](std::vector<std::vector<float>>& vec)
+	{
+		std::cout << "Resizing power buffer to " << newSize << ", " << newSize << std::endl;
+		vec.resize(2);
+		vec[0].resize(newSize);
+		vec[1].resize(newSize);
+	});
+
+	coherence.map([=](std::vector<double>& vec)
+	{
+		std::cout << "Resizing coherence buffer to " << newSize << ", " << newSize << std::endl;
+		vec.resize(newSize);
+	});
+}
+
+
 
 void CoherenceNode::setParameter(int parameterIndex, float newValue)
 {
-	// Set new region channels and such in here?
 	switch (parameterIndex)
 	{
+	case 0:
+		channels.set(0, int(newValue));
+		break;
+	case 1:
+		channels.set(1, int(newValue));
+		break;
+	}
+}
+
+	/*switch (parameterIndex)
+	{
 	case SEGMENT_LENGTH:
-		segLen = static_cast<int>(newValue);
+		tfrParams.segLen = static_cast<int>(newValue);
 		break;
 	case WINDOW_LENGTH:
 		winLen = static_cast<float>(newValue);
@@ -339,128 +270,42 @@ void CoherenceNode::setParameter(int parameterIndex, float newValue)
 	case ARTIFACT_THRESHOLD:
 		artifactThreshold = static_cast<float>(newValue);
 		break;
-	}
-}
-
-int CoherenceNode::getChanGroup(int chan)
-{
-	if (group1Channels.contains(chan))
-	{
-		return 1;
-	}
-	else if (group2Channels.contains(chan))
-	{
-		return 2;
-	}
-	else
-	{
-		return -1; // Channel isn't in group 1 or 2. Error!
-	}
-}
-
-int CoherenceNode::getGroupIt(int group, int chan)
-{
-	if (group == 1)
-	{
-		int * it = std::find(group1Channels.begin(), group1Channels.end(), chan);
-		return it - group1Channels.begin();
-	}
-	else if (group == 2)
-	{
-		int * it = std::find(group2Channels.begin(), group2Channels.end(), chan);
-		return it - group2Channels.begin();
-	}
-	else
-	{
-		return -1;
-	}
-}
+	}*/
 
 
-void CoherenceNode::updateGroup(Array<int> group1Chans, Array<int> group2Chans)
-{
-	group1Channels = group1Chans;
-	group2Channels = group2Chans;
 
-	nGroup1Chans = group1Channels.size();
-	nGroup2Chans = group2Channels.size();
-
-	nGroupCombs = nGroup1Chans * nGroup2Chans;
-}
-
-void CoherenceNode::updateAlpha(float a)
-{
-	alpha = a;
-}
-
-void CoherenceNode::updateReady(bool isReady)
-{
-	ready = isReady;
-}
 
 void CoherenceNode::resetTFR()
 {
-	if (((group1Channels.size() > 0) && (group2Channels.size() > 0)) || (WhatisIT == 0))
-	{
-		ready = true;
-
-		nSamplesAdded = 0;
-		updateDataBufferSize(segLen*Fs);
-		updateMeanCoherenceSize();
-		numArtifacts = 0;
-        
-        freqStep = 1.0 / float(winLen*interpRatio);; // for debugging
-		nFreqs = int((freqEnd - freqStart) / freqStep) + 1;
-
-		// Trim time close to edge
-		int nSamplesWin = winLen * Fs;
-		nTimes = ((segLen * Fs) - (nSamplesWin)) / Fs * (1 / stepLen) + 1; // Trim half of window on both sides, so 1 window length is trimmed total
-
-		if (nGroup1Chans > 0 || (WhatisIT == 0))
-		{
-			float newFs = getDataChannel(group1Channels[0])->getSampleRate();
-			if (newFs != Fs)
-			{
-				Fs = newFs;
-				updateDataBufferSize(segLen * Fs);
-
-			}
-		}
-		if (WhatisIT == 1)
-		{
-			TFR = new CumulativeTFR(nGroup1Chans, nGroup2Chans, nFreqs, nTimes, Fs, winLen, stepLen,
-				freqStep, freqStart, segLen, alpha);
-		}
-		else if (WhatisIT == 0)
-		{
-			int NumOfChanChan = (TotalNumofChannels).size();
-			TFR = new CumulativeTFR(NumOfChanChan, 0, nFreqs, nTimes, Fs, winLen, stepLen,
-				freqStep, freqStart, segLen, alpha);
-		}
-	}
-	else
-	{
-		ready = false;
-	}
-}
-
-void CoherenceNode::discardCurBuffer(int nSamples)
-{
-	numArtifacts += float(nSamples) / (segLen * Fs);
-	nSamplesWait = 1 * Fs * -1; // Wait a bit after artifact before we start taking in new data (1sec to be exact)
+	
 	nSamplesAdded = 0;
-	nSamplesWaited = 0;
+
+	// Trim time close to edge
+	int nSamplesWin = tfrParams.winLen * tfrParams.Fs;
+
+	tfrParams.nTimes = 1;// ((tfrParams.segLen * tfrParams.Fs) -
+					   // (nSamplesWin)) / tfrParams.Fs *
+						//(1 / tfrParams.stepLen) + 1; // Trim half of window on both sides, so 1 window length is trimmed total
+
+	std::cout << "Total times: " << tfrParams.nTimes << std::endl;
+
+	std::cout << "nfft: " << int(tfrParams.Fs * tfrParams.segLen) << std::endl;
+
+	TFR = new CumulativeTFR(1, // group 1 channel count
+		1, // group 2 channel count
+		tfrParams.nFreqs, 
+		tfrParams.nTimes, 
+		tfrParams.Fs, // 40000
+		tfrParams.winLen, 
+		tfrParams.stepLen,
+		tfrParams.freqStep, 
+		tfrParams.freqStart, 
+		tfrParams.segLen, //fftSec
+		tfrParams.alpha);
+
 }
 
 
-bool CoherenceNode::isReady()
-{
-	if (!ready)
-	{
-		resetTFR();
-	}
-	return ready && (getNumInputs() > 0);
-}
 
 bool CoherenceNode::enable()
 {
@@ -468,8 +313,15 @@ bool CoherenceNode::enable()
 	{
 		// Start coherence calculation thread
 		numTrials = 0;
-		numArtifacts = 0;
-		startThread(COH_PRIORITY);
+		//numArtifacts = 0;
+		startThread(THREAD_PRIORITY);
+
+		for (int i = 0; i < 2; i++)
+		{
+			bufferIdx.set(i, 0);
+			lastValue.set(i, 0.0f);
+			sampleIdx.set(i, 0);
+		}
 	}
 	return isEnabled;
 }
@@ -484,52 +336,7 @@ bool CoherenceNode::disable()
 	return true;
 }
 
-void CoherenceNode::checkCohFile()
-{
-	if (CoreServices::getRecordingStatus())
-	{
-		if (!cohFile.is_open())
-		{
-			auto now = std::chrono::system_clock::now();
-			std::time_t now_time = std::chrono::system_clock::to_time_t(now);
 
-			File file = CoreServices::RecordNode::getRecordingPath();
-			String recordingDir(file.getFullPathName());
-			// change path to recordingDir
-			//const char * path = ("C:\\Users\\Ephys\\Desktop\\coh-params\\" + String(segLen) + "_" + String(winLen) + "_" + String(now_time) + ".txt").toRawUTF8();
-			int expNum = CoreServices::RecordNode::getExperimentNumber();
-			if (expNum > 1)
-			{
-				path = (recordingDir + "\\SEG" + String(segLen) + "_WIN" + String(winLen) + "_" + String(expNum) + ".txt").toRawUTF8();
-			}
-			else
-			{
-				path = (recordingDir + "\\SEG" + String(segLen) + "_WIN" + String(winLen) + ".txt").toRawUTF8();
-			}
-
-			cohFile.open(path);
-		}
-	}
-	else if (cohFile.is_open())
-	{
-		cohFile.close();
-	}
-}
-
-
-Array<int> CoherenceNode::getActiveInputs()
-{
-	int numInputs = getNumInputs();
-	auto ed = static_cast<CoherenceEditor*>(getEditor());
-
-	if (numInputs == 0 || !ed)
-	{
-		return Array<int>();
-	}
-
-	Array<int> activeChannels = ed->getActiveChannels();
-	return activeChannels;
-}
 
 
 bool CoherenceNode::hasEditor() const
@@ -542,24 +349,25 @@ void CoherenceNode::saveCustomParametersToXml(XmlElement* parentElement)
 	XmlElement* mainNode = parentElement->createNewChildElement("COHERENCENODE");
 
 	// ------ Save Groups ------ //
-	XmlElement* group1Node = mainNode->createNewChildElement("Group1");
-	XmlElement* group2Node = mainNode->createNewChildElement("Group2");
+	//XmlElement* group1Node = mainNode->createNewChildElement("Group1");
+	//XmlElement* group2Node = mainNode->createNewChildElement("Group2");
 
-	for (int i = 0; i < group1Channels.size(); i++)
-	{
-		group1Node->setAttribute("Chan" + String(i), group1Channels[i]);
-	}
-	for (int i = 0; i < group2Channels.size(); i++)
-	{
-		group2Node->setAttribute("Chan" + String(i), group2Channels[i]);
-	}
+	//for (int i = 0; i < group1Channels.size(); i++)
+	//{
+	//	group1Node->setAttribute("Chan" + String(i), group1Channels[i]);
+	//}
+	//for (int i = 0; i < group2Channels.size(); i++)
+	//{
+	//	group2Node->setAttribute("Chan" + String(i), group2Channels[i]);
+	//}
 
 	// ------ Save Other Params ------ //
-	mainNode->setAttribute("alpha", alpha);
+	//mainNode->setAttribute("alpha", alpha);
 }
 
 void CoherenceNode::loadCustomParametersFromXml()
 {
+	/*
 	int numActiveInputs = getActiveInputs().size();
 	if (parametersAsXml)
 	{
@@ -608,5 +416,5 @@ void CoherenceNode::loadCustomParametersFromXml()
 		{
 			resetTFR();
 		}
-	}
+	}*/
 }

@@ -86,7 +86,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *    are responsible for allocating and accessing the data, and the AtomicSynchronizer just
 *    tells you which index to use (0, 1, or 2) as the reader or writer.
 *
-*      * To write, use an AtomiSynchronizer::ScopedWriteIndex instead of an AtomicScopedWritePtr.
+*      * To write, use an AtomicSynchronizer::ScopedWriteIndex instead of an AtomicScopedWritePtr.
 *        This can be converted to int to use directly as an index, and has a pushUpdate() method
 *        that works the same way as for the write pointer. The index can be -1 if you try to
 *        create two write indices to the same synchronizer.

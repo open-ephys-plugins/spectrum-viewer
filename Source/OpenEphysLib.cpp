@@ -48,7 +48,7 @@ extern "C" EXPORT int getPluginInfo(int index, Plugin::PluginInfo* info)
 	{
 	case 0:
 		info->type = Plugin::PLUGIN_TYPE_PROCESSOR;
-        info->processor.name = "TFR Analysis";
+        info->processor.name = "Spectrogram Viewer";
 		info->processor.type = Plugin::SinkProcessor;
 		info->processor.creator = &(Plugin::createProcessor<CoherenceNode>);
 		break;

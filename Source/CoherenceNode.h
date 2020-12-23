@@ -36,8 +36,6 @@ in units of z-score.
 #include <ProcessorHeaders.h>
 #include <VisualizerEditorHeaders.h>
 
-//#include "CoherenceVisualizer.h"
-//
 #include "AtomicSynchronizer.h"
 #include "CumulativeTFR.h"
 
@@ -47,6 +45,13 @@ in units of z-score.
 #include <ctime> 
 #include <iostream>
 #include<fstream>
+
+enum DisplayType {
+	COHEROGRAM = 3,
+	SPECTROGRAM = 2,
+	COHERENCE = 1,
+	POWER_SPECTRUM = 0
+};
 
 class CoherenceNode : public GenericProcessor, public Thread
 {
@@ -60,13 +65,11 @@ public:
 
 	AudioProcessorEditor* createEditor() override;
 
-	void createEventChannels() override;
-
 	void setParameter(int parameterIndex, float newValue) override;
 
 	void process(AudioSampleBuffer& continuousBuffer) override;
 
-	bool isReady() override;
+	//bool isReady() override;
 	bool enable() override;
 	bool disable() override;
 
@@ -76,75 +79,29 @@ public:
 	// Handle changing channels/groups
 	void updateSettings() override;
 
-	// Returns array of active input channels 
-	Array<int> getActiveInputs();
+	// Variable to store incoming data
+	AtomicallyShared<Array<FFTWArrayType>> dataBuffer;
 
-	// Get source info
-	int getFullSourceID(int chan);
+	// Array of powers across frequencies, for multiple channels
+	AtomicallyShared<std::vector<std::vector<float>>> power;
+
+	// Array of coherence values across frequencies
+	AtomicallyShared<std::vector<double>> coherence;
+
+	DisplayType displayType;
 
 	// Save info
 	void saveCustomParametersToXml(XmlElement* parentElement) override;
 	void loadCustomParametersFromXml();
 
-	// Variable to store Power across all channels 
-	// ttlpwr[1] corresponds to channel 1 power across frequency
-	std::vector<std::vector<float>> ttlpwr;
-	Array<int> TotalNumofChannels;
-
-
-
 private:
 
-	AtomicallyShared<Array<FFTWArrayType>> dataBuffer;
-	// # Freqs x # Combinations
-	AtomicallyShared<std::vector<std::vector<double>>> meanCoherence;
-
 	ScopedPointer<CumulativeTFR> TFR;
-	Array<bool> CHANNEL_READY;
-
-	bool ready;
-
-	// freq of interest
-	Array<float> foi;
-
-	// Segment Length
-	int segLen;
-	// Window Length
-	float winLen;
-	// Step Length
-	float stepLen; // Iterval between times of interest
-	// Interp Ratio ??
-	int interpRatio; //
-
-	// Array of channels for regions 1 and 2
-	Array<int> group1Channels;
-	Array<int> group2Channels;
-
-	uint32 validSubProcFullID;
-
-	// returns the region for the requested channel
-	int getChanGroup(int chan);
 
 	// Append FFTWArrays to data buffer
-	void updateDataBufferSize(int newSize);
-	void updateMeanCoherenceSize();
+	void updateDataBufferSize(int size1, int size2);
 
-	///// TFR vars
-	// Number of channels for region 1
-	int nGroup1Chans;
-	// Number of channels for region 2
-	int nGroup2Chans;
-	// Number of freq of interest
-	int nFreqs;
-	float freqStep;
-	int freqStart;
-	int freqEnd;
-	// Number of times of interest
-	int nTimes;
-	// Fs (sampling rate?)
-	float Fs;
-
-	float alpha;
+	void updateDisplayBufferSize(int newSize);
 
 	int nSamplesAdded; // holds how many samples were added for each channel
 	AudioBuffer<float> channelData; // Holds the segment buffer for each channel.
@@ -155,36 +112,25 @@ private:
 	int nGroupCombs;
 
 	// from 0 to 10
-	static const int COH_PRIORITY = 5;
-	const char * path;
+	static const int THREAD_PRIORITY = 5;
 
-	// Get iterator for this channel in it's respective group
-	int getGroupIt(int group, int chan);
-
-	void updateGroup(Array<int> group1Channels, Array<int> group2Channels);
-	void updateAlpha(float alpha);
 	void resetTFR();
-	void updateReady(bool isReady);
 
-	// Artifact checking
-	void discardCurBuffer(int nSamples);
-	float artifactThreshold;
+	Array<int> channels;
+	Array<int> bufferIdx;
+	Array<int> sampleIdx;
+	Array<float> lastValue;
+
+	const float targetRate = 2000;
+
+	int downsampleFactor = 1;
+
 	int numTrials;
-	float numArtifacts;
-
-	std::ofstream cohFile;
-	void checkCohFile();
 
 	// This is to store data in case of switch and we wish to retrive old data
 	AtomicallyShared<Array<FFTWArrayType>> dataBufferII;
-	// Int variable can occupy two values 1 and 0. 
-	// 1 means Coherence
-	// 0 means Spectrogram
-	// This seperates coherence and spectrogram logically
-    int WhatisIT; // MOVED TO .cpp when created. = 1;//1-Coherence & 0-Spectrogram
-	/*End*/
 
-	enum Parameter
+	enum ParameterType
 	{
 		SEGMENT_LENGTH,
 		WINDOW_LENGTH,
@@ -193,6 +139,33 @@ private:
 		STEP_LENGTH,
 		ARTIFACT_THRESHOLD
 	};
+
+	struct TFRParameters
+	{
+		float segLen; // Segment Length
+		float winLen; // Window Length
+		float stepLen; // Interval between times of interest
+		int interpRatio; //
+
+		// Number of freq of interest
+		int nFreqs;
+		float freqStep;
+		int freqStart;
+		int freqEnd;
+
+		// Number of times of interest
+		int nTimes;
+
+		// Fs (sampling rate?)
+		float Fs;
+
+		// frequency of interest
+		Array<float> foi;
+
+		float alpha;
+	};
+
+	TFRParameters tfrParams;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CoherenceNode);
 };
