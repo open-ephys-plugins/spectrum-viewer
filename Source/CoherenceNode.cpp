@@ -25,8 +25,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CoherenceNodeEditor.h"
 /********** node ************/
 CoherenceNode::CoherenceNode()
-	: GenericProcessor("Spectrogram Viewer")
-	, Thread("Coherence Calc")
+	: GenericProcessor("Spectrum Viewer")
+	, Thread("FFT Thread")
 	, nSamplesWait(0)
     , displayType(POWER_SPECTRUM)
 {
