@@ -30,8 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 class CoherenceEditor
     : public VisualizerEditor
     , public ComboBox::Listener
-   // , public Label::Listener
-    
+
 {
     friend class CoherenceVisualizer;
 public:
@@ -45,44 +44,18 @@ public:
 
     Visualizer* createNewCanvas() override;
 
-    // void labelTextChanged(Label* labelThatHasChanged) override;
-
-//void channelChanged(int chan, bool newState) override;
+    void updateSettings() override;
 
 private:
     CoherenceNode* processor;
+
+    int numChannels;
 
     ScopedPointer<Label> ch1Label;
     ScopedPointer<ComboBox> ch1Selection;
 
     ScopedPointer<Label> ch2Label;
     ScopedPointer<ComboBox> ch2Selection;
-
-   /* ScopedPointer<Label> segLabel;
-    ScopedPointer<Label> segEditable;
-
-    ScopedPointer<Label> winLabel;
-    ScopedPointer<Label> winEditable;
-
-    ScopedPointer<Label> stepLabel;
-    ScopedPointer<Label> stepEditable;
-    
-    ScopedPointer<Label> foiLabel;
-
-    ScopedPointer<Label> fstartLabel;
-    ScopedPointer<Label> fstartEditable;
-
-    ScopedPointer<Label> fendLabel;
-    ScopedPointer<Label> fendEditable;
-    
-    Label* CoherenceEditor::createLabel(const String& name, const String& text,
-        juce::Rectangle<int> bounds);
-    Label* CoherenceEditor::createEditable(const String& name, const String& initialValue,
-        const String& tooltip, juce::Rectangle<int> bounds);
-
-    bool updateIntLabel(Label* label, int min, int max, int defaultValue, int* out);
-    bool updateFloatLabel(Label* label, float min, float max,
-        float defaultValue, float* out);*/
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CoherenceEditor);
 };

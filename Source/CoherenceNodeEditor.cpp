@@ -26,7 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 /************** editor *************/
 CoherenceEditor::CoherenceEditor(CoherenceNode* p)
-    : VisualizerEditor(p, 300, true)
+    : VisualizerEditor(p, 300, true), numChannels(0)
 {
     tabText = "Spectrogram";
     processor = p;
@@ -59,140 +59,41 @@ CoherenceEditor::CoherenceEditor(CoherenceNode* p)
 
     desiredWidth = 250;
     
-
-    // Segment length
-    //int x = 0, y = 0, h = 0, w = 0;
-    // Change to column/row setup
-    /* segLabel = createLabel("segLabel", "Segment Length(s):", { x + 5, y + 25, w + 70, h + 27 });
-    addAndMakeVisible(segLabel);
-
-    segEditable = createEditable("segEditable", "4", "Input length of segment", { x + 75, y + 25, w + 35, h + 27 });
-    addAndMakeVisible(segEditable);
-
-    // Window Length
-    y += 35;
-    winLabel = createLabel("winLabel", "Window Length(s):", { x + 5, y + 25, w + 70, h + 27 });
-    addAndMakeVisible(winLabel);
-
-    winEditable = createEditable("winEditable", "2", "Input length of window", { x + 75, y + 25, w + 35, h + 27 });
-    addAndMakeVisible(winEditable);
-
-    // Step Length
-    y += 35;
-    stepLabel = createLabel("stepLabel", "Step Length(s):", { x + 5, y + 25, w + 75, h + 27 });
-    addAndMakeVisible(stepLabel);
-
-    stepEditable = createEditable("stepEditable", "0.1", "Input step size between windows; higher number = less resource intensive",
-    { x + 75, y + 25, w + 35, h + 27 });
-    addAndMakeVisible(stepEditable);*/
-
-    //setEnabledState(false);
 }
 
 CoherenceEditor::~CoherenceEditor() {}
 
-/*Label* CoherenceEditor::createEditable(const String& name, const String& initialValue,
-    const String& tooltip, juce::Rectangle<int> bounds)
-{
-    Label* editable = new Label(name, initialValue);
-    editable->setEditable(true);
-    editable->addListener(this);
-    editable->setBounds(bounds);
-    editable->setColour(Label::backgroundColourId, Colours::grey);
-    editable->setColour(Label::textColourId, Colours::white);
-    if (tooltip.length() > 0)
-    {
-        editable->setTooltip(tooltip);
-    }
-    return editable;
-}
-
-Label* CoherenceEditor::createLabel(const String& name, const String& text,
-    juce::Rectangle<int> bounds)
-{
-    Label* label = new Label(name, text);
-    label->setBounds(bounds);
-    label->setFont(Font("Small Text", 12, Font::plain));
-    label->setColour(Label::textColourId, Colours::darkgrey);
-    return label;
-}*/
 
 void CoherenceEditor::comboBoxChanged(ComboBox* comboBoxThatHasChanged)
 {
-
-}
-
-/*void CoherenceEditor::labelTextChanged(Label* labelThatHasChanged)
-{
-    processor->updateReady(false);
-    auto processor = static_cast<CoherenceNode*>(getProcessor());
-    if (labelThatHasChanged == segEditable)
+    if (comboBoxThatHasChanged == ch1Selection)
     {
-        int newVal;
-        if (updateIntLabel(labelThatHasChanged, 0, INT_MAX, 8, &newVal))
-        {
-            processor->setParameter(CoherenceNode::SEGMENT_LENGTH, static_cast<int>(newVal));
-        }
-    }
-    if (labelThatHasChanged == winEditable)
-    {
-        float newVal;
-        if (updateFloatLabel(labelThatHasChanged, 0, INT_MAX, 8, &newVal))
-        {
-            processor->setParameter(CoherenceNode::WINDOW_LENGTH, static_cast<float>(newVal));
-        }
-    }
-    if (labelThatHasChanged == stepEditable)
-    {
-        float newVal;
-        if (updateFloatLabel(labelThatHasChanged, 0, INT_MAX, 8, &newVal))
-        {
-            processor->setParameter(CoherenceNode::STEP_LENGTH, static_cast<float>(newVal));
-        }
+        getProcessor()->setParameter(0, ch1Selection->getSelectedId() - 2);
     }
 }
 
-bool CoherenceEditor::updateIntLabel(Label* label, int min, int max, int defaultValue, int* out)
+void CoherenceEditor::updateSettings()
 {
-    const String& in = label->getText();
-    int parsedInt;
-    try
-    {
-        parsedInt = std::stoi(in.toRawUTF8());
-    }
-    catch (const std::logic_error&)
-    {
-        label->setText(String(defaultValue), dontSendNotification);
-        return false;
-    }
 
-    *out = jmax(min, jmin(max, parsedInt));
+    int newChannelCount = getProcessor()->getNumInputs();
 
-    label->setText(String(*out), dontSendNotification);
-    return true;
+    if (newChannelCount != numChannels)
+    {
+
+        ch1Selection->clear();
+
+        ch1Selection->addItem("-", 1);
+
+        for (int i = 0; i < newChannelCount; i++)
+            ch1Selection->addItem(String(i+1), i+2);
+
+        if (newChannelCount > 0)
+            ch1Selection->setSelectedId(2, dontSendNotification);
+        else
+            ch1Selection->setSelectedId(1, dontSendNotification);
+
+    }
 }
-
-// Like updateIntLabel, but for floats
-bool CoherenceEditor::updateFloatLabel(Label* label, float min, float max,
-    float defaultValue, float* out)
-{
-    const String& in = label->getText();
-    float parsedFloat;
-    try
-    {
-        parsedFloat = std::stof(in.toRawUTF8());
-    }
-    catch (const std::logic_error&)
-    {
-        label->setText(String(defaultValue), dontSendNotification);
-        return false;
-    }
-
-    *out = jmax(min, jmin(max, parsedFloat));
-
-    label->setText(String(*out), dontSendNotification);
-    return true;
-}*/
 
 void CoherenceEditor::startAcquisition()
 {
@@ -203,12 +104,6 @@ void CoherenceEditor::stopAcquisition()
 {
     canvas->endAnimation();
 }
-
-/*void CoherenceEditor::channelChanged(int chan, bool newState)
-{
-    CoherenceVisualizer* cohCanvas = static_cast<CoherenceVisualizer*>(canvas.get());
-    cohCanvas->channelChanged(chan, newState);
-}*/
 
 Visualizer* CoherenceEditor::createNewCanvas()
 {

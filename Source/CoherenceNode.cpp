@@ -84,7 +84,7 @@ void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 	for (int i = 0; i < 2; i++)
 	{
 
-		if (nSamples == 0)
+		if (nSamples == 0 || channels[i] < 0)
 		{
 			continue;
 		}
