@@ -24,9 +24,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef CUMULATIVE_TFR_H_INCLUDED
 #define CUMULATIVE_TFR_H_INCLUDED
 
-//#include <FFTWWrapper.h>
 #include <OpenEphysFFTW.h>
 #include "CircularArray.h"
+#include "AtomicSynchronizer.h"
 
 #include <vector>
 #include <complex>
@@ -61,6 +61,12 @@ class CumulativeTFR
 			count = 1 + (1 - alpha) * count;
 		}
 
+		void reset()
+		{
+			count = 0;
+			sum = (0, 0);
+		}
+
 	private:
 		std::complex<double> sum;
 		size_t count;
@@ -88,6 +94,12 @@ class CumulativeTFR
 			count = 1 + (1 - alpha) * count;
 		}
 
+		void reset()
+		{
+			count = 0;
+			sum = 0;
+		}
+
 	private:
 		double sum;
 		size_t count;
@@ -104,11 +116,11 @@ public:
 	void addTrial(FFTWArrayType& fftBuffer, int chan);
 
 	// Function to get coherence between two channels
-	void getMeanCoherence(int chanX, int chanY, double* meanDest, int comb);
+	void getMeanCoherence(int chanX, int chanY, AtomicallyShared<std::vector<double>>& coherence, int comb);
 
 	// Calculates power for all the input channels based on powerbuffer size. 
 	// Returns a vector of vector of float type i.e Vect[] corresponds to vector of power for different frequency
-	std::vector<std::vector<float>> getPowerForChannels();
+	void getPowerForChannels(AtomicallyShared<std::vector<std::vector<float>>>& power);
 
 
 private:
@@ -131,6 +143,8 @@ private:
 
 	// # channels x # frequencies x # times
 	vector<vector<vector<std::complex<double>>>> spectrumBuffer;
+
+	// dimensions?
 	vector<vector<std::complex<double>>> waveletArray;
 
 	FFTWArrayType ifftBuffer;

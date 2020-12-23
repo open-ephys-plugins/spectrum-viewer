@@ -28,12 +28,42 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 CoherenceEditor::CoherenceEditor(CoherenceNode* p)
     : VisualizerEditor(p, 300, true)
 {
-    tabText = "TFR-Coherence & Spectrogram";
+    tabText = "Spectrogram";
     processor = p;
+
+    ch1Selection = new ComboBox("CH1 ComboBox");
+    ch1Selection->setBounds(60, 40, 75, 22);
+    ch1Selection->addListener(this);
+    ch1Selection->addItem("-", 1);
+    ch1Selection->setSelectedId(1, dontSendNotification);
+    addAndMakeVisible(ch1Selection);
+
+    ch1Label = new Label("CH1:", "CH1:");
+    ch1Label->setFont(Font("Small Text", 13, Font::plain));
+    ch1Label->setBounds(20, 40, 35, 22);
+    ch1Label->setColour(Label::textColourId, Colours::darkgrey);
+    addAndMakeVisible(ch1Label);
+
+    ch2Selection = new ComboBox("CH2 ComboBox");
+    ch2Selection->setBounds(60, 70, 75, 22);
+    ch2Selection->addListener(this);
+    ch2Selection->addItem("-", 1);
+    ch2Selection->setSelectedId(1, dontSendNotification);
+    addAndMakeVisible(ch2Selection);
+
+    ch2Label = new Label("CH2:", "CH2:");
+    ch2Label->setFont(Font("Small Text", 13, Font::plain));
+    ch2Label->setBounds(20, 70, 35, 22);
+    ch2Label->setColour(Label::textColourId, Colours::darkgrey);
+    addAndMakeVisible(ch2Label);
+
+    desiredWidth = 250;
+    
+
     // Segment length
-    int x = 0, y = 0, h = 0, w = 0;
+    //int x = 0, y = 0, h = 0, w = 0;
     // Change to column/row setup
-    segLabel = createLabel("segLabel", "Segment Length(s):", { x + 5, y + 25, w + 70, h + 27 });
+    /* segLabel = createLabel("segLabel", "Segment Length(s):", { x + 5, y + 25, w + 70, h + 27 });
     addAndMakeVisible(segLabel);
 
     segEditable = createEditable("segEditable", "4", "Input length of segment", { x + 75, y + 25, w + 35, h + 27 });
@@ -54,14 +84,14 @@ CoherenceEditor::CoherenceEditor(CoherenceNode* p)
 
     stepEditable = createEditable("stepEditable", "0.1", "Input step size between windows; higher number = less resource intensive",
     { x + 75, y + 25, w + 35, h + 27 });
-    addAndMakeVisible(stepEditable);
+    addAndMakeVisible(stepEditable);*/
 
-    setEnabledState(false);
+    //setEnabledState(false);
 }
 
 CoherenceEditor::~CoherenceEditor() {}
 
-Label* CoherenceEditor::createEditable(const String& name, const String& initialValue,
+/*Label* CoherenceEditor::createEditable(const String& name, const String& initialValue,
     const String& tooltip, juce::Rectangle<int> bounds)
 {
     Label* editable = new Label(name, initialValue);
@@ -85,14 +115,14 @@ Label* CoherenceEditor::createLabel(const String& name, const String& text,
     label->setFont(Font("Small Text", 12, Font::plain));
     label->setColour(Label::textColourId, Colours::darkgrey);
     return label;
-}
+}*/
 
 void CoherenceEditor::comboBoxChanged(ComboBox* comboBoxThatHasChanged)
 {
 
 }
 
-void CoherenceEditor::labelTextChanged(Label* labelThatHasChanged)
+/*void CoherenceEditor::labelTextChanged(Label* labelThatHasChanged)
 {
     processor->updateReady(false);
     auto processor = static_cast<CoherenceNode*>(getProcessor());
@@ -112,22 +142,6 @@ void CoherenceEditor::labelTextChanged(Label* labelThatHasChanged)
             processor->setParameter(CoherenceNode::WINDOW_LENGTH, static_cast<float>(newVal));
         }
     }
-    /*if (labelThatHasChanged == fstartEditable)
-    {
-        int newVal;
-        if (updateIntLabel(labelThatHasChanged, 0, INT_MAX, 8, &newVal))
-        {
-            processor->setParameter(CoherenceNode::START_FREQ, static_cast<int>(newVal));
-        }
-    }
-    if (labelThatHasChanged == fendEditable)
-    {
-        int newVal;
-        if (updateIntLabel(labelThatHasChanged, 0, INT_MAX, 8, &newVal))
-        {
-            processor->setParameter(CoherenceNode::END_FREQ, static_cast<int>(newVal));
-        }
-    }*/
     if (labelThatHasChanged == stepEditable)
     {
         float newVal;
@@ -178,7 +192,7 @@ bool CoherenceEditor::updateFloatLabel(Label* label, float min, float max,
 
     label->setText(String(*out), dontSendNotification);
     return true;
-}
+}*/
 
 void CoherenceEditor::startAcquisition()
 {
@@ -190,11 +204,11 @@ void CoherenceEditor::stopAcquisition()
     canvas->endAnimation();
 }
 
-void CoherenceEditor::channelChanged(int chan, bool newState)
+/*void CoherenceEditor::channelChanged(int chan, bool newState)
 {
     CoherenceVisualizer* cohCanvas = static_cast<CoherenceVisualizer*>(canvas.get());
     cohCanvas->channelChanged(chan, newState);
-}
+}*/
 
 Visualizer* CoherenceEditor::createNewCanvas()
 {
