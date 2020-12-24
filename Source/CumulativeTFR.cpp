@@ -72,59 +72,39 @@ CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float win
 
 void CumulativeTFR::addTrial(FFTWArrayType& fftBuffer, int chanIt)
 {
-	//float winsPerSegment = (segmentLen - windowLen) / stepLen; not used
 
-	//// Execute fft ////
-	//std::cout << "Computing FFT " << std::endl;
-	fftBuffer.fftReal(); // len = 40000
+	fftBuffer.fftReal();
 
 	float nWindow = Fs * windowLen;
 
 	//// Use freqData to find generate spectrum and get power ////
 	for (int freq = 0; freq < nFreqs; freq++)
 	{
-		//std::cout << "freq = " << freq << std::endl;
-
 		// Multiple fft data by wavelet
 		for (int n = 0; n < nfft; n++)
 		{
 			ifftBuffer.set(n, fftBuffer.getAsComplex(n) * waveletArray[freq][n]);
 		}
+
 		// Inverse FFT on data multiplied by wavelet
-
-		//std::cout << "Computing ifft " << std::endl;
 		ifftBuffer.ifft();
-
-		//std::cout << "nfft: " << nfft << std::endl;
 
 		powBuffer[chanIt][freq][0].reset();
 
-		// Loop over time of interest
-		for (int t = 0; t < 100; t++)
+		// Loop over nfft
+		for (int n = 0; n < nfft; n++)
 		{
-			//int tIndex = int(((t * stepLen) + trimTime)  * Fs); // get index of time of interest
-
-			std::complex<double> complex = ifftBuffer.getAsComplex(t);
+			std::complex<double> complex = ifftBuffer.getAsComplex(n);
 
 			complex *= sqrt(2.0 / nWindow) / double(nfft); // divide by nfft from matlab ifft
 														   // sqrt(2/nWindow) from ft_specest_mtmconvol.m 
 
 			double power = std::norm(complex);
 
-			//if ((t == 0))
-			//{
-			//	std::cout << "FREQ: " << freq << " t: " << t << std::endl;
-			//	std::cout << complex << std::endl;
-			//	std::cout << power << std::endl;
-			//}
-				
 			powBuffer[chanIt][freq][0].addValue(power);
-
 		}
 
-		//if (freq % 10 == 0)
-		//	std::cout << "Freq: " << freq << ", power: " << powBuffer[chanIt][freq][0].getAverage() << std::endl;
-		///Save convOutput for crss later
+		///Save convOutput for crss later (TO CHECK)
 	    //spectrumBuffer[chanIt][freq][t] = complex;
 	}
 }
@@ -188,8 +168,6 @@ void CumulativeTFR::getPowerForChannels(AtomicallyShared<std::vector<std::vector
 		for (int frq = 0; frq < numFreqs; ++frq)
 		{
 			dataWriter->at(chn)[frq] = (float) powBuffer[chn][frq][0].getAverage();
-
-			//std::cout << "Freq: " << frq << ", power: " << dataWriter->at(chn).at(frq) << std::endl; // [chanIt] [freqaWrit] [0] .getAverage() << std::endl;
 		}
 	}
 
@@ -218,6 +196,9 @@ void CumulativeTFR::generateWavelet()
 	// Hann window
 
 	float nSampWindow = Fs * windowLen;
+
+	std::cout << "Wavelet frequency: " << Fs << std::endl;
+
 	for (int position = 0; position < nfft; position++)
 	{
 		//// Hann Window //// = sin^2(PI*n/N) where N=length of window
@@ -243,7 +224,9 @@ void CumulativeTFR::generateWavelet()
 
 	// Wavelet
 	float freqNormalized = freqStart;
+
 	FFTWArrayType fftWaveletBuffer(nfft);
+
 	for (int freq = 0; freq < nFreqs; freq++)
 	{
 		for (int position = 0; position < nfft; position++)

@@ -85,7 +85,7 @@ private:
 	ScopedPointer<Component> canvas;
 	juce::Rectangle<int> canvasBounds;
 
-	std::vector<std::vector<std::vector<float>>> power; // channels x 10 x freqs
+	std::vector<std::vector<std::vector<float>>> power; // channels x 5 x freqs
 
 	Array<int> bufferIndex;
 

@@ -70,6 +70,10 @@ void CoherenceEditor::comboBoxChanged(ComboBox* comboBoxThatHasChanged)
     {
         getProcessor()->setParameter(0, ch1Selection->getSelectedId() - 2);
     }
+    else if (comboBoxThatHasChanged == ch2Selection)
+    {
+        getProcessor()->setParameter(1, ch2Selection->getSelectedId() - 2);
+    }
 }
 
 void CoherenceEditor::updateSettings()
@@ -81,16 +85,28 @@ void CoherenceEditor::updateSettings()
     {
 
         ch1Selection->clear();
-
         ch1Selection->addItem("-", 1);
+        ch2Selection->clear();
+        ch2Selection->addItem("-", 1);
 
         for (int i = 0; i < newChannelCount; i++)
-            ch1Selection->addItem(String(i+1), i+2);
+        {
+            ch1Selection->addItem(String(i + 1), i + 2);
+            ch2Selection->addItem(String(i + 1), i + 2);
+        }
 
         if (newChannelCount > 0)
+        {
             ch1Selection->setSelectedId(2, dontSendNotification);
+            ch2Selection->setSelectedId(3, dontSendNotification);
+        }   
         else
+        {
             ch1Selection->setSelectedId(1, dontSendNotification);
+            ch2Selection->setSelectedId(1, dontSendNotification);
+        }
+
+        numChannels = newChannelCount;
 
     }
 }

@@ -37,7 +37,7 @@ CoherenceNode::CoherenceNode()
 	tfrParams.freqEnd = 1000;
 	tfrParams.stepLen = 0.1;
 	tfrParams.winLen = 0.25;
-	tfrParams.interpRatio = 2;
+	tfrParams.interpRatio = 1;
 	tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
 	tfrParams.Fs = 2000;
 	tfrParams.alpha = 0;
@@ -96,15 +96,15 @@ void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 		// loop through available samples
 		for (int n = 0; n < nSamples; n++)
 		{
-			if (sampleIdx[i] % downsampleFactor > 0) // average adjacent samples
+			if ((sampleIdx[i] % downsampleFactor) > 0) // average adjacent samples
 			{
 				value += incomingDataPointer[n];
 				sampleIdx.set(i, sampleIdx[i] + 1);
 			}
 			else
 			{
-				value += incomingDataPointer[n];
-				value /= downsampleFactor;
+				value = incomingDataPointer[n];
+				//value /= downsampleFactor;
 				dataWriter->getReference(i).set(bufferIdx[i], value);
 				bufferIdx.set(i, bufferIdx[i] + 1);
 				sampleIdx.set(i, 0);
@@ -119,7 +119,7 @@ void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 	}
 
 	// channel buf is full. Update buffer.
-	if (bufferIdx[0] >= maxSamples)
+	if (bufferIdx[0] >= maxSamples || bufferIdx[1] >= maxSamples)
 	{
 		//std::cout << "Pushing buffer update" << std::endl;
 		dataWriter.pushUpdate();
@@ -159,34 +159,33 @@ void CoherenceNode::run()
 
 void CoherenceNode::updateSettings()
 {
-	// Array of samples per channel and if ready to go
-	nSamplesAdded = 0;
 
-	std::cout << "Updating coherence node settings" << std::endl;
+	if (settings.numInputs > 0)
+	{
+		float Fs1 = getDataChannel(channels[0])->getSampleRate();
+		float Fs2 = getDataChannel(channels[1])->getSampleRate();
 
-	float Fs1 = getDataChannel(channels[0])->getSampleRate();
-	float Fs2 = getDataChannel(channels[1])->getSampleRate();
+		downsampleFactor = (int)Fs1 / targetRate;
 
-	downsampleFactor = (int)Fs1 / targetRate;
+		int size1 = int(Fs1 / downsampleFactor * tfrParams.winLen);
+		int size2 = int(Fs2 / downsampleFactor * tfrParams.winLen);
 
-	int size1 = int(Fs1 / downsampleFactor * tfrParams.winLen);
-	int size2 = int(Fs2 / downsampleFactor * tfrParams.winLen);
+		std::cout << "Updating data buffers for " << Fs1 << " Hz, downsample factor of " << downsampleFactor << std::endl;
+		updateDataBufferSize(size1, size2);
 
-	std::cout << "Updating data buffers for " << Fs1 << " Hz, downsample factor of " << downsampleFactor << std::endl;
-	updateDataBufferSize(size1, size2);
+		tfrParams.Fs = Fs1 / downsampleFactor;
 
-	tfrParams.Fs = Fs1 / downsampleFactor;
+		// (Start - end freq) / stepsize
+		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
 
-	// (Start - end freq) / stepsize
-	tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
+		//freqStep = 1; // for debugging
+		tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep) + 1;
 
-	//freqStep = 1; // for debugging
-	tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep) + 1;
+		std::cout << "Updating display buffers to " << tfrParams.nFreqs << " frequencies." << std::endl;
+		updateDisplayBufferSize(tfrParams.nFreqs);
 
-	std::cout << "Updating display buffers to " << tfrParams.nFreqs << " frequencies." << std::endl;
-	updateDisplayBufferSize(tfrParams.nFreqs);
-
-	resetTFR();
+		resetTFR();
+	}
 
 }
 
@@ -239,40 +238,21 @@ void CoherenceNode::updateDisplayBufferSize(int newSize)
 
 void CoherenceNode::setParameter(int parameterIndex, float newValue)
 {
+	if (settings.numInputs < 0)
+		return;
+
 	switch (parameterIndex)
 	{
 	case 0:
 		channels.set(0, int(newValue));
+		std::cout << "Setting channel A to " << int(newValue) << std::endl;
 		break;
 	case 1:
 		channels.set(1, int(newValue));
+		std::cout << "Setting channel B to " << int(newValue) << std::endl;
 		break;
 	}
 }
-
-	/*switch (parameterIndex)
-	{
-	case SEGMENT_LENGTH:
-		tfrParams.segLen = static_cast<int>(newValue);
-		break;
-	case WINDOW_LENGTH:
-		winLen = static_cast<float>(newValue);
-		break;
-	case START_FREQ:
-		freqStart = static_cast<int>(newValue);
-		break;
-	case END_FREQ:
-		freqEnd = static_cast<int>(newValue);
-		break;
-	case STEP_LENGTH:
-		stepLen = static_cast<float>(newValue);
-		break;
-	case ARTIFACT_THRESHOLD:
-		artifactThreshold = static_cast<float>(newValue);
-		break;
-	}*/
-
-
 
 
 void CoherenceNode::resetTFR()
@@ -295,7 +275,7 @@ void CoherenceNode::resetTFR()
 		1, // group 2 channel count
 		tfrParams.nFreqs, 
 		tfrParams.nTimes, 
-		tfrParams.Fs, // 40000
+		tfrParams.Fs, // 2000
 		tfrParams.winLen, 
 		tfrParams.stepLen,
 		tfrParams.freqStep, 

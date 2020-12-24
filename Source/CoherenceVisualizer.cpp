@@ -39,15 +39,13 @@ CoherenceVisualizer::CoherenceVisualizer(CoherenceNode* n)
 	
 	plot = new MatlabLikePlot();
 	plot->setBounds(bounds = { 20, 20, 800, 600 });
-	plot->setTitle("PLOT TITLE");
-	plot->setRange(freqStart, freqEnd, 0.0, 1000000, true);
+	plot->setTitle("POWER SPECTRUM");
+	plot->setRange(0, 1000, 0.0, 10, false);
 	plot->setControlButtonsVisibile(false);
 	plot->setAutoRescale(true);
 	canvas->addAndMakeVisible(plot);
 
-	/*End*/
 	canvasBounds = canvasBounds.getUnion(bounds);
-	// some extra padding
 	canvasBounds.setBottom(canvasBounds.getBottom() + 10);
 	canvasBounds.setRight(canvasBounds.getRight() + 10);
 	canvas->setBounds(canvasBounds);
@@ -60,9 +58,9 @@ CoherenceVisualizer::CoherenceVisualizer(CoherenceNode* n)
 
 	for (int ch = 0; ch < 2; ch++)
 	{
-		power[ch].resize(10);
+		power[ch].resize(5);
 
-		for (int i = 0; i < 10; i++)
+		for (int i = 0; i < 5; i++)
 			power[ch][i].assign(499, 0.0f);
 	}
 	
@@ -138,31 +136,44 @@ void CoherenceVisualizer::refresh()
 
 		if (powerReader.isValid())
 		{
-			for (int n = 0; n < 499; n++)
-			{
-				float p = powerReader->at(0)[n];
-
-				if (p > 0)
-					power.at(0).at(bufferIndex[0])[n] = log(p);
-			}
-
 			plot->clearplot();
 
-			for (int i = 0; i < 10; i++)
+			for (int ch = 0; ch < 2; ch++)
 			{
 
-				int startIndex = bufferIndex[0];
-				int trueIndex = (startIndex + i) % 10;
-				float alphaValue = 1.0f - i * 0.1f;
+				for (int n = 0; n < 249; n++)
+				{
+					float p = powerReader->at(ch)[n];
 
-				XYline line = XYline(4, 2, power[0][trueIndex], 1, Colours::yellow.withAlpha(alphaValue));
-				plot->plotxy(line);
-			}
+					if (p > 0)
+						power.at(ch).at(bufferIndex[ch])[n] = log(p);
+				}
 
-			plot->repaint();
+				for (int i = 0; i < 5; i++)
+				{
 
-			bufferIndex.set(0, (bufferIndex[0] + 1) % 10);
+					int startIndex = bufferIndex[ch];
+					int trueIndex = (startIndex + i) % 5;
+					float alphaValue = 1.0f - i * 0.2f;
+
+					Colour color;
+
+					if (ch == 0)
+						color = Colours::yellow.withAlpha(alphaValue);
+					else
+						color = Colours::lightgreen.withAlpha(alphaValue);
+
+					XYline line = XYline(4, 4, power[ch][trueIndex], 1, color);
+
+					plot->plotxy(line);
+				}
+
+				bufferIndex.set(ch, (bufferIndex[ch] + 1) % 5);
+
+			}	
 		}
+
+		plot->repaint();
 		
 	}
 }
