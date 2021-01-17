@@ -122,7 +122,8 @@ void CoherenceEditor::updateAvailableChannels()
     channelBSelection->clear();
     channelBSelection->addItem("-", 1);
 
-    bool firstChan = true;
+    bool isFirstChanInSubprocessor = true;
+    int totalSubprocessorChannels = -1;
 
     for (int ch = 0; ch < processor->getNumInputs(); ch++)
     {
@@ -130,7 +131,7 @@ void CoherenceEditor::updateAvailableChannels()
 
         if (selectedSubprocessor == channelSubprocessor)
         {
-            if (firstChan)
+            if (isFirstChanInSubprocessor)
             {
                 String sampleRateLabelText = "Sample Rate: ";
                 sampleRateLabelText += String(subprocessorSampleRate[selectedSubprocessor]);
@@ -138,16 +139,25 @@ void CoherenceEditor::updateAvailableChannels()
 
                 startChannel = ch;
 
-                firstChan = false;
+                isFirstChanInSubprocessor = false;
             }
  
+            totalSubprocessorChannels++;
+
             channelASelection->addItem(String(ch + 1 - startChannel), ch - startChannel + 2);
             channelBSelection->addItem(String(ch + 1 - startChannel), ch - startChannel + 2);
         }
     }
 
-    channelASelection->setSelectedId(chAId, sendNotification); // update channel A
-    channelBSelection->setSelectedId(chBId, sendNotification); // update channel B
+    if (chAId == 1 && totalSubprocessorChannels > -1)
+        channelASelection->setSelectedId(2, sendNotification); // update channel A
+    else
+        channelASelection->setSelectedId(chAId, sendNotification); // update channel A
+
+    if (chBId == 1 && totalSubprocessorChannels > 0)
+        channelBSelection->setSelectedId(3, sendNotification); // update channel B
+    else
+        channelBSelection->setSelectedId(chBId, sendNotification); // update channel B
 }
 
 

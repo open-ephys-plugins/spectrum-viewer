@@ -40,9 +40,10 @@ CoherenceVisualizer::CoherenceVisualizer(CoherenceNode* n)
 	plot = new MatlabLikePlot();
 	plot->setBounds(bounds = { 20, 20, 800, 600 });
 	plot->setTitle("POWER SPECTRUM");
-	plot->setRange(0, 1000, 0.0, 10, false);
+	plot->setRange(0, 500, 0.0, 10, false);
 	plot->setControlButtonsVisibile(false);
 	plot->setAutoRescale(true);
+	//plot->drawComponent->setScaleString("Hz", "Power"); // drawComponent is private
 	canvas->addAndMakeVisible(plot);
 
 	canvasBounds = canvasBounds.getUnion(bounds);
@@ -153,10 +154,9 @@ void CoherenceVisualizer::refresh()
 						maxpower = p;
 						maxind = n;
 					}
-						
 
 					if (p > 0)
-						power.at(ch).at(bufferIndex[ch])[n] = p;
+						power.at(ch).at(bufferIndex[ch])[n] = log(p);
 				}
 
 				//std::cout << "Max ind: " << maxind << std::endl;
