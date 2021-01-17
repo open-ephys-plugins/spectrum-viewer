@@ -90,9 +90,12 @@ public:
 
 	DisplayType displayType;
 
-	// Save info
-	void saveCustomParametersToXml(XmlElement* parentElement) override;
-	void loadCustomParametersFromXml();
+	uint32 getDataSubprocId(int chan);
+
+	uint32 getChannelSourceId(const InfoObjectCommon* chan);
+
+	void updateSubprocessor();
+
 
 private:
 
@@ -121,9 +124,9 @@ private:
 	Array<int> sampleIdx;
 	Array<float> lastValue;
 
-	const float targetRate = 2000;
+	const float targetRate = 4000;
 
-	int downsampleFactor = 1;
+	int downsampleFactor = 10;
 
 	int numTrials;
 

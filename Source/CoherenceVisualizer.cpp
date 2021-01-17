@@ -61,7 +61,7 @@ CoherenceVisualizer::CoherenceVisualizer(CoherenceNode* n)
 		power[ch].resize(5);
 
 		for (int i = 0; i < 5; i++)
-			power[ch][i].assign(499, 0.0f);
+			power[ch][i].assign(250, 1.0f);
 	}
 	
 
@@ -141,13 +141,25 @@ void CoherenceVisualizer::refresh()
 			for (int ch = 0; ch < 2; ch++)
 			{
 
+				float maxpower = -1;
+				int maxind = -1;
+
 				for (int n = 0; n < 249; n++)
 				{
 					float p = powerReader->at(ch)[n];
 
+					if (p > maxpower)
+					{
+						maxpower = p;
+						maxind = n;
+					}
+						
+
 					if (p > 0)
-						power.at(ch).at(bufferIndex[ch])[n] = log(p);
+						power.at(ch).at(bufferIndex[ch])[n] = p;
 				}
+
+				//std::cout << "Max ind: " << maxind << std::endl;
 
 				for (int i = 0; i < 5; i++)
 				{

@@ -31,33 +31,49 @@ CoherenceEditor::CoherenceEditor(CoherenceNode* p)
     tabText = "Spectrogram";
     processor = p;
 
-    ch1Selection = new ComboBox("CH1 ComboBox");
-    ch1Selection->setBounds(60, 40, 75, 22);
-    ch1Selection->addListener(this);
-    ch1Selection->addItem("-", 1);
-    ch1Selection->setSelectedId(1, dontSendNotification);
-    addAndMakeVisible(ch1Selection);
+    selectedSubprocessor = NULL_SUBPROCESSOR;
 
-    ch1Label = new Label("CH1:", "CH1:");
-    ch1Label->setFont(Font("Small Text", 13, Font::plain));
-    ch1Label->setBounds(20, 40, 35, 22);
-    ch1Label->setColour(Label::textColourId, Colours::darkgrey);
-    addAndMakeVisible(ch1Label);
+    channelASelection = new ComboBox("CH A ComboBox");
+    channelASelection->setBounds(150, 55, 75, 22);
+    channelASelection->addListener(this);
+    channelASelection->addItem("-", 1);
+    channelASelection->setSelectedId(1, dontSendNotification);
+    addAndMakeVisible(channelASelection);
 
-    ch2Selection = new ComboBox("CH2 ComboBox");
-    ch2Selection->setBounds(60, 70, 75, 22);
-    ch2Selection->addListener(this);
-    ch2Selection->addItem("-", 1);
-    ch2Selection->setSelectedId(1, dontSendNotification);
-    addAndMakeVisible(ch2Selection);
+    channelALabel = new Label("CHANNEL A:", "CHANNEL A:");
+    channelALabel->setFont(Font(Font::getDefaultSerifFontName(), 14, Font::plain));
+    channelALabel->setBounds(150, 30, 85, 20);
+    channelALabel->setColour(Label::textColourId, Colours::darkgrey);
+    addAndMakeVisible(channelALabel);
 
-    ch2Label = new Label("CH2:", "CH2:");
-    ch2Label->setFont(Font("Small Text", 13, Font::plain));
-    ch2Label->setBounds(20, 70, 35, 22);
-    ch2Label->setColour(Label::textColourId, Colours::darkgrey);
-    addAndMakeVisible(ch2Label);
+    channelBSelection = new ComboBox("CH B ComboBox");
+    channelBSelection->setBounds(150, 100, 75, 22);
+    channelBSelection->addListener(this);
+    channelBSelection->addItem("-", 1);
+    channelBSelection->setSelectedId(1, dontSendNotification);
+    addAndMakeVisible(channelBSelection);
 
-    desiredWidth = 250;
+    channelBLabel = new Label("CHANNEL B:", "CHANNEL B:");
+    channelBLabel->setFont(Font(Font::getDefaultSerifFontName(), 14, Font::plain));
+    channelBLabel->setBounds(150, 80, 85, 22);
+    channelBLabel->setColour(Label::textColourId, Colours::darkgrey);
+    addAndMakeVisible(channelBLabel);
+
+    subprocessorSelectionLabel = new Label("Subprocessor", "Subprocessor:");
+    subprocessorSelectionLabel->setBounds(10, 30, 130, 20);
+    addAndMakeVisible(subprocessorSelectionLabel);
+
+    subprocessorSelection = new ComboBox("Subprocessor selection");
+    subprocessorSelection->setBounds(10, 55, 130, 22);
+    subprocessorSelection->addListener(this);
+    addAndMakeVisible(subprocessorSelection);
+
+    subprocessorSampleRateLabel = new Label("Subprocessor sample rate label", "Sample Rate:");
+    subprocessorSampleRateLabel->setFont(Font(Font::getDefaultSerifFontName(), 14, Font::plain));
+    subprocessorSampleRateLabel->setBounds(subprocessorSelection->getX(), subprocessorSelection->getBottom() + 10, 200, 40);
+    addAndMakeVisible(subprocessorSampleRateLabel);
+
+    desiredWidth = 270;
     
 }
 
@@ -66,63 +82,195 @@ CoherenceEditor::~CoherenceEditor() {}
 
 void CoherenceEditor::comboBoxChanged(ComboBox* comboBoxThatHasChanged)
 {
-    if (comboBoxThatHasChanged == ch1Selection)
+    if (comboBoxThatHasChanged == channelASelection)
     {
-        getProcessor()->setParameter(0, ch1Selection->getSelectedId() - 2);
+        getProcessor()->setParameter(0, channelASelection->getSelectedId() - 2 + startChannel);
     }
-    else if (comboBoxThatHasChanged == ch2Selection)
+    else if (comboBoxThatHasChanged == channelBSelection)
     {
-        getProcessor()->setParameter(1, ch2Selection->getSelectedId() - 2);
+        getProcessor()->setParameter(1, channelBSelection->getSelectedId() - 2 + startChannel);
+    } 
+    else if (comboBoxThatHasChanged == subprocessorSelection)
+    {
+        std::cout << "Setting subprocessor to " << comboBoxThatHasChanged->getSelectedId() << std::endl;
+        selectedSubprocessor = comboBoxThatHasChanged->getSelectedId();
+
+        updateAvailableChannels();
+
+        getProcessor()->setParameter(0, channelASelection->getSelectedId() - 2 + startChannel);
+        getProcessor()->setParameter(1, channelBSelection->getSelectedId() - 2 + startChannel);
+
+        processor->updateSubprocessor();
+
     }
 }
+
+void CoherenceEditor::updateAvailableChannels()
+{
+    int chAId = 1;
+    int chBId = 1;
+
+    if (channelASelection->getNumItems() > 0)
+    {
+        chAId = channelASelection->getSelectedId();
+        chBId = channelBSelection->getSelectedId();
+    }
+
+    channelASelection->clear();
+    channelASelection->addItem("-", 1);
+
+    channelBSelection->clear();
+    channelBSelection->addItem("-", 1);
+
+    bool firstChan = true;
+
+    for (int ch = 0; ch < processor->getNumInputs(); ch++)
+    {
+        uint32 channelSubprocessor = processor->getDataSubprocId(ch);
+
+        if (selectedSubprocessor == channelSubprocessor)
+        {
+            if (firstChan)
+            {
+                String sampleRateLabelText = "Sample Rate: ";
+                sampleRateLabelText += String(subprocessorSampleRate[selectedSubprocessor]);
+                subprocessorSampleRateLabel->setText(sampleRateLabelText, dontSendNotification);
+
+                startChannel = ch;
+
+                firstChan = false;
+            }
+ 
+            channelASelection->addItem(String(ch + 1 - startChannel), ch - startChannel + 2);
+            channelBSelection->addItem(String(ch + 1 - startChannel), ch - startChannel + 2);
+        }
+    }
+
+    channelASelection->setSelectedId(chAId, sendNotification); // update channel A
+    channelBSelection->setSelectedId(chBId, sendNotification); // update channel B
+}
+
 
 void CoherenceEditor::updateSettings()
 {
 
-    int newChannelCount = getProcessor()->getNumInputs();
+    std::cout << "Coherence Node updating settings" << std::endl;
 
-    if (newChannelCount != numChannels)
+    uint32 currentSubprocessor = NULL_SUBPROCESSOR;
+
+    subprocessorSampleRate.clear();
+    subprocessorSelection->clear();
+
+    // Step 1: Populate subprocessor list
+    for (int ch = 0; ch < processor->getNumInputs(); ch++)
     {
+        uint32 channelSubprocessor = processor->getDataSubprocId(ch);
 
-        ch1Selection->clear();
-        ch1Selection->addItem("-", 1);
-        ch2Selection->clear();
-        ch2Selection->addItem("-", 1);
-
-        for (int i = 0; i < newChannelCount; i++)
+        if (currentSubprocessor != channelSubprocessor)
         {
-            ch1Selection->addItem(String(i + 1), i + 2);
-            ch2Selection->addItem(String(i + 1), i + 2);
+            currentSubprocessor = channelSubprocessor;
+
+            subprocessorSampleRate.insert({ channelSubprocessor, processor->getDataChannel(ch)->getSampleRate() });
+
+            const DataChannel* channelInfo = processor->getDataChannel(ch);
+            uint16 sourceNodeId = channelInfo->getSourceNodeID();
+            uint16 subProcessorIdx = channelInfo->getSubProcessorIdx();
+            uint32 subProcFullId = GenericProcessor::getProcessorFullId(sourceNodeId, subProcessorIdx);
+
+            String sourceName = channelInfo->getSourceName();
+            subprocessorSelection->addItem(sourceName + " " + String(sourceNodeId) + "/" + String(subProcessorIdx), currentSubprocessor);
         }
+    }
 
-        if (newChannelCount > 0)
+    bool shouldUpdateSubprocessor = true;
+
+    if (selectedSubprocessor != NULL_SUBPROCESSOR)
+    {
+        if (subprocessorSelection->indexOfItemId(selectedSubprocessor) > -1)
         {
-            ch1Selection->setSelectedId(2, dontSendNotification);
-            ch2Selection->setSelectedId(3, dontSendNotification);
-        }   
+            // already selected
+            subprocessorSelection->setSelectedId(selectedSubprocessor, dontSendNotification);
+            shouldUpdateSubprocessor = false;
+        }
         else
         {
-            ch1Selection->setSelectedId(1, dontSendNotification);
-            ch2Selection->setSelectedId(1, dontSendNotification);
-        }
-
-        numChannels = newChannelCount;
-
+            subprocessorSelection->setSelectedItemIndex(0, dontSendNotification);
+            selectedSubprocessor = subprocessorSelection->getSelectedId();
+        } 
     }
+    else
+    {
+        subprocessorSelection->setSelectedItemIndex(0, dontSendNotification);
+        selectedSubprocessor = subprocessorSelection->getSelectedId();
+    }
+
+    updateAvailableChannels();
+
+    if (shouldUpdateSubprocessor)
+        processor->updateSubprocessor();
 }
 
 void CoherenceEditor::startAcquisition()
 {
-    canvas->beginAnimation();
+    subprocessorSelection->setEnabled(false);
+
+    if (canvas != nullptr)
+        canvas->beginAnimation();
 }
 
 void CoherenceEditor::stopAcquisition()
 {
-    canvas->endAnimation();
+    subprocessorSelection->setEnabled(true);
+
+    if (canvas != nullptr)
+        canvas->endAnimation();
 }
 
 Visualizer* CoherenceEditor::createNewCanvas()
 {
     canvas = new CoherenceVisualizer(processor);
     return canvas;
+}
+
+
+
+void CoherenceEditor::saveCustomParameters(XmlElement* xml)
+{
+    VisualizerEditor::saveCustomParameters(xml);
+
+    std::cout << "Saving Spectrum Viewer editor." << std::endl;
+
+    xml->setAttribute("Type", "CrossingDetectorEditor");
+    XmlElement* paramValues = xml->createNewChildElement("VALUES");
+
+    paramValues->setAttribute("subprocessor", subprocessorSelection->getSelectedId());
+    paramValues->setAttribute("channelA", channelASelection->getSelectedId());
+    paramValues->setAttribute("channelB", channelBSelection->getSelectedId());
+
+}
+
+void CoherenceEditor::loadCustomParameters(XmlElement* xml)
+{
+
+    VisualizerEditor::loadCustomParameters(xml);
+
+    std::cout << "Loading Spectrum Viewer editor." << std::endl;
+
+    forEachXmlChildElementWithTagName(*xml, xmlNode, "VALUES")
+    {
+
+        int subprocId = xmlNode->getIntAttribute("subprocessor");
+        int chAId = xmlNode->getIntAttribute("channelA");
+        int chBId = xmlNode->getIntAttribute("channelB");
+
+        if (subprocessorSelection->indexOfItemId(subprocId) > -1)
+            subprocessorSelection->setSelectedId(subprocId, sendNotification);
+
+        if (channelASelection->indexOfItemId(chAId) > -1)
+            channelASelection->setSelectedId(chAId, sendNotification);
+
+        if (channelBSelection->indexOfItemId(chBId) > -1)
+            channelBSelection->setSelectedId(chBId, sendNotification);
+
+    }
 }

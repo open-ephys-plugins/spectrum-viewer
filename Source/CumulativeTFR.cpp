@@ -46,6 +46,16 @@ CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float win
 {
 
 	std::cout << "Creating new TFR" << std::endl;
+	std::cout << "PARAMS:" << std::endl;
+	std::cout << "nFreqs: " << nFreqs << std::endl;
+	std::cout << "Fs: " << Fs << std::endl;
+	std::cout << "stepLen: " << stepLen << std::endl;
+	std::cout << "nTimes: " << nTimes << std::endl;
+	std::cout << "nfft: " << nfft << std::endl;
+	std::cout << "alpha: " << alpha << std::endl;
+	std::cout << "freqStep: " << freqStep << std::endl;
+	std::cout << "freqStart: " << freqStart << std::endl;
+	std::cout << "windowLen: " << windowLen << std::endl;
 
 	std::cout << "Creating waveletArray" << std::endl;
 
@@ -68,6 +78,8 @@ CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float win
 
 	// Trim time close to edge
 	trimTime = windowLen / 2;
+
+	printout = true;
 }
 
 void CumulativeTFR::addTrial(FFTWArrayType& fftBuffer, int chanIt)
@@ -75,34 +87,50 @@ void CumulativeTFR::addTrial(FFTWArrayType& fftBuffer, int chanIt)
 
 	fftBuffer.fftReal();
 
+	//std::cout << fftBuffer.getLength() << std::endl;
+
 	float nWindow = Fs * windowLen;
 
 	//// Use freqData to find generate spectrum and get power ////
 	for (int freq = 0; freq < nFreqs; freq++)
 	{
-		// Multiple fft data by wavelet
-		for (int n = 0; n < nfft; n++)
-		{
-			ifftBuffer.set(n, fftBuffer.getAsComplex(n) * waveletArray[freq][n]);
-		}
-
-		// Inverse FFT on data multiplied by wavelet
-		ifftBuffer.ifft();
-
 		powBuffer[chanIt][freq][0].reset();
+		powBuffer[chanIt][freq][0].addValue(square(std::abs(fftBuffer.getAsComplex(freq))));
 
-		// Loop over nfft
-		for (int n = 0; n < nfft; n++)
+		if (0)
 		{
-			std::complex<double> complex = ifftBuffer.getAsComplex(n);
+			// Multiply fft data by wavelet
+			for (int n = 0; n < nfft; n++)
+			{
+				ifftBuffer.set(n, std::imag(fftBuffer.getAsComplex(n)) * waveletArray[freq][n]);
+			}
 
-			complex *= sqrt(2.0 / nWindow) / double(nfft); // divide by nfft from matlab ifft
-														   // sqrt(2/nWindow) from ft_specest_mtmconvol.m 
+			// Inverse FFT on data multiplied by wavelet
+			ifftBuffer.ifft();
 
-			double power = std::norm(complex);
+			powBuffer[chanIt][freq][0].reset();
 
-			powBuffer[chanIt][freq][0].addValue(power);
+			// Loop over nfft
+			for (int n = 0; n < nfft; n++)
+			{
+				std::complex<double> complex = std::imag(ifftBuffer.getAsComplex(n));
+
+				complex *= sqrt(2.0 / nWindow) / double(nfft); // divide by nfft from matlab ifft
+															   // sqrt(2/nWindow) from ft_specest_mtmconvol.m 
+
+				double power = std::abs(complex);
+
+				if (printout && freq == 1)
+					std::cout << n << ": " << power << std::endl;
+
+				//powBuffer[chanIt][freq][0].addValue(power);
+
+			}
+
+			if (printout)
+				printout = false;
 		}
+		
 
 		///Save convOutput for crss later (TO CHECK)
 	    //spectrumBuffer[chanIt][freq][t] = complex;
@@ -198,6 +226,12 @@ void CumulativeTFR::generateWavelet()
 	float nSampWindow = Fs * windowLen;
 
 	std::cout << "Wavelet frequency: " << Fs << std::endl;
+	std::cout << "nSampWindow : " << nSampWindow << std::endl;
+	std::cout << "nfft: " << nfft << std::endl;
+	std::cout << "freqStart: " << freqStart << std::endl;
+	std::cout << "freqStep: " << freqStep << std::endl;
+
+	//std::cout << "Hann window: " << std::endl;
 
 	for (int position = 0; position < nfft; position++)
 	{
@@ -218,8 +252,11 @@ void CumulativeTFR::generateWavelet()
 		{
 			// Move start of wave to nfft - windowSize/2
 			int hannPosition = position - (nfft - nSampWindow / 2);
-			hann[position] = square(std::sin(hannPosition*double_Pi / nSampWindow));
+			hann[position] = square(std::sin(hannPosition * double_Pi / nSampWindow));
 		}
+
+		
+		//std::cout << position << ": "  << hann[position] << std::endl;
 	}
 
 	// Wavelet
@@ -227,13 +264,23 @@ void CumulativeTFR::generateWavelet()
 
 	FFTWArrayType fftWaveletBuffer(nfft);
 
+	//std::cout << "Sine wave at 0 " << std::endl;
+
+	//std::cout << "Wavelet array: " << std::endl;
 	for (int freq = 0; freq < nFreqs; freq++)
 	{
+
+		
 		for (int position = 0; position < nfft; position++)
 		{
 			// Make sin and cos wave.
 			sinWave[position] = std::sin(position * freqNormalized * (2 * double_Pi) / Fs);
 			cosWave[position] = std::cos(position * freqNormalized * (2 * double_Pi) / Fs);
+		
+			//if (freq == 0)
+			//{
+			//	std::cout << position << ": " << sinWave[position] << std::endl;
+			//}
 		}
 		freqNormalized += freqStep;
 
@@ -251,6 +298,8 @@ void CumulativeTFR::generateWavelet()
 		{
 			waveletArray[freq][i] = fftWaveletBuffer.getAsComplex(i);
 		}
+
+		//std::cout << freq << ": " << waveletArray[freq][0] << std::endl;
 	}
 }
 

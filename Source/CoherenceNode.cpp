@@ -66,11 +66,10 @@ AudioProcessorEditor* CoherenceNode::createEditor()
 
 void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 {
-	// Update coherence file
-	//checkCohFile();
 
-	///// Add incoming data to data buffer. Let thread get the ok to start at 8 seconds of data ////
+	///// Add incoming data to data buffer. ////
 	AtomicScopedWritePtr<Array<FFTWArrayType>> dataWriter(dataBuffer);
+
 	// Check writer
 	if (!dataWriter.isValid())
 	{
@@ -80,6 +79,9 @@ void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 	//for loop over active channels and update buffer with new data
 	int nSamples = getNumSamples(channels[0]); // all channels the same?
 	int maxSamples = dataWriter->getReference(0).getLength();
+
+	bool updateBuffer = false;
+	int samplesAdded[2] = { 0, 0 };
 
 	for (int i = 0; i < 2; i++)
 	{
@@ -96,30 +98,39 @@ void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 		// loop through available samples
 		for (int n = 0; n < nSamples; n++)
 		{
-			if ((sampleIdx[i] % downsampleFactor) > 0) // average adjacent samples
+			if ((sampleIdx[i] % downsampleFactor) < (downsampleFactor -1)) // average adjacent samples
 			{
+				//std::cout << "skip" << std::endl;
 				value += incomingDataPointer[n];
 				sampleIdx.set(i, sampleIdx[i] + 1);
+				samplesAdded[i]++;
+				lastValue.set(i, value);
 			}
 			else
 			{
-				value = incomingDataPointer[n];
-				//value /= downsampleFactor;
+				//std::cout << " " << std::endl;
+				value += incomingDataPointer[n];
+				value /= downsampleFactor;
 				dataWriter->getReference(i).set(bufferIdx[i], value);
 				bufferIdx.set(i, bufferIdx[i] + 1);
 				sampleIdx.set(i, 0);
 				value = 0;
+				samplesAdded[i]++;
+				lastValue.set(i, value);
 
 				if (bufferIdx[i] == maxSamples)
+				{
+					updateBuffer = true;
 					break;
+				}
+					
 			}
 		}
 
-		lastValue.set(i, value);
 	}
 
 	// channel buf is full. Update buffer.
-	if (bufferIdx[0] >= maxSamples || bufferIdx[1] >= maxSamples)
+	if (updateBuffer)
 	{
 		//std::cout << "Pushing buffer update" << std::endl;
 		dataWriter.pushUpdate();
@@ -127,7 +138,71 @@ void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 		bufferIdx.set(0, 0);
 		bufferIdx.set(1, 0);
 		numTrials++;
+		updateBuffer = false;
 	}
+
+	if (samplesAdded[0] < nSamples)
+	{
+		for (int i = 0; i < 2; i++)
+		{
+
+			if (nSamples == 0 || channels[i] < 0)
+			{
+				continue;
+			}
+
+			const float* incomingDataPointer = continuousBuffer.getReadPointer(channels[i]);
+
+			float value = lastValue[i];
+
+			// loop through available samples
+			for (int n = samplesAdded[i]; n < nSamples; n++)
+			{
+				if ((sampleIdx[i] % downsampleFactor) > 0) // average adjacent samples
+				{
+					value += incomingDataPointer[n];
+					sampleIdx.set(i, sampleIdx[i] + 1);
+					samplesAdded[i]++;
+					lastValue.set(i, value);
+				}
+				else
+				{
+					//value += incomingDataPointer[n];
+					//value /= downsampleFactor;
+
+					value = incomingDataPointer[n];
+					dataWriter->getReference(i).set(bufferIdx[i], value);
+					bufferIdx.set(i, bufferIdx[i] + 1);
+					sampleIdx.set(i, 0);
+					value = 0;
+					samplesAdded[i]++;
+					lastValue.set(i, value);
+
+					if (bufferIdx[i] == maxSamples)
+					{
+						updateBuffer = true;
+						break;
+					}
+
+				}
+			}
+
+		}
+	}
+
+	// channel buf is full. Update buffer.
+	if (updateBuffer)
+	{
+		//std::cout << "Pushing buffer update" << std::endl;
+		dataWriter.pushUpdate();
+		// Reset samples added and increment trial number
+		bufferIdx.set(0, 0);
+		bufferIdx.set(1, 0);
+		numTrials++;
+		updateBuffer = false;
+	}
+
+	
 }
 
 void CoherenceNode::run()
@@ -157,23 +232,43 @@ void CoherenceNode::run()
 	}
 }
 
+
+
+uint32 CoherenceNode::getDataSubprocId(int chan)
+{
+	return getChannelSourceId(getDataChannel(chan));
+}
+
+uint32 CoherenceNode::getChannelSourceId(const InfoObjectCommon* chan)
+{
+	return getProcessorFullId(chan->getSourceNodeID(), chan->getSubProcessorIdx());
+}
+
+
 void CoherenceNode::updateSettings()
 {
 
-	if (settings.numInputs > 0)
+}
+
+void CoherenceNode::updateSubprocessor()
+{
+	if ((channels[0] > -1) || (channels[1] > -1))
 	{
-		float Fs1 = getDataChannel(channels[0])->getSampleRate();
-		float Fs2 = getDataChannel(channels[1])->getSampleRate();
+		float Fs; 
 
-		downsampleFactor = (int)Fs1 / targetRate;
+		if (channels[0] > -1)
+			Fs = getDataChannel(channels[0])->getSampleRate();
+		else
+			Fs = getDataChannel(channels[1])->getSampleRate();
 
-		int size1 = int(Fs1 / downsampleFactor * tfrParams.winLen);
-		int size2 = int(Fs2 / downsampleFactor * tfrParams.winLen);
+		downsampleFactor = (int) Fs / targetRate;
 
-		std::cout << "Updating data buffers for " << Fs1 << " Hz, downsample factor of " << downsampleFactor << std::endl;
-		updateDataBufferSize(size1, size2);
+		int bufferSize = int(Fs / downsampleFactor * tfrParams.winLen);
 
-		tfrParams.Fs = Fs1 / downsampleFactor;
+		std::cout << "Updating data buffers for " << Fs << " Hz, downsample factor of " << downsampleFactor << std::endl;
+		updateDataBufferSize(bufferSize, bufferSize);
+
+		tfrParams.Fs = Fs / downsampleFactor;
 
 		// (Start - end freq) / stepsize
 		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
@@ -186,7 +281,6 @@ void CoherenceNode::updateSettings()
 
 		resetTFR();
 	}
-
 }
 
 void CoherenceNode::updateDataBufferSize(int size1, int size2)
@@ -317,84 +411,8 @@ bool CoherenceNode::disable()
 }
 
 
-
-
 bool CoherenceNode::hasEditor() const
 {
 	return true;
 }
 
-void CoherenceNode::saveCustomParametersToXml(XmlElement* parentElement)
-{
-	XmlElement* mainNode = parentElement->createNewChildElement("COHERENCENODE");
-
-	// ------ Save Groups ------ //
-	//XmlElement* group1Node = mainNode->createNewChildElement("Group1");
-	//XmlElement* group2Node = mainNode->createNewChildElement("Group2");
-
-	//for (int i = 0; i < group1Channels.size(); i++)
-	//{
-	//	group1Node->setAttribute("Chan" + String(i), group1Channels[i]);
-	//}
-	//for (int i = 0; i < group2Channels.size(); i++)
-	//{
-	//	group2Node->setAttribute("Chan" + String(i), group2Channels[i]);
-	//}
-
-	// ------ Save Other Params ------ //
-	//mainNode->setAttribute("alpha", alpha);
-}
-
-void CoherenceNode::loadCustomParametersFromXml()
-{
-	/*
-	int numActiveInputs = getActiveInputs().size();
-	if (parametersAsXml)
-	{
-		forEachXmlChildElementWithTagName(*parametersAsXml, mainNode, "COHERENCENODE")
-		{
-			// Load group 1 channels
-			forEachXmlChildElementWithTagName(*mainNode, node, "Group1")
-			{
-				group1Channels.clear();
-				for (int i = 0; i < numActiveInputs; i++)
-				{
-					int channel = node->getIntAttribute("Chan" + String(i), -1);
-					if (channel != -1)
-					{
-						group1Channels.add(channel);
-					}
-					else
-					{
-						break;
-					}
-				}
-			}
-			// Load group 2 channels
-			forEachXmlChildElementWithTagName(*mainNode, node, "Group2")
-			{
-				group2Channels.clear();
-				for (int i = 0; i < numActiveInputs; i++)
-				{
-					int channel = node->getIntAttribute("Chan" + String(i), -1);
-					if (channel != -1)
-					{
-						group2Channels.add(channel);
-					}
-					else
-					{
-						break;
-					}
-				}
-			}
-			// Load other params
-			alpha = mainNode->getDoubleAttribute("alpha");
-		}
-
-		//Start TFR
-		if (group1Channels.size() > 0 && group2Channels.size() > 0)
-		{
-			resetTFR();
-		}
-	}*/
-}

@@ -45,17 +45,32 @@ public:
     Visualizer* createNewCanvas() override;
 
     void updateSettings() override;
+    void updateAvailableChannels();
+
+    void saveCustomParameters(XmlElement*) override;
+    void loadCustomParameters(XmlElement*) override;
 
 private:
     CoherenceNode* processor;
 
     int numChannels;
+    uint32 selectedSubprocessor;
+    int startChannel;
 
-    ScopedPointer<Label> ch1Label;
-    ScopedPointer<ComboBox> ch1Selection;
+    std::map<uint32, float> subprocessorSampleRate;
 
-    ScopedPointer<Label> ch2Label;
-    ScopedPointer<ComboBox> ch2Selection;
+    ScopedPointer<Label> channelALabel;
+    ScopedPointer<ComboBox> channelASelection;
+
+    ScopedPointer<Label> channelBLabel;
+    ScopedPointer<ComboBox> channelBSelection;
+
+    ScopedPointer<Label> subprocessorSelectionLabel;
+    ScopedPointer<ComboBox> subprocessorSelection;
+
+    ScopedPointer<Label> subprocessorSampleRateLabel;
+
+    const int NULL_SUBPROCESSOR = 9999;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CoherenceEditor);
 };

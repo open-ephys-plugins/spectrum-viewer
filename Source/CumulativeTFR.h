@@ -141,6 +141,10 @@ private:
 
 	int trimTime;
 
+
+	bool printout;
+
+
 	// # channels x # frequencies x # times
 	vector<vector<vector<std::complex<double>>>> spectrumBuffer;
 
