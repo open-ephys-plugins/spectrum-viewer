@@ -42,7 +42,7 @@ CoherenceEditor::CoherenceEditor(CoherenceNode* p)
 
     channelALabel = new Label("CHANNEL A:", "CHANNEL A:");
     channelALabel->setFont(Font(Font::getDefaultSerifFontName(), 14, Font::plain));
-    channelALabel->setBounds(150, 30, 85, 20);
+    channelALabel->setBounds(150, 35, 85, 20);
     channelALabel->setColour(Label::textColourId, Colours::darkgrey);
     addAndMakeVisible(channelALabel);
 
