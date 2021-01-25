@@ -125,7 +125,7 @@ public:
 
 private:
 	// Generate wavelet to multplied by the channel spectrum
-	void CumulativeTFR::generateWavelet();
+	void generateWavelet();
 
 	const int nFreqs;
 	const int Fs;

@@ -23,6 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "CoherenceVisualizer.h"
 #include <math.h>
+#include <climits>
 
 CoherenceVisualizer::CoherenceVisualizer(CoherenceNode* n)
 	: viewport(new Viewport())
