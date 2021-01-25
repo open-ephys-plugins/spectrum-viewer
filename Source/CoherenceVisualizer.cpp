@@ -246,8 +246,8 @@ void VerticalGroupSet::addGroup(std::initializer_list<Component*> components)
 		}
 		int width = component->getWidth();
 		int height = component->getHeight();
-		Point<int> positionFromItsParent = component->getPosition();
-		Point<int> localPosition = getLocalPoint(componentParent, positionFromItsParent);
+		juce::Point<int> positionFromItsParent = component->getPosition();
+		juce::Point<int> localPosition = getLocalPoint(componentParent, positionFromItsParent);
 
 		// update bounds
 		leftBound = jmin(leftBound, localPosition.x - PADDING);
