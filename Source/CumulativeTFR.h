@@ -124,7 +124,7 @@ public:
 
 
 private:
-	// Generate wavelet to multplied by the channel spectrum
+	// Generate wavelet to be multplied by the channel spectrum
 	void generateWavelet();
 
 	const int nFreqs;

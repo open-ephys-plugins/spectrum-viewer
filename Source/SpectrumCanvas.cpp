@@ -21,11 +21,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-#include "CoherenceVisualizer.h"
+#include "SpectrumCanvas.h"
 #include <math.h>
 #include <climits>
 
-CoherenceVisualizer::CoherenceVisualizer(CoherenceNode* n)
+SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	: viewport(new Viewport())
 	, canvas(new Component("canvas"))
 	, processor(n)
@@ -71,29 +71,29 @@ CoherenceVisualizer::CoherenceVisualizer(CoherenceNode* n)
 }
 
 
-CoherenceVisualizer::~CoherenceVisualizer()
+SpectrumCanvas::~SpectrumCanvas()
 {
 	stopCallbacks();
 }
 
-void CoherenceVisualizer::resized()
+void SpectrumCanvas::resized()
 {
 	viewport->setSize(getWidth(), getHeight());
 }
 
-void CoherenceVisualizer::refreshState() {}
+void SpectrumCanvas::refreshState() {}
 
-void CoherenceVisualizer::update()
+void SpectrumCanvas::update()
 {
 	
 }
 
-void CoherenceVisualizer::paint(Graphics& g)
+void SpectrumCanvas::paint(Graphics& g)
 {
 	g.fillAll(Colours::lightgrey); // roughly matches editor background (without gradient)
 }
 
-void CoherenceVisualizer::refresh()
+void SpectrumCanvas::refresh()
 {
 	
 	// Update plot if frequency has changed.
@@ -191,11 +191,11 @@ void CoherenceVisualizer::refresh()
 	}
 }
 
-void CoherenceVisualizer::beginAnimation()
+void SpectrumCanvas::beginAnimation()
 {
 	
 }
-void CoherenceVisualizer::endAnimation()
+void SpectrumCanvas::endAnimation()
 {
 	
 }
@@ -230,7 +230,7 @@ void VerticalGroupSet::addGroup(std::initializer_list<Component*> components)
 	DrawableRectangle* thisGroup;
 	groups.add(thisGroup = new DrawableRectangle);
 	addChildComponent(thisGroup);
-	const RelativePoint cornerSize(CORNER_SIZE, CORNER_SIZE);
+	const Point<float> cornerSize(CORNER_SIZE, CORNER_SIZE);
 	thisGroup->setCornerSize(cornerSize);
 	thisGroup->setFill(bgColor);
 

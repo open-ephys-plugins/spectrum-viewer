@@ -21,17 +21,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-#include "CoherenceNode.h"
-#include "CoherenceNodeEditor.h"
-/********** node ************/
-CoherenceNode::CoherenceNode()
+#include "SpectrumViewer.h"
+#include "SpectrumViewerEditor.h"
+
+
+SpectrumViewer::SpectrumViewer()
 	: GenericProcessor("Spectrum Viewer")
 	, Thread("FFT Thread")
 	, nSamplesWait(0)
     , displayType(POWER_SPECTRUM)
 {
-	setProcessorType(PROCESSOR_TYPE_SINK);
-
 	tfrParams.segLen = 0.25;
 	tfrParams.freqStart = 4;
 	tfrParams.freqEnd = 1000;
@@ -42,8 +41,7 @@ CoherenceNode::CoherenceNode()
 	tfrParams.Fs = 2000;
 	tfrParams.alpha = 0;
 
-	channels.add(0);
-	channels.add(1);
+	addSelectedChannelsParameter(Parameter::STREAM_SCOPE, "Channels", "The channels to analyze", 2);
 
 	bufferIdx.add(0);
 	bufferIdx.add(0);
@@ -55,16 +53,16 @@ CoherenceNode::CoherenceNode()
 	lastValue.add(0.0f);
 }
 
-CoherenceNode::~CoherenceNode()
+SpectrumViewer::~SpectrumViewer()
 {}
 
-AudioProcessorEditor* CoherenceNode::createEditor()
+AudioProcessorEditor* SpectrumViewer::createEditor()
 {
-	editor = new CoherenceEditor(this);
-	return editor;
+	editor = std::make_unique<SpectrumViewerEditor>(this);
+	return editor.get();
 }
 
-void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
+void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 {
 
 	///// Add incoming data to data buffer. ////
@@ -205,7 +203,7 @@ void CoherenceNode::process(AudioSampleBuffer& continuousBuffer)
 	
 }
 
-void CoherenceNode::run()
+void SpectrumViewer::run()
 {
 	AtomicScopedReadPtr<Array<FFTWArrayType>> dataReader(dataBuffer);
 
@@ -234,23 +232,8 @@ void CoherenceNode::run()
 
 
 
-uint32 CoherenceNode::getDataSubprocId(int chan)
-{
-	return getChannelSourceId(getDataChannel(chan));
-}
 
-uint32 CoherenceNode::getChannelSourceId(const InfoObjectCommon* chan)
-{
-	return getProcessorFullId(chan->getSourceNodeID(), chan->getSubProcessorIdx());
-}
-
-
-void CoherenceNode::updateSettings()
-{
-
-}
-
-void CoherenceNode::updateSubprocessor()
+void SpectrumViewer::updateSubprocessor()
 {
 	if ((channels[0] > -1) || (channels[1] > -1))
 	{
@@ -283,7 +266,7 @@ void CoherenceNode::updateSubprocessor()
 	}
 }
 
-void CoherenceNode::updateDataBufferSize(int size1, int size2)
+void SpectrumViewer::updateDataBufferSize(int size1, int size2)
 {
 	// no writers or readers can exist here
 	// so this can't be called during acquisition
@@ -311,7 +294,7 @@ void CoherenceNode::updateDataBufferSize(int size1, int size2)
 
 }
 
-void CoherenceNode::updateDisplayBufferSize(int newSize)
+void SpectrumViewer::updateDisplayBufferSize(int newSize)
 {
 	power.map([=](std::vector<std::vector<float>>& vec)
 	{
@@ -329,27 +312,7 @@ void CoherenceNode::updateDisplayBufferSize(int newSize)
 }
 
 
-
-void CoherenceNode::setParameter(int parameterIndex, float newValue)
-{
-	if (settings.numInputs < 0)
-		return;
-
-	switch (parameterIndex)
-	{
-	case 0:
-		channels.set(0, int(newValue));
-		std::cout << "Setting channel A to " << int(newValue) << std::endl;
-		break;
-	case 1:
-		channels.set(1, int(newValue));
-		std::cout << "Setting channel B to " << int(newValue) << std::endl;
-		break;
-	}
-}
-
-
-void CoherenceNode::resetTFR()
+void SpectrumViewer::resetTFR()
 {
 	
 	nSamplesAdded = 0;
@@ -381,7 +344,7 @@ void CoherenceNode::resetTFR()
 
 
 
-bool CoherenceNode::enable()
+bool SpectrumViewer::startAcquisition()
 {
 	if (isEnabled)
 	{
@@ -400,19 +363,10 @@ bool CoherenceNode::enable()
 	return isEnabled;
 }
 
-bool CoherenceNode::disable()
+bool SpectrumViewer::stopAcquisition()
 {
-	CoherenceEditor* editor = static_cast<CoherenceEditor*>(getEditor());
-	editor->disable();
-
 	signalThreadShouldExit();
 
-	return true;
-}
-
-
-bool CoherenceNode::hasEditor() const
-{
 	return true;
 }
 

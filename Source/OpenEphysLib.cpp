@@ -22,7 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include <PluginInfo.h>
-#include "CoherenceNode.h"
+#include "SpectrumViewer.h"
 #include <string>
 #ifdef WIN32
 #include <Windows.h>
@@ -38,7 +38,7 @@ extern "C" EXPORT void getLibInfo(Plugin::LibraryInfo* info)
 {
 	info->apiVersion = PLUGIN_API_VER;
     info->name = "Spectrum Viewer";
-	info->libVersion = 1;
+	info->libVersion = "0.1.0";
 	info->numPlugins = NUM_PLUGINS;
 }
 
@@ -47,10 +47,10 @@ extern "C" EXPORT int getPluginInfo(int index, Plugin::PluginInfo* info)
 	switch (index)
 	{
 	case 0:
-		info->type = Plugin::PLUGIN_TYPE_PROCESSOR;
+		info->type = Plugin::PROCESSOR;
         info->processor.name = "Spectrum Viewer";
-		info->processor.type = Plugin::SinkProcessor;
-		info->processor.creator = &(Plugin::createProcessor<CoherenceNode>);
+		info->processor.type = Plugin::Processor::SINK;
+		info->processor.creator = &(Plugin::createProcessor<SpectrumViewer>);
 		break;
 	default:
 		return -1;

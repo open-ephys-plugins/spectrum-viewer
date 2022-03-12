@@ -21,11 +21,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-#ifndef COHERENCE_VIS_H_INCLUDED
-#define COHERENCE_VIS_H_INCLUDED
+#ifndef SPECTRUMCANVAS_H_INCLUDED
+#define SPECTRUMCANVAS_H_INCLUDED
 
 #include "AtomicSynchronizer.h"
-#include "CoherenceNode.h"
+#include "SpectrumViewer.h"
 #include <VisualizerWindowHeaders.h>
 
 #include "../../Source/Processors/Visualization/MatlabLikePlot.h" // relative import, may not work
@@ -48,36 +48,49 @@ private:
 	static const int CORNER_SIZE = 8;
 };
 
-class CoherenceVisualizer : public Visualizer
+/** 
+
+	Draws the real-time power spectrum
+
+*/
+class SpectrumCanvas : public Visualizer
 	//, public ComboBox::Listener
 	//, public Button::Listener
 	//, public Label::Listener
 {
 public:
-	CoherenceVisualizer(CoherenceNode* n);
-	~CoherenceVisualizer();
 
+	/** Constructor */
+	SpectrumCanvas(SpectrumViewer* n);
+
+	/** Destructor */
+	~SpectrumCanvas();
+
+	/** Updates component boundaries */
 	void resized() override;
 
+	/** Called when tab becomes visible again */
 	void refreshState() override;
+
+	/** Updates settings */
 	void update() override;
+
+	/** Called instead of repaint to avoid re-painting sub-components*/
 	void refresh() override;
+
+	/** Starts animation callbacks */
 	void beginAnimation() override;
+
+	/** Stops animation callbacks */
 	void endAnimation() override;
-	//void setParameter(int, float) override;
-	//void setParameter(int, int, int, float) override;
-	//void comboBoxChanged(ComboBox* comboBoxThatHasChanged) override;
-	//void labelTextChanged(Label* labelThatHasChanged) override;
-	//void buttonEvent(Button* buttonEvent);
-	//void buttonClicked(Button* buttonClick) override;
+
+	/** Draws the canvas */
 	void paint(Graphics& g) override;
 
-	void setParameter(int, float) {}
-	void setParameter(int, int, int, float) {}
 
 private:
 
-	CoherenceNode* processor;
+	SpectrumViewer* processor;
 
 	DisplayType displayType;
 
@@ -96,7 +109,7 @@ private:
 
 	ScopedPointer<MatlabLikePlot> plot;
 
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CoherenceVisualizer);
+	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumCanvas);
 };
 
-#endif // COHERENCE_VIS_H_INCLUDED
+#endif // SPECTRUMCANVAS_H_INCLUDED

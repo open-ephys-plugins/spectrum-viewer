@@ -21,17 +21,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-#ifndef COHERENCE_NODE_H_INCLUDED
-#define COHERENCE_NODE_H_INCLUDED
+#ifndef SPECTRUM_VIEWER_H_INCLUDED
+#define SPECTRUM_VIEWER_H_INCLUDED
 
-/*
-
-Coherence Node - continuously compute and display magnitude-squared coherence
-(measure of phase synchrony) between pairs of LFP signals for a set of frequencies
-of interest. Displays either raw coherence values or change from a saved baseline,
-in units of z-score.
-
-*/
 
 #include <ProcessorHeaders.h>
 #include <VisualizerEditorHeaders.h>
@@ -53,58 +45,62 @@ enum DisplayType {
 	POWER_SPECTRUM = 0
 };
 
-class CoherenceNode : public GenericProcessor, public Thread
+/*
+
+	Compute and display power spectra for incoming
+	continuous channels.
+
+*/
+class SpectrumViewer : 
+	public GenericProcessor, 
+	public Thread
 {
-	friend class CoherenceEditor;
-	friend class CoherenceVisualizer;
+	friend class SpectrumViewerEidtor;
+	friend class SpectrumCanvas;
 public:
-	CoherenceNode();
-	~CoherenceNode();
 
-	bool hasEditor() const override;
+	/** Constructor */
+	SpectrumViewer();
 
+	/** Destructor */
+	~SpectrumViewer();
+
+	/** Create SpectrumViewerEditor */
 	AudioProcessorEditor* createEditor() override;
 
-	void setParameter(int parameterIndex, float newValue) override;
+	/** Update buffers for FFT calculation*/
+	void process(AudioBuffer<float>& continuousBuffer) override;
 
-	void process(AudioSampleBuffer& continuousBuffer) override;
+	/** Launch FFT calculation thread */
+	bool startAcquisition() override;
 
-	//bool isReady() override;
-	bool enable() override;
-	bool disable() override;
+	/** Stop FFT calculation thread*/
+	bool stopAcquisition() override;
 
-	// thread function - coherence calculation
+	/** Run FFT calculation in a separate thread */
 	void run() override;
 
-	// Handle changing channels/groups
-	void updateSettings() override;
-
-	// Variable to store incoming data
+	/** Variable to store incoming data */
 	AtomicallyShared<Array<FFTWArrayType>> dataBuffer;
 
-	// Array of powers across frequencies, for multiple channels
+	/** Array of powers across frequencies, for multiple channels */
 	AtomicallyShared<std::vector<std::vector<float>>> power;
 
-	// Array of coherence values across frequencies
+	/** Array of coherence values across frequencies */
 	AtomicallyShared<std::vector<double>> coherence;
 
+	/** Type of visualization (currently only POWER_SPECTRUM is supported) */
 	DisplayType displayType;
-
-	uint32 getDataSubprocId(int chan);
-
-	uint32 getChannelSourceId(const InfoObjectCommon* chan);
-
-	void updateSubprocessor();
-
 
 private:
 
-	ScopedPointer<CumulativeTFR> TFR;
-
-	// Append FFTWArrays to data buffer
+	/** Append FFTWArrays to data buffer */
 	void updateDataBufferSize(int size1, int size2);
 
+	/** Change the size of the data buffer*/
 	void updateDisplayBufferSize(int newSize);
+
+	ScopedPointer<CumulativeTFR> TFR;
 
 	int nSamplesAdded; // holds how many samples were added for each channel
 	AudioBuffer<float> channelData; // Holds the segment buffer for each channel.
@@ -170,7 +166,7 @@ private:
 
 	TFRParameters tfrParams;
 
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CoherenceNode);
+	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumViewer);
 };
 
-#endif // COHERENCE_NODE_H_INCLUDED
+#endif // SPECTRUM_VIEWER_H_INCLUDED
