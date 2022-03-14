@@ -218,7 +218,7 @@ void SpectrumViewer::run()
 			for (int activeChan = 0; activeChan < 2; activeChan++)
 			{
 				//std::cout << "Adding channel " << activeChan << std::endl;
-				TFR->addTrial(dataReader->getReference(activeChan), activeChan);
+				//TFR->addTrial(dataReader->getReference(activeChan), activeChan);
 			}
 
 			if (displayType == POWER_SPECTRUM)
@@ -230,10 +230,12 @@ void SpectrumViewer::run()
 	}
 }
 
+void SpectrumViewer::updateSettings()
+{
 
+}
 
-
-void SpectrumViewer::updateSubprocessor()
+/*void SpectrumViewer::updateSubprocessor()
 {
 	if ((channels[0] > -1) || (channels[1] > -1))
 	{
@@ -264,7 +266,7 @@ void SpectrumViewer::updateSubprocessor()
 
 		resetTFR();
 	}
-}
+}*/
 
 void SpectrumViewer::updateDataBufferSize(int size1, int size2)
 {

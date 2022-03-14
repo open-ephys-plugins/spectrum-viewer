@@ -37,7 +37,5 @@ SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
 {
-    canvas = std::make_unique<SpectrumCanvas>(processor);
-
-    return canvas.get();
+    return new SpectrumCanvas((SpectrumViewer*)getProcessor());;
 }

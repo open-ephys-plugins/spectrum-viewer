@@ -38,14 +38,26 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 
 	juce::Rectangle<int> bounds;
 	
-	plot = new MatlabLikePlot();
-	plot->setBounds(bounds = { 20, 20, 800, 600 });
-	plot->setTitle("POWER SPECTRUM");
-	plot->setRange(0, 500, 0.0, 10, false);
-	plot->setControlButtonsVisibile(false);
-	plot->setAutoRescale(true);
-	//plot->drawComponent->setScaleString("Hz", "Power"); // drawComponent is private
-	canvas->addAndMakeVisible(plot);
+	plt.setBounds(bounds = { 20, 20, 800, 600 });
+	plt.title("POWER SPECTRUM");
+	XYRange range{ 0, 500, 0, 10 };
+	plt.setRange(range);
+	plt.showControls(true);
+	plt.autoRescale(true);
+
+	canvas->addAndMakeVisible(plt);
+
+	std::vector<float> x;
+	std::vector<float> y;
+
+	for (int i = 0; i < 500; i += 10)
+	{
+		x.push_back(i);
+		y.push_back(i);
+	}
+
+	plt.plot(x, y, Colours::orange);
+	plt.show();
 
 	canvasBounds = canvasBounds.getUnion(bounds);
 	canvasBounds.setBottom(canvasBounds.getBottom() + 10);
@@ -66,14 +78,12 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 			power[ch][i].assign(250, 1.0f);
 	}
 	
-
-	startCallbacks();
 }
 
 
 SpectrumCanvas::~SpectrumCanvas()
 {
-	stopCallbacks();
+	
 }
 
 void SpectrumCanvas::resized()
@@ -138,7 +148,7 @@ void SpectrumCanvas::refresh()
 
 		if (powerReader.isValid())
 		{
-			plot->clearplot();
+			plt.clear();
 
 			for (int ch = 0; ch < 2; ch++)
 			{
@@ -176,9 +186,7 @@ void SpectrumCanvas::refresh()
 					else
 						color = Colours::lightgreen.withAlpha(alphaValue);
 
-					XYline line = XYline(4, 4, power[ch][trueIndex], 1, color);
-
-					plot->plotxy(line);
+					plt.plot(xvalues, power[ch][trueIndex], color);
 				}
 
 				bufferIndex.set(ch, (bufferIndex[ch] + 1) % 5);
@@ -186,18 +194,18 @@ void SpectrumCanvas::refresh()
 			}	
 		}
 
-		plot->repaint();
+		plt.show();
 		
 	}
 }
 
 void SpectrumCanvas::beginAnimation()
 {
-	
+	startCallbacks();
 }
 void SpectrumCanvas::endAnimation()
 {
-	
+	stopCallbacks();
 }
 
 

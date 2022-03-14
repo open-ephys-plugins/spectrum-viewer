@@ -68,6 +68,9 @@ public:
 	/** Create SpectrumViewerEditor */
 	AudioProcessorEditor* createEditor() override;
 
+	/** Called when upstream settings are updated */
+	void updateSettings();
+
 	/** Update buffers for FFT calculation*/
 	void process(AudioBuffer<float>& continuousBuffer) override;
 

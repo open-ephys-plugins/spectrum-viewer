@@ -28,8 +28,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "SpectrumViewer.h"
 #include <VisualizerWindowHeaders.h>
 
-#include "../../Source/Processors/Visualization/MatlabLikePlot.h" // relative import, may not work
-
 class VerticalGroupSet : public Component
 {
 public:
@@ -107,7 +105,9 @@ private:
 	int freqStart;
 	int freqEnd;
 
-	ScopedPointer<MatlabLikePlot> plot;
+	InteractivePlot plt;
+
+	std::vector<float> xvalues;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumCanvas);
 };
