@@ -63,13 +63,13 @@ public:
 	SpectrumViewer();
 
 	/** Destructor */
-	~SpectrumViewer();
+    ~SpectrumViewer() { }
 
 	/** Create SpectrumViewerEditor */
 	AudioProcessorEditor* createEditor() override;
 
 	/** Called when upstream settings are updated */
-	void updateSettings();
+	void updateSettings() override;
 
 	/** Update buffers for FFT calculation*/
 	void process(AudioBuffer<float>& continuousBuffer) override;
@@ -82,6 +82,9 @@ public:
 
 	/** Run FFT calculation in a separate thread */
 	void run() override;
+    
+    /** Called when parameter value is updated*/
+    void parameterValueChanged(Parameter* param) override;
 
 	/** Variable to store incoming data */
 	AtomicallyShared<Array<FFTWArrayType>> dataBuffer;
@@ -126,6 +129,8 @@ private:
 	const float targetRate = 4000;
 
 	int downsampleFactor = 10;
+    
+    uint16 activeStream;
 
 	int numTrials;
 

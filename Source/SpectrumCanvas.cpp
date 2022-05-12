@@ -42,8 +42,6 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	plt.title("POWER SPECTRUM");
 	XYRange range{ 0, 500, 0, 10 };
 	plt.setRange(range);
-	plt.showControls(true);
-	plt.autoRescale(true);
 
 	canvas->addAndMakeVisible(plt);
 

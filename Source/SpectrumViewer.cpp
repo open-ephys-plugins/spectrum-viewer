@@ -53,13 +53,28 @@ SpectrumViewer::SpectrumViewer()
 	lastValue.add(0.0f);
 }
 
-SpectrumViewer::~SpectrumViewer()
-{}
-
 AudioProcessorEditor* SpectrumViewer::createEditor()
 {
 	editor = std::make_unique<SpectrumViewerEditor>(this);
 	return editor.get();
+}
+
+void SpectrumViewer::parameterValueChanged(Parameter* param)
+{
+    if (param->getStreamId() == activeStream)
+    {
+        if (param->getName() == "Channels")
+        {
+            channels.clear();
+            
+            SelectedChannelsParameter* p = (SelectedChannelsParameter*) param;
+            
+            for (auto i : p->getArrayValue())
+            {
+                channels.add(int(i));
+            }
+        }
+    }
 }
 
 void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
@@ -75,7 +90,7 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 	}
 
 	//for loop over active channels and update buffer with new data
-	int nSamples = getNumSamples(channels[0]); // all channels the same?
+	int nSamples = getNumSamplesInBlock(activeStream); // all channels the same?
 	int maxSamples = dataWriter->getReference(0).getLength();
 
 	bool updateBuffer = false;
@@ -232,41 +247,38 @@ void SpectrumViewer::run()
 
 void SpectrumViewer::updateSettings()
 {
+    
+    activeStream = 0;
+    
+    if (dataStreams.size() > 0)
+        activeStream = dataStreams[0]->getStreamId();
+    
+    if (activeStream == 0)
+        return;
+    
+    float Fs = dataStreams[0]->getSampleRate();
 
+    downsampleFactor = (int) Fs / targetRate;
+
+    int bufferSize = int(Fs / downsampleFactor * tfrParams.winLen);
+
+    std::cout << "Updating data buffers for " << Fs << " Hz, downsample factor of " << downsampleFactor << std::endl;
+    updateDataBufferSize(bufferSize, bufferSize);
+
+    tfrParams.Fs = Fs / downsampleFactor;
+
+    // (Start - end freq) / stepsize
+    tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
+
+    //freqStep = 1; // for debugging
+    tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep) + 1;
+
+    std::cout << "Updating display buffers to " << tfrParams.nFreqs << " frequencies." << std::endl;
+    updateDisplayBufferSize(tfrParams.nFreqs);
+
+    resetTFR();
+    
 }
-
-/*void SpectrumViewer::updateSubprocessor()
-{
-	if ((channels[0] > -1) || (channels[1] > -1))
-	{
-		float Fs; 
-
-		if (channels[0] > -1)
-			Fs = getDataChannel(channels[0])->getSampleRate();
-		else
-			Fs = getDataChannel(channels[1])->getSampleRate();
-
-		downsampleFactor = (int) Fs / targetRate;
-
-		int bufferSize = int(Fs / downsampleFactor * tfrParams.winLen);
-
-		std::cout << "Updating data buffers for " << Fs << " Hz, downsample factor of " << downsampleFactor << std::endl;
-		updateDataBufferSize(bufferSize, bufferSize);
-
-		tfrParams.Fs = Fs / downsampleFactor;
-
-		// (Start - end freq) / stepsize
-		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
-
-		//freqStep = 1; // for debugging
-		tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep) + 1;
-
-		std::cout << "Updating display buffers to " << tfrParams.nFreqs << " frequencies." << std::endl;
-		updateDisplayBufferSize(tfrParams.nFreqs);
-
-		resetTFR();
-	}
-}*/
 
 void SpectrumViewer::updateDataBufferSize(int size1, int size2)
 {

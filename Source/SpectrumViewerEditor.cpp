@@ -26,11 +26,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
-    : VisualizerEditor(p, 200)
+    : VisualizerEditor(p, "Power Spectrum", 200)
 {
     
-    tabText = "Power Spectrum";
-
     addSelectedChannelsParameterEditor("Channels", 20, 105);
     
 }
