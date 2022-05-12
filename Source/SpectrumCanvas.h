@@ -24,9 +24,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef SPECTRUMCANVAS_H_INCLUDED
 #define SPECTRUMCANVAS_H_INCLUDED
 
+#include <VisualizerWindowHeaders.h>
+
 #include "AtomicSynchronizer.h"
 #include "SpectrumViewer.h"
-#include <VisualizerWindowHeaders.h>
+
 
 class VerticalGroupSet : public Component
 {
@@ -52,9 +54,6 @@ private:
 
 */
 class SpectrumCanvas : public Visualizer
-	//, public ComboBox::Listener
-	//, public Button::Listener
-	//, public Label::Listener
 {
 public:
 
@@ -62,29 +61,22 @@ public:
 	SpectrumCanvas(SpectrumViewer* n);
 
 	/** Destructor */
-	~SpectrumCanvas();
-
-	/** Updates component boundaries */
-	void resized() override;
+	~SpectrumCanvas() { }
 
 	/** Called when tab becomes visible again */
-	void refreshState() override;
+	void refreshState();
 
 	/** Updates settings */
-	void update() override;
+	void update() { }
 
 	/** Called instead of repaint to avoid re-painting sub-components*/
-	void refresh() override;
-
-	/** Starts animation callbacks */
-	void beginAnimation() override;
-
-	/** Stops animation callbacks */
-	void endAnimation() override;
+	void refresh();
 
 	/** Draws the canvas */
 	void paint(Graphics& g) override;
 
+	/** Updates component boundaries */
+	void resized() override;
 
 private:
 

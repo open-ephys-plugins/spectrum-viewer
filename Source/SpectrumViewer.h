@@ -24,9 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef SPECTRUM_VIEWER_H_INCLUDED
 #define SPECTRUM_VIEWER_H_INCLUDED
 
-
 #include <ProcessorHeaders.h>
-#include <VisualizerEditorHeaders.h>
 
 #include "AtomicSynchronizer.h"
 #include "CumulativeTFR.h"

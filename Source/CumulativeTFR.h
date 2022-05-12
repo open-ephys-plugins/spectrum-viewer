@@ -25,6 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define CUMULATIVE_TFR_H_INCLUDED
 
 #include <OpenEphysFFTW.h>
+
 #include "CircularArray.h"
 #include "AtomicSynchronizer.h"
 
@@ -112,7 +113,7 @@ public:
 		float winLen = 2, float stepLen = 0.1, float freqStep = 0.25,
 		int freqStart = 1, double fftSec = 10.0, double alpha = 0);
 
-	// Handle a new buffer of data. Preform FFT and create pxxs, pyys.
+	// Handle a new buffer of data. Perform FFT and create pxxs, pyys.
 	void addTrial(FFTWArrayType& fftBuffer, int chan);
 
 	// Function to get coherence between two channels

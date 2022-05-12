@@ -24,16 +24,31 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "SpectrumViewerEditor.h"
 
+#include "SpectrumViewer.h"
+#include "SpectrumCanvas.h"
+
 
 SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
     : VisualizerEditor(p, "Power Spectrum", 200)
 {
     
-    addSelectedChannelsParameterEditor("Channels", 20, 105);
+    addSelectedChannelsParameterEditor("Channels", 55, 60);
     
 }
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
 {
-    return new SpectrumCanvas((SpectrumViewer*)getProcessor());;
+    return new SpectrumCanvas((SpectrumViewer*)getProcessor());
+}
+
+
+void SpectrumViewerEditor::startAcquisition()
+{
+    enable();
+}
+
+
+void SpectrumViewerEditor::stopAcquisition()
+{
+    disable();
 }

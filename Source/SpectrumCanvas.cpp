@@ -40,22 +40,12 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	
 	plt.setBounds(bounds = { 20, 20, 800, 600 });
 	plt.title("POWER SPECTRUM");
-	XYRange range{ 0, 500, 0, 10 };
+	XYRange range{ 0, 500, 0, 20 };
 	plt.setRange(range);
+	plt.xlabel("Frequency (Hz)");
+	plt.ylabel("");
 
 	canvas->addAndMakeVisible(plt);
-
-	std::vector<float> x;
-	std::vector<float> y;
-
-	for (int i = 0; i < 500; i += 10)
-	{
-		x.push_back(i);
-		y.push_back(i);
-	}
-
-	plt.plot(x, y, Colours::orange);
-	plt.show();
 
 	canvasBounds = canvasBounds.getUnion(bounds);
 	canvasBounds.setBottom(canvasBounds.getBottom() + 10);
@@ -75,14 +65,14 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 		for (int i = 0; i < 5; i++)
 			power[ch][i].assign(250, 1.0f);
 	}
+
+	for (int i = 0; i < 249; i++)
+	{
+		xvalues.push_back(i * 2);
+	}
 	
 }
 
-
-SpectrumCanvas::~SpectrumCanvas()
-{
-	
-}
 
 void SpectrumCanvas::resized()
 {
@@ -91,18 +81,14 @@ void SpectrumCanvas::resized()
 
 void SpectrumCanvas::refreshState() {}
 
-void SpectrumCanvas::update()
-{
-	
-}
-
 void SpectrumCanvas::paint(Graphics& g)
 {
-	g.fillAll(Colours::lightgrey); // roughly matches editor background (without gradient)
+	g.fillAll(Colour(28,28,28));
 }
 
 void SpectrumCanvas::refresh()
 {
+	//std::cout << "Refresh." << std::endl;
 	
 	// Update plot if frequency has changed.
 	/*if (freqStart != processor->tfrParams.freqStart || freqEnd != processor->tfrParams.freqEnd)
@@ -196,16 +182,6 @@ void SpectrumCanvas::refresh()
 		
 	}
 }
-
-void SpectrumCanvas::beginAnimation()
-{
-	startCallbacks();
-}
-void SpectrumCanvas::endAnimation()
-{
-	stopCallbacks();
-}
-
 
 /************ VerticalGroupSet ****************/
 

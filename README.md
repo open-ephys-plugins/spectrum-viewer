@@ -1,95 +1,88 @@
-# Coherence & Spectrogram Viewer [![DOI](https://zenodo.org/badge/228703189.svg)](https://zenodo.org/badge/latestdoi/228703189)
+# Spectrum Viewer [![DOI](https://zenodo.org/badge/228703189.svg)](https://zenodo.org/badge/latestdoi/228703189)
 
-Coherence & Spectrogram Viewer, is a plugin which can be used to analyze real time data with Open Ephys. As the name suggest serves two function, First, it estimates coherence between two group of channels. See [video](https://drive.google.com/open?id=1Qn3aU0Fl4xd-TCFRlrGKvbNjoVNFkC9a). Second it plots the spectrogram, specifically showing the plot of power vs frequency (Power over time is averaged).
+![screenshot](Resources/screenshot.png)
+
+Displays real-time power spectra for up to two channels within the Open Ephys GUI.
 
 
-----
 ## Installation
-This plugin must now be built outside of the main GUI file tree using CMake. In order to do so, it must be in a sibling directory to plugin-GUI\\ and the main GUI must have already been compiled using cmake. *The coherence-viewer folder should be the sibling directory.*
 
-You must also first install the "OpenEphysFFTW" common library, available [here](https://github.com/tne-lab/OpenEphysFFTW/tree/master). *You must build the install project in the solution.*
+(Coming soon)
 
-See `CoherenceViewer/CMAKE_README.txt` and/or the wiki page [here](https://open-ephys.atlassian.net/wiki/spaces/OEW/pages/1259110401/Plugin+CMake+Builds) for build instructions.
+## Usage
 
-If you have the GUI built somewhere else, you can specify its location by setting the environment variable `GUI_BASE_DIR` or defining it when calling cmake with the option `-DGUI_BASE_DIR=<location>`.
+Recommended signal chain: File
 
-----
-### Walk through:
-Once the plugin installation is done, user has to define parameters for the Time-Frequency Response calculation. This can be viewed in the coherence & spectrogram window as shown below
-<p align="center">
-  <img src="./Resources/Editor.png" alt="Editor.png"	title="Editor" width="600" height="200" />
-</p>
+## Building from source
 
->Segment Length: Segment length is the size of trial length / the past data to look for while calculating TFR.
+First, follow the instructions on [this page](https://open-ephys.github.io/gui-docs/Developer-Guide/Compiling-the-GUI.html) to build the Open Ephys GUI.
 
->Window Length: Window Length is the length of wavelet to be used for the calculation.
+**Important:** This plugin is intended for use with the pre-release core application, version 0.6.0. The GUI should be compiled from the [`development-juce6`](https://github.com/open-ephys/plugin-gui/tree/development-juce6) branch, rather than the `master` branch.
 
->Step Length: Step size is the time with which a wavelet to travel through the segment to calculate TFR.
+This plugin depends on the `main` branch of the [OpenEphysFFTW](https://github.com/open-ephys-plugins/OpenEphysFFTW/tree/main) library, which must be built and installed first.
 
->PARAM: Number of active channels in the system.
+Be sure to the `OpenEphysFFTW` and `spectrum-viewer` repositories into a directory at the same level as the `plugin-GUI`, e.g.:
+ 
+```
+Code
+├── plugin-GUI
+│   ├── Build
+│   ├── Source
+│   └── ...
+├── OEPlugins
+│   └── spectrum-viewer
+│   │   ├── Build
+│   │   ├── Source
+│   │   └── ...
+│   └── OpenEphysFFTW
+│       ├── Build
+│       ├── Source
+│       └── ...
+```
 
-The visualizer for the plugin:
-![alt text](Resources/Visualizer.png "Visualizer")
+### Windows
 
-By default, the visualizer is set for coherence calculation. This can be changed to spectrogram using the radio buttons. One should remember coherence and spectrogram are two mutually exclusive modules and cannot be viewed at the same time within the current setting of the code. Group I and Group II which is present on the left hand side of the plot appears once a source of data is selected from the “SOURCES”
+**Requirements:** [Visual Studio](https://visualstudio.microsoft.com/) and [CMake](https://cmake.org/install/)
 
-Group I(Gr-I) & Group II(Gr-II) shows the active number of channels. By default, first half of the channels are selected for Group I and other half for Group II. This can be changed as per the individual scenario requirement as show in the adjacent fig. One can choose not to select a channel to calculate coherence, but in order to calculate coherence there should be at least one channel selected in each group at all time.
+From the `Build` directory, enter:
 
-<p align="center">
-  <img src="./Resources/GraphComb.png" alt="GraphComb.png"	title="Combinations for Coherence calculatio" width="300" height="150" />
-</p>
+```bash
+cmake -G "Visual Studio 17 2022" -A x64 ..
+```
 
-This selection of channels populates the drop down box as shown in the adjacent figure. The example shows two possible option in a scenario. 1x16 and 2x16 which is of the form G1 x G2 i.e. channel 1 and 2 are from G1 and 16 from G2.
+Next, launch Visual Studio and open the `OE_PLUGIN_grid-viewer.sln` file that was just created. Select the appropriate configuration (Debug/Release) and build the solution.
 
-<p align="center">
-  <img src="./Resources/Reset.png" alt="./Resources/Reset.png"	title="Buttons" width="200" height="200" />
-</p>
-
-
-| Button           	| Description                                                                                                                                                                         	|
-|------------------	|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------	|
-| Reset            	| Resets TFR data. Needs to be clicked if any parameter is changed. This starts recalculating TFR based on current data available. Red Colour: Notes user needs to click the button for reset 	|
-| Clear Groups     	| Clear all the selected channels                                                                                                                                                     	|
-| Default   Groups 	| Change the selection to default groups                                                                                                                                          	|
-<p align="center">
-  <img src="./Resources/Linear.png" alt="Linear.png"	title="TFR calculation options" width="200" height="200" />
-</p>
+Selecting the `INSTALL` project and manually building it will copy the `.dll` and any other required files into the GUI's `plugins` directory. The next time you launch the GUI from Visual Studio, the Grid Viewer plugin should be available.
 
 
-|    Options               	|    Description                                                                                            	|
-|--------------------------	|-----------------------------------------------------------------------------------------------------------	|
-|    Linear                	|    Calculate coherence   based on past with linear decay                                        	|
-|    Exponential           	|    Calculate coherence   based on past with exponential decay     	|
-|    Artifact Threshold    	|    Any value change between two consecutive points above 3000   micro-volts will be detected as artifact and deleted from TFR calculation.       	|
+### Linux
 
-One can start acquisition. The coherence will be shown on the plot. If one wishes to view spectrogram plot. Click on spectrogram option and hit acquisition button. Plots will be displayed based on the current active channels.
+**Requirements:** [CMake](https://cmake.org/install/)
 
-----
-### Coherence 
-For an input shown below
+From the `Build` directory, enter:
 
-![alt text](./Resources/inputA.png "User Interface for Coherence Viewer")
+```bash
+cmake -G "Unix Makefiles" ..
+cd Debug
+make -j
+make install
+```
 
-Average coherence across all combination. Note the x-axis cooresponds to the frequency in Hz. The y-axis cooresponds to the coherence value which is scaled from 0-100.
-
-![alt text](./Resources/outputA.png "User Interface for Coherence Viewer")
-
-----
-### Spectrogram 
-For an input of Sine wave 
-
-![alt text](./Resources/inputB.png "User Interface for Coherence Viewer")
-
-One can see the power for each frequency in range for each channel
-
-![alt text](./Resources/outputB.png "User Interface for Coherence Viewer")
+This will build the plugin and copy the `.so` file into the GUI's `plugins` directory. The next time you launch the GUI compiled version of the GUI, the Grid Viewer plugin should be available.
 
 
+### macOS
 
-----
-### Development
-Note this plugin is still in active development. If you have more ideas for the development of the plugin. Feel free to contact us: 
-<markschatza@gmail.com> or
-<sumedh7.nagrale@gmail.com>
+**Requirements:** [Xcode](https://developer.apple.com/xcode/) and [CMake](https://cmake.org/install/)
+
+From the `Build` directory, enter:
+
+```bash
+cmake -G "Xcode" ..
+```
+
+Next, launch Xcode and open the `grid-viewer.xcodeproj` file that now lives in the “Build” directory.
+
+Running the `ALL_BUILD` scheme will compile the plugin; running the `INSTALL` scheme will install the `.bundle` file to `/Users/<username>/Library/Application Support/open-ephys/plugins-api`. The Grid Viewer plugin should be available the next time you launch the GUI from Xcode.
 
 

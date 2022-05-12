@@ -24,8 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef SPECTRUM_VIEWER_EDITOR_H_INCLUDED
 #define SPECTRUM_VIEWER_EDITOR_H_INCLUDED
 
-#include "SpectrumViewer.h"
-#include "SpectrumCanvas.h"
+#include <VisualizerEditorHeaders.h>
 
 class SpectrumViewerEditor : public VisualizerEditor
 {
@@ -37,6 +36,12 @@ public:
 
     /** Destructor */
     ~SpectrumViewerEditor() { }
+
+    /** Enables animation */
+    void startAcquisition() override;
+
+    /** Disables animation*/
+    void stopAcquisition() override;
 
     /** Creates the canvas */
     Visualizer* createNewCanvas();

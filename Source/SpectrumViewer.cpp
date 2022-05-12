@@ -22,6 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "SpectrumViewer.h"
+
 #include "SpectrumViewerEditor.h"
 
 
@@ -233,7 +234,7 @@ void SpectrumViewer::run()
 			for (int activeChan = 0; activeChan < 2; activeChan++)
 			{
 				//std::cout << "Adding channel " << activeChan << std::endl;
-				//TFR->addTrial(dataReader->getReference(activeChan), activeChan);
+				TFR->addTrial(dataReader->getUnchecked(activeChan), activeChan);
 			}
 
 			if (displayType == POWER_SPECTRUM)
