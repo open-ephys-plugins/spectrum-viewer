@@ -2,7 +2,7 @@
 
 ![screenshot](Resources/screenshot.png)
 
-Displays real-time power spectra for up to two channels within the Open Ephys GUI.
+Displays real-time power spectra for up to two channels within the Open Ephys GUI. This design of this plugin is based on the Coherence & Spectrogram Viewer from the Translational NeuroEngineering Laboratory at the University of Minnesota.
 
 
 ## Installation
@@ -11,7 +11,7 @@ Displays real-time power spectra for up to two channels within the Open Ephys GU
 
 ## Usage
 
-Recommended signal chain: File
+Recommended signal chain for testing: **File Reader** > **Spectrum Viewer**
 
 ## Building from source
 
