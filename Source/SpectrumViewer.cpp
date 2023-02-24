@@ -74,6 +74,8 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
             {
                 channels.add(int(i));
             }
+
+			getEditor()->updateVisualizer();
         }
     }
 }
@@ -97,15 +99,16 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 	bool updateBuffer = false;
 	int samplesAdded[2] = { 0, 0 };
 
-	for (int i = 0; i < 2; i++)
+	for (int i = 0; i < channels.size(); i++)
 	{
+		int globalChanIdx = getGlobalChannelIndex(activeStream, channels[i]);
 
-		if (nSamples == 0 || channels[i] < 0)
+		if (nSamples == 0 || globalChanIdx < 0)
 		{
 			continue;
 		}
 
-		const float* incomingDataPointer = continuousBuffer.getReadPointer(channels[i]);
+		const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
 
 		float value = lastValue[i];
 
@@ -157,15 +160,16 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 
 	if (samplesAdded[0] < nSamples)
 	{
-		for (int i = 0; i < 2; i++)
+		for (int i = 0; i < channels.size(); i++)
 		{
+			int globalChanIdx = getGlobalChannelIndex(activeStream, channels[i]);
 
-			if (nSamples == 0 || channels[i] < 0)
+			if (nSamples == 0 || globalChanIdx < 0)
 			{
 				continue;
 			}
 
-			const float* incomingDataPointer = continuousBuffer.getReadPointer(channels[i]);
+			const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
 
 			float value = lastValue[i];
 
@@ -231,7 +235,7 @@ void SpectrumViewer::run()
 			//std::cout << "Got buffer update, adding trial" << std::endl;
 			dataReader.pullUpdate();
 
-			for (int activeChan = 0; activeChan < 2; activeChan++)
+			for (int activeChan = 0; activeChan < channels.size(); activeChan++)
 			{
 				//std::cout << "Adding channel " << activeChan << std::endl;
 				TFR->addTrial(dataReader->getUnchecked(activeChan), activeChan);
@@ -319,11 +323,11 @@ void SpectrumViewer::updateDisplayBufferSize(int newSize)
 		vec[1].resize(newSize);
 	});
 
-	coherence.map([=](std::vector<double>& vec)
-	{
-		std::cout << "Resizing coherence buffer to " << newSize << ", " << newSize << std::endl;
-		vec.resize(newSize);
-	});
+	// coherence.map([=](std::vector<double>& vec)
+	// {
+	// 	std::cout << "Resizing coherence buffer to " << newSize << ", " << newSize << std::endl;
+	// 	vec.resize(newSize);
+	// });
 }
 
 

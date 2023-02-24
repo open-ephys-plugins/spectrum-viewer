@@ -67,10 +67,10 @@ public:
 	void refreshState();
 
 	/** Updates settings */
-	void update() { }
+	void update() override;
 
 	/** Called instead of repaint to avoid re-painting sub-components*/
-	void refresh();
+	void refresh() override;
 
 	/** Draws the canvas */
 	void paint(Graphics& g) override;
@@ -96,6 +96,8 @@ private:
 
 	int freqStart;
 	int freqEnd;
+
+	int numActiveChans;
 
 	InteractivePlot plt;
 

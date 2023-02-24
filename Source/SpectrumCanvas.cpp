@@ -33,8 +33,9 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	, freqEnd(processor->tfrParams.freqEnd)
 	, canvasBounds(0, 0, 1, 1)
 	, displayType(POWER_SPECTRUM)
+	, numActiveChans(2)
 {
-	refreshRate = 10;
+	refreshRate = 60;
 
 	juce::Rectangle<int> bounds;
 	
@@ -70,6 +71,9 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	{
 		xvalues.push_back(i * 2);
 	}
+
+	bufferIndex.clear();
+	bufferIndex.insertMultiple(0, 0, 2);
 	
 }
 
@@ -84,6 +88,12 @@ void SpectrumCanvas::refreshState() {}
 void SpectrumCanvas::paint(Graphics& g)
 {
 	g.fillAll(Colour(28,28,28));
+}
+
+void SpectrumCanvas::update()
+{
+	auto* param = processor->getDataStreams()[0]->getParameter("Channels");
+	numActiveChans = param->getValue().size();
 }
 
 void SpectrumCanvas::refresh()
@@ -128,19 +138,18 @@ void SpectrumCanvas::refresh()
 
 		powerReader.pullUpdate();
 
-		//std::cout << "Num freqs: " << powerReader->at(0).size() << std::endl;
-
 		if (powerReader.isValid())
 		{
 			plt.clear();
 
-			for (int ch = 0; ch < 2; ch++)
+			for (int ch = 0; ch < numActiveChans; ch++)
 			{
-
+				// LOGC("********** Buffer Index: ", bufferIndex[ch]);
+				
 				float maxpower = -1;
 				int maxind = -1;
 
-				for (int n = 0; n < 249; n++)
+				for (int n = 0; n < powerReader->at(0).size(); n++)
 				{
 					float p = powerReader->at(ch)[n];
 
@@ -153,24 +162,33 @@ void SpectrumCanvas::refresh()
 					if (p > 0)
 						power.at(ch).at(bufferIndex[ch])[n] = log(p);
 				}
-
+				
+				XYRange pltRange;
+				plt.getRange(pltRange);
+				if(pltRange.ymax < log(maxpower))
+				{
+					pltRange.ymax = log(maxpower);
+					plt.setRange(pltRange);
+				}
 				//std::cout << "Max ind: " << maxind << std::endl;
 
 				for (int i = 0; i < 5; i++)
 				{
 
 					int startIndex = bufferIndex[ch];
-					int trueIndex = (startIndex + i) % 5;
-					float alphaValue = 1.0f - i * 0.2f;
+					int trueIndex = negativeAwareModulo((startIndex - i), 5);
+					float opacity = 1.0f - i * 0.2f;
+					
+					// LOGC("********** True Index: ", trueIndex, ", Alpha Val: ", alphaValue);
 
 					Colour color;
 
 					if (ch == 0)
-						color = Colours::yellow.withAlpha(alphaValue);
+						color = Colours::yellow;
 					else
-						color = Colours::lightgreen.withAlpha(alphaValue);
+						color = Colours::lightgreen;
 
-					plt.plot(xvalues, power[ch][trueIndex], color);
+					plt.plot(xvalues, power[ch][trueIndex], color, 1.0f, opacity);
 				}
 
 				bufferIndex.set(ch, (bufferIndex[ch] + 1) % 5);
