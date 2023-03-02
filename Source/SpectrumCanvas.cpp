@@ -67,7 +67,7 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 			power[ch][i].assign(250, 1.0f);
 	}
 
-	for (int i = 0; i < 249; i++)
+	for (int i = 0; i < 250; i++)
 	{
 		xvalues.push_back(i * 2);
 	}
@@ -92,8 +92,7 @@ void SpectrumCanvas::paint(Graphics& g)
 
 void SpectrumCanvas::update()
 {
-	auto* param = processor->getDataStreams()[0]->getParameter("Channels");
-	numActiveChans = param->getValue().size();
+	numActiveChans = processor->getNumActiveChans();
 }
 
 void SpectrumCanvas::refresh()
@@ -172,26 +171,35 @@ void SpectrumCanvas::refresh()
 				}
 				//std::cout << "Max ind: " << maxind << std::endl;
 
-				for (int i = 0; i < 5; i++)
-				{
+				Colour chanColor;
 
-					int startIndex = bufferIndex[ch];
-					int trueIndex = negativeAwareModulo((startIndex - i), 5);
-					float opacity = 1.0f - i * 0.2f;
+				if (ch == 0)
+					chanColor = Colours::yellow;
+				else
+					chanColor = Colours::lightgreen;
+
+				plt.plot(xvalues, power[ch][bufferIndex[ch]], chanColor, 1.5f);
+
+				// for (int i = 0; i < 5; i++)
+				// {
+
+				// 	int startIndex = bufferIndex[ch];
+				// 	int trueIndex = negativeAwareModulo((startIndex - i), 5);
+				// 	float opacity = 1.0f - i * 0.2f;
 					
-					// LOGC("********** True Index: ", trueIndex, ", Alpha Val: ", alphaValue);
+				// 	// LOGC("********** True Index: ", trueIndex, ", Alpha Val: ", alphaValue);
 
-					Colour color;
+				// 	Colour color;
 
-					if (ch == 0)
-						color = Colours::yellow;
-					else
-						color = Colours::lightgreen;
+				// 	if (ch == 0)
+				// 		color = Colours::yellow;
+				// 	else
+				// 		color = Colours::lightgreen;
 
-					plt.plot(xvalues, power[ch][trueIndex], color, 1.0f, opacity);
-				}
+				// 	plt.plot(xvalues, power[ch][trueIndex], color, 1.5f, opacity);
+				// }
 
-				bufferIndex.set(ch, (bufferIndex[ch] + 1) % 5);
+				bufferIndex.set(ch, (bufferIndex[ch] + 1) % 2);
 
 			}	
 		}

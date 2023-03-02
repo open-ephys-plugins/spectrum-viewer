@@ -26,7 +26,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <VisualizerEditorHeaders.h>
 
-class SpectrumViewerEditor : public VisualizerEditor
+class SpectrumViewerEditor : public VisualizerEditor,
+                             public ComboBox::Listener
 {
     friend class SpectrumCanvas;
 public:
@@ -43,10 +44,23 @@ public:
     /** Disables animation*/
     void stopAcquisition() override;
 
+    /** Called when underlying settings are updated */
+    void updateSettings() override;
+
+    /** Called when a ComboBox changes*/
+	void comboBoxChanged(ComboBox* comboBox);
+
+    /** Notifies editor that the selected stream has changed.*/
+    void selectedStreamHasChanged() override;
+
     /** Creates the canvas */
     Visualizer* createNewCanvas();
 
 private:
+
+    std::unique_ptr<ComboBox> streamSelection;
+
+    uint16 activeStream;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumViewerEditor);
 };

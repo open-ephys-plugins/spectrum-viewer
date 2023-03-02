@@ -103,6 +103,11 @@ private:
 
 	std::vector<float> xvalues;
 
+	float lerp(float a, float b, float f)
+	{
+		return a + f * (b - a);
+	}
+
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumCanvas);
 };
 

@@ -84,6 +84,9 @@ public:
     /** Called when parameter value is updated*/
     void parameterValueChanged(Parameter* param) override;
 
+	/** Called by the canvas to get the number of active chans*/
+	int getNumActiveChans();
+
 	/** Variable to store incoming data */
 	AtomicallyShared<Array<FFTWArrayType>> dataBuffer;
 
@@ -103,6 +106,8 @@ private:
 
 	/** Change the size of the data buffer*/
 	void updateDisplayBufferSize(int newSize);
+
+	bool streamExists(uint16 streamId);
 
 	ScopedPointer<CumulativeTFR> TFR;
 
@@ -128,7 +133,7 @@ private:
 
 	int downsampleFactor = 10;
     
-    uint16 activeStream;
+    uint16 activeStream = 0;
 
 	int numTrials;
 

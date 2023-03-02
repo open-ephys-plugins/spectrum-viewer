@@ -29,11 +29,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
-    : VisualizerEditor(p, "Power Spectrum", 200)
+    : VisualizerEditor(p, "Power Spectrum"),
+      activeStream(0)
 {
-    
-    addSelectedChannelsParameterEditor("Channels", 55, 60);
-    
+    streamSelection = std::make_unique<ComboBox>("Display Stream");
+    streamSelection->setBounds(15, 40, 150, 20);
+    streamSelection->addListener(this);
+    addAndMakeVisible(streamSelection.get());
+
+    addSelectedChannelsParameterEditor("Channels", 55, 80);    
 }
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
@@ -51,4 +55,63 @@ void SpectrumViewerEditor::startAcquisition()
 void SpectrumViewerEditor::stopAcquisition()
 {
     disable();
+}
+
+void SpectrumViewerEditor::updateSettings()
+{
+ 
+	streamSelection->clear();
+
+	for (auto stream : getProcessor()->getDataStreams())
+	{
+		if (activeStream == 0)
+			activeStream = stream->getStreamId();
+		
+		streamSelection->addItem(stream->getName(), stream->getStreamId());
+	}
+
+	if (streamSelection->indexOfItemId(activeStream) == -1)
+	{
+		if (streamSelection->getNumItems() > 0)
+			activeStream = streamSelection->getItemId(0);
+		else
+			activeStream = 0;
+	}
+		
+	if (activeStream > 0)
+	{
+		streamSelection->setSelectedId(activeStream, sendNotification);
+	}
+}
+
+void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
+{
+	if (cb == streamSelection.get())
+	{
+		activeStream = cb->getSelectedId();
+		
+		if (activeStream > 0)
+		{
+			getProcessor()->getParameter("active_stream")->setNextValue(activeStream);
+
+			for(auto ped : parameterEditors)
+			{
+				if(ped->getParameterName().equalsIgnoreCase("Channels"))
+				{
+					auto sp = getProcessor()->getDataStream(activeStream)->getParameter("Channels");
+					ped->setParameter(sp);
+					sp->setNextValue(sp->getValue());
+				}
+			}
+		}
+	}
+}
+
+void SpectrumViewerEditor::selectedStreamHasChanged()
+{
+	if (streamSelection->indexOfItemId(getCurrentStream()) != -1)
+	{
+		activeStream = getCurrentStream();
+		streamSelection->setSelectedId(activeStream, sendNotification);
+	}
 }

@@ -57,27 +57,27 @@ CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float win
 	std::cout << "freqStart: " << freqStart << std::endl;
 	std::cout << "windowLen: " << windowLen << std::endl;
 
-	std::cout << "Creating waveletArray" << std::endl;
+	// std::cout << "Creating waveletArray" << std::endl;
 
-	vector<vector<std::complex<double>>> wv(nf, vector<std::complex<double>>(nfft));
+	// vector<vector<std::complex<double>>> wv(nf, vector<std::complex<double>>(nfft));
 
-	waveletArray = wv;
+	// waveletArray = wv;
 	
-	std::cout << "Creating spectrum buffer" << std::endl;
+	// std::cout << "Creating spectrum buffer" << std::endl;
 
-	vector<vector<vector<std::complex<double>>>> specBuff(ng1 + ng2,
-		vector<vector<std::complex<double>>>(nf,
-			vector<std::complex<double>>(nt)));
+	// vector<vector<vector<std::complex<double>>>> specBuff(ng1 + ng2,
+	// 	vector<vector<std::complex<double>>>(nf,
+	// 		vector<std::complex<double>>(nt)));
 
-	spectrumBuffer = specBuff;
+	// spectrumBuffer = specBuff;
 
-	std::cout << "Generating wavelets" << std::endl;
+	// std::cout << "Generating wavelets" << std::endl;
 
-	// Create array of wavelets
-	generateWavelet();
+	// // Create array of wavelets
+	// generateWavelet();
 
-	// Trim time close to edge
-	trimTime = windowLen / 2;
+	// // Trim time close to edge
+	// trimTime = windowLen / 2;
 
 	printout = true;
 }
