@@ -24,6 +24,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "CumulativeTFR.h"
 #include <cmath>
 
+#define MS_FROM_START Time::highResolutionTicksToSeconds(Time::getHighResolutionTicks() - start) * 1000
+
 
 CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float winLen, float stepLen, float freqStep,
 	int freqStart, double fftSec, double alpha)
@@ -32,14 +34,10 @@ CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float win
 	, stepLen(stepLen)
 	, nTimes(nt)
 	, nfft(int(fftSec * Fs))
-	, ifftBuffer(nfft)
 	, alpha(alpha)
 	, freqStep(freqStep)
 	, freqStart(freqStart)
 	, windowLen(winLen)
-	, pxys(ng1* ng2,
-		vector<vector<ComplexWeightedAccum>>(nf,
-			vector<ComplexWeightedAccum>(nt, ComplexWeightedAccum(alpha))))
 	, powBuffer(ng1 + ng2,
 		vector<vector<RealWeightedAccum>>(nf,
 			vector<RealWeightedAccum>(nt, RealWeightedAccum(alpha))))
@@ -84,10 +82,11 @@ CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float win
 
 void CumulativeTFR::addTrial(FFTWArrayType& fftBuffer, int chanIt)
 {
-
+	// auto start = Time::getHighResolutionTicks();
 	fftBuffer.fftReal();
+	
 
-	//std::cout << fftBuffer.getLength() << std::endl;
+	// std::cout << "fftBuffer.REAL(): " << MS_FROM_START << std::endl;
 
 	float nWindow = Fs * windowLen;
 

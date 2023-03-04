@@ -25,14 +25,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "SpectrumViewerEditor.h"
 
+#define MS_FROM_START Time::highResolutionTicksToSeconds(Time::getHighResolutionTicks() - start) * 1000
 
 SpectrumViewer::SpectrumViewer()
 	: GenericProcessor("Spectrum Viewer")
 	, Thread("FFT Thread")
-	, nSamplesWait(0)
+	, bufferSize(0)
 	, displayType(POWER_SPECTRUM)
 {
-	tfrParams.segLen = 0.25;
+	tfrParams.segLen = 1;
 	tfrParams.freqStart = 4;
 	tfrParams.freqEnd = 1000;
 	tfrParams.stepLen = 0.1;
@@ -77,14 +78,14 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 
 			float Fs = getDataStream(activeStream)->getSampleRate();
 
-			downsampleFactor = (int) Fs / targetRate;
+			// downsampleFactor = (int) Fs / targetRate;
 
-			int bufferSize = int(Fs / downsampleFactor * tfrParams.winLen);
+			bufferSize = int(Fs * tfrParams.winLen);
 
-			std::cout << "Updating data buffers for " << Fs << " Hz, downsample factor of " << downsampleFactor << std::endl;
+			std::cout << "Updating data buffers for " << Fs << std::endl;
 			updateDataBufferSize(bufferSize, bufferSize);
 
-			tfrParams.Fs = Fs / downsampleFactor;
+			tfrParams.Fs = Fs;
 
 			// (Start - end freq) / stepsize
 			tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
@@ -128,7 +129,6 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 
 	//for loop over active channels and update buffer with new data
 	int nSamples = getNumSamplesInBlock(activeStream); // all channels the same?
-	int maxSamples = dataWriter->getReference(0).getLength();
 
 	bool updateBuffer = false;
 	int samplesAdded[2] = { 0, 0 };
@@ -142,58 +142,58 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 			continue;
 		}
 
-		const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
+		// Copy BufferSize - NumSamples data from previous buffer
+		if(bufferIdx[i] == bufferSize)
+		{
+			auto dataPointer = dataWriter->getReference(i).getReadPointer(nSamples);
+			for(int samp = 0; samp < bufferSize - nSamples; samp++)
+				dataWriter->getReference(i).set(samp, dataPointer[samp]);
+		}
 
-		float value = lastValue[i];
+		const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
 
 		// loop through available samples
 		for (int n = 0; n < nSamples; n++)
 		{
-			if ((sampleIdx[i] % downsampleFactor) < (downsampleFactor -1)) // average adjacent samples
+			if(bufferIdx[i] < bufferSize)
 			{
-				//std::cout << "skip" << std::endl;
-				value += incomingDataPointer[n];
-				sampleIdx.set(i, sampleIdx[i] + 1);
-				samplesAdded[i]++;
-				lastValue.set(i, value);
+				dataWriter->getReference(i).set(bufferIdx[i], incomingDataPointer[n]);
+				bufferIdx.set(i, bufferIdx[i] + 1);
 			}
 			else
 			{
-				//std::cout << " " << std::endl;
-				value += incomingDataPointer[n];
-				value /= downsampleFactor;
-				dataWriter->getReference(i).set(bufferIdx[i], value);
-				bufferIdx.set(i, bufferIdx[i] + 1);
-				sampleIdx.set(i, 0);
-				value = 0;
-				samplesAdded[i]++;
-				lastValue.set(i, value);
-
-				if (bufferIdx[i] == maxSamples)
-				{
-					updateBuffer = true;
-					break;
-				}
-					
+				dataWriter->getReference(i).set((bufferSize - nSamples) + n, incomingDataPointer[n]);
 			}
+
+			samplesAdded[i]++;
+
+			// if (bufferIdx[i] == maxSamples)
+			// {
+			// 	updateBuffer = true;
+			// 	break;
+			// }
+					
+			// }
 		}
 
 	}
 
 	// channel buf is full. Update buffer.
-	if (updateBuffer)
-	{
-		//std::cout << "Pushing buffer update" << std::endl;
-		dataWriter.pushUpdate();
-		// Reset samples added and increment trial number
-		bufferIdx.set(0, 0);
-		bufferIdx.set(1, 0);
-		numTrials++;
-		updateBuffer = false;
-	}
+	// if (updateBuffer)
+	// {
+	// 	//std::cout << "Pushing buffer update" << std::endl;
+	// 	dataWriter.pushUpdate();
+	// 	// Reset samples added and increment trial number
+	// 	// bufferIdx.set(0, 0);
+	// 	// bufferIdx.set(1, 0);
+	// 	// numTrials++;
+	// 	updateBuffer = false;
+	// }
 
 	if (samplesAdded[0] < nSamples)
 	{
+		dataWriter.pushUpdate();
+
 		for (int i = 0; i < channels.size(); i++)
 		{
 			int globalChanIdx = getGlobalChannelIndex(activeStream, channels[i]);
@@ -203,55 +203,44 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 				continue;
 			}
 
-			const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
+			int samplesLeft = nSamples - samplesAdded[i]; 
 
-			float value = lastValue[i];
+			// Copy BufferSize - NumSamples data from previous buffer
+			if(bufferIdx[i] == bufferSize)
+			{
+				auto dataPointer = dataWriter->getReference(i).getReadPointer(samplesLeft);
+				for(int samp = 0; samp < bufferSize - samplesLeft; samp++)
+					dataWriter->getReference(i).set(samp, dataPointer[samp]);
+			}
+
+			const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
 
 			// loop through available samples
 			for (int n = samplesAdded[i]; n < nSamples; n++)
 			{
-				if ((sampleIdx[i] % downsampleFactor) < (downsampleFactor -1)) // average adjacent samples
-				{
-					value += incomingDataPointer[n];
-					sampleIdx.set(i, sampleIdx[i] + 1);
-					samplesAdded[i]++;
-					lastValue.set(i, value);
-				}
-				else
-				{
-					value += incomingDataPointer[n];
-					value /= downsampleFactor;
+				dataWriter->getReference(i).set((bufferSize - samplesLeft) + n, incomingDataPointer[n]);
+				samplesAdded[i]++;
 
-					// value = incomingDataPointer[n];
-					dataWriter->getReference(i).set(bufferIdx[i], value);
-					bufferIdx.set(i, bufferIdx[i] + 1);
-					sampleIdx.set(i, 0);
-					value = 0;
-					samplesAdded[i]++;
-					lastValue.set(i, value);
-
-					if (bufferIdx[i] == maxSamples)
-					{
-						updateBuffer = true;
-						break;
-					}
-
-				}
+				// if (bufferIdx[i] == bufferSize)
+				// {
+				// 	updateBuffer = true;
+				// 	break;
+				// }
 			}
 
 		}
 	}
 
 	// channel buf is full. Update buffer.
-	if (updateBuffer)
+	if (bufferIdx[0] == bufferSize)
 	{
 		//std::cout << "Pushing buffer update" << std::endl;
 		dataWriter.pushUpdate();
-		// Reset samples added and increment trial number
-		bufferIdx.set(0, 0);
-		bufferIdx.set(1, 0);
-		numTrials++;
-		updateBuffer = false;
+		// // Reset samples added and increment trial number
+		// bufferIdx.set(0, 0);
+		// bufferIdx.set(1, 0);
+		// numTrials++;
+		// updateBuffer = false;
 	}
 
 	
@@ -354,10 +343,6 @@ void SpectrumViewer::resetTFR()
 	tfrParams.nTimes = 1;// ((tfrParams.segLen * tfrParams.Fs) -
 					   // (nSamplesWin)) / tfrParams.Fs *
 						//(1 / tfrParams.stepLen) + 1; // Trim half of window on both sides, so 1 window length is trimmed total
-
-	std::cout << "Total times: " << tfrParams.nTimes << std::endl;
-
-	std::cout << "nfft: " << int(tfrParams.Fs * tfrParams.segLen) << std::endl;
 
 	TFR = new CumulativeTFR(1, // group 1 channel count
 		1, // group 2 channel count

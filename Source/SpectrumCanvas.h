@@ -29,25 +29,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "AtomicSynchronizer.h"
 #include "SpectrumViewer.h"
 
-
-class VerticalGroupSet : public Component
-{
-public:
-	VerticalGroupSet(Colour backgroundColor = Colours::silver);
-	VerticalGroupSet(const String& componentName, Colour backgroundColor = Colours::silver);
-	~VerticalGroupSet();
-
-	void addGroup(std::initializer_list<Component*> components);
-
-private:
-	Colour bgColor;
-	int leftBound;
-	int rightBound;
-	OwnedArray<DrawableRectangle> groups;
-	static const int PADDING = 5;
-	static const int CORNER_SIZE = 8;
-};
-
 /** 
 
 	Draws the real-time power spectrum
@@ -93,9 +74,7 @@ private:
 	Array<int> bufferIndex;
 
 	float freqStep;
-
-	int freqStart;
-	int freqEnd;
+	int nFreqs;
 
 	int numActiveChans;
 

@@ -129,7 +129,9 @@ private:
 	Array<int> sampleIdx;
 	Array<float> lastValue;
 
-	const float targetRate = 4000;
+	int bufferSize = 0;
+
+	const float targetRate = 40000;
 
 	int downsampleFactor = 10;
     

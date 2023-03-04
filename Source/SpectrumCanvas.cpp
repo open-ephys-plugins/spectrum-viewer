@@ -29,19 +29,17 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	: viewport(new Viewport())
 	, canvas(new Component("canvas"))
 	, processor(n)
-	, freqStart(processor->tfrParams.freqStart)
-	, freqEnd(processor->tfrParams.freqEnd)
 	, canvasBounds(0, 0, 1, 1)
 	, displayType(POWER_SPECTRUM)
 	, numActiveChans(2)
 {
-	refreshRate = 60;
+	refreshRate = 30;
 
 	juce::Rectangle<int> bounds;
 	
-	plt.setBounds(bounds = { 20, 20, 800, 600 });
+	plt.setBounds(bounds = { 20, 20, 1200, 800 });
 	plt.title("POWER SPECTRUM");
-	XYRange range{ 0, 500, 0, 20 };
+	XYRange range{ 0, 1000, 0, 20 };
 	plt.setRange(range);
 	plt.xlabel("Frequency (Hz)");
 	plt.ylabel("");
@@ -59,17 +57,20 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 
 	power.resize(2);
 
+	nFreqs = processor->tfrParams.nFreqs;
+	freqStep = processor->tfrParams.freqStep;
+
 	for (int ch = 0; ch < 2; ch++)
 	{
 		power[ch].resize(5);
 
 		for (int i = 0; i < 5; i++)
-			power[ch][i].assign(250, 1.0f);
+			power[ch][i].assign(nFreqs, 1.0f);
 	}
 
-	for (int i = 0; i < 250; i++)
+	for (int i = 0; i < nFreqs; i++)
 	{
-		xvalues.push_back(i * 2);
+		xvalues.push_back(i * freqStep);
 	}
 
 	bufferIndex.clear();
@@ -158,7 +159,7 @@ void SpectrumCanvas::refresh()
 						maxind = n;
 					}
 
-					if (p > 0)
+					// if (p > 0)
 						power.at(ch).at(bufferIndex[ch])[n] = log(p);
 				}
 				
@@ -206,77 +207,5 @@ void SpectrumCanvas::refresh()
 
 		plt.show();
 		
-	}
-}
-
-/************ VerticalGroupSet ****************/
-
-VerticalGroupSet::VerticalGroupSet(Colour backgroundColor)
-	: Component()
-	, bgColor(backgroundColor)
-	, leftBound(INT_MAX)
-	, rightBound(INT_MIN)
-{}
-
-VerticalGroupSet::VerticalGroupSet(const String& componentName, Colour backgroundColor)
-	: Component(componentName)
-	, bgColor(backgroundColor)
-	, leftBound(INT_MAX)
-	, rightBound(INT_MIN)
-{}
-
-VerticalGroupSet::~VerticalGroupSet() {}
-
-void VerticalGroupSet::addGroup(std::initializer_list<Component*> components)
-{
-	if (!getParentComponent())
-	{
-		jassertfalse;
-		return;
-	}
-
-	DrawableRectangle* thisGroup;
-	groups.add(thisGroup = new DrawableRectangle);
-	addChildComponent(thisGroup);
-	const Point<float> cornerSize(CORNER_SIZE, CORNER_SIZE);
-	thisGroup->setCornerSize(cornerSize);
-	thisGroup->setFill(bgColor);
-
-	int topBound = INT_MAX;
-	int bottomBound = INT_MIN;
-	for (auto component : components)
-	{
-		Component* componentParent = component->getParentComponent();
-		if (!componentParent)
-		{
-			jassertfalse;
-			return;
-		}
-		int width = component->getWidth();
-		int height = component->getHeight();
-		juce::Point<int> positionFromItsParent = component->getPosition();
-		juce::Point<int> localPosition = getLocalPoint(componentParent, positionFromItsParent);
-
-		// update bounds
-		leftBound = jmin(leftBound, localPosition.x - PADDING);
-		rightBound = jmax(rightBound, localPosition.x + width + PADDING);
-		topBound = jmin(topBound, localPosition.y - PADDING);
-		bottomBound = jmax(bottomBound, localPosition.y + height + PADDING);
-	}
-
-	// set new background's bounds
-	auto bounds = juce::Rectangle<float>::leftTopRightBottom(leftBound, topBound, rightBound, bottomBound);
-	thisGroup->setRectangle(bounds);
-	thisGroup->setVisible(true);
-
-	// update all other children
-	for (DrawableRectangle* group : groups)
-	{
-		if (group == thisGroup) { continue; }
-
-		topBound = group->getPosition().y;
-		bottomBound = topBound + group->getHeight();
-		bounds = juce::Rectangle<float>::leftTopRightBottom(leftBound, topBound, rightBound, bottomBound);
-		group->setRectangle(bounds);
 	}
 }
