@@ -30,10 +30,9 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	, canvas(new Component("canvas"))
 	, processor(n)
 	, canvasBounds(0, 0, 1, 1)
-	, displayType(POWER_SPECTRUM)
 	, numActiveChans(2)
 {
-	refreshRate = 30;
+	refreshRate = 60;
 
 	juce::Rectangle<int> bounds;
 	
@@ -55,26 +54,22 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	viewport->setScrollBarsShown(true, true);
 	addAndMakeVisible(viewport);
 
-	power.resize(2);
+	currPower.resize(2);
+	prevPower.resize(2);
 
 	nFreqs = processor->tfrParams.nFreqs;
 	freqStep = processor->tfrParams.freqStep;
 
 	for (int ch = 0; ch < 2; ch++)
 	{
-		power[ch].resize(5);
-
-		for (int i = 0; i < 5; i++)
-			power[ch][i].assign(nFreqs, 1.0f);
+		currPower[ch].clear();
+		prevPower[ch].clear();
 	}
 
 	for (int i = 0; i < nFreqs; i++)
 	{
 		xvalues.push_back(i * freqStep);
 	}
-
-	bufferIndex.clear();
-	bufferIndex.insertMultiple(0, 0, 2);
 	
 }
 
@@ -100,37 +95,7 @@ void SpectrumCanvas::refresh()
 {
 	//std::cout << "Refresh." << std::endl;
 	
-	// Update plot if frequency has changed.
-	/*if (freqStart != processor->tfrParams.freqStart || freqEnd != processor->tfrParams.freqEnd)
-	{
-		freqStart = processor->tfrParams.freqStart;
-		freqEnd = processor->tfrParams.freqEnd;
-
-		plot ->setRange(processor->tfrParams.freqStart, processor->tfrParams.freqEnd, 0.0, 100, true);
-	}*/
-
-	freqStep = processor->tfrParams.freqStep;
-
-	// Get data from processor thread, then plot
-	if (displayType == COHERENCE && processor->coherence.hasUpdate())
-	{
-
-		/*AtomicScopedReadPtr<std::vector<double>> coherenceReader(processor->coherence);
-		coherenceReader.pullUpdate();
-
-		double coh[coherenceReader->at(0).size()];
-		disp
-		coh[i] = coherenceReader->at(comb)[i] * 100;
-
-		coh.resize();
-
-		line = XYline(freqStart, freqStep, averageCoh, 1, Colours::yellow);
-
-		plot->clearplot();
-		plot->plotxy(coherenceLine);
-		plot->repaint();*/
-	}
-	else if (displayType == POWER_SPECTRUM && processor->power.hasUpdate())
+	if (processor->power.hasUpdate())
 	{
 		//std::cout << "Reading power data" << std::endl;
 
@@ -149,7 +114,7 @@ void SpectrumCanvas::refresh()
 				float maxpower = -1;
 				int maxind = -1;
 
-				for (int n = 0; n < powerReader->at(0).size(); n++)
+				for (int n = 0; n < nFreqs; n++)
 				{
 					float p = powerReader->at(ch)[n];
 
@@ -159,8 +124,18 @@ void SpectrumCanvas::refresh()
 						maxind = n;
 					}
 
-					// if (p > 0)
-						power.at(ch).at(bufferIndex[ch])[n] = log(p);
+					if (p > 0)
+					{
+						if(prevPower[ch].empty())
+						{
+							currPower.at(ch).push_back(log(p));
+						}
+						else
+						{
+							float wAvg = ((9 * prevPower[ch][n]) + log(p)) / 10;
+							currPower.at(ch).push_back(wAvg);
+						}
+					}
 				}
 				
 				XYRange pltRange;
@@ -179,7 +154,10 @@ void SpectrumCanvas::refresh()
 				else
 					chanColor = Colours::lightgreen;
 
-				plt.plot(xvalues, power[ch][bufferIndex[ch]], chanColor, 1.5f);
+				plt.plot(xvalues, currPower[ch], chanColor, 1.5f);
+
+				prevPower[ch] = currPower[ch];
+				currPower[ch].clear();
 
 				// for (int i = 0; i < 5; i++)
 				// {
@@ -199,9 +177,6 @@ void SpectrumCanvas::refresh()
 
 				// 	plt.plot(xvalues, power[ch][trueIndex], color, 1.5f, opacity);
 				// }
-
-				bufferIndex.set(ch, (bufferIndex[ch] + 1) % 2);
-
 			}	
 		}
 

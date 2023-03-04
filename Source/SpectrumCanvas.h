@@ -63,15 +63,12 @@ private:
 
 	SpectrumViewer* processor;
 
-	DisplayType displayType;
-
 	ScopedPointer<Viewport>  viewport;
 	ScopedPointer<Component> canvas;
 	juce::Rectangle<int> canvasBounds;
 
-	std::vector<std::vector<std::vector<float>>> power; // channels x 5 x freqs
-
-	Array<int> bufferIndex;
+	std::vector<std::vector<float>> currPower; // channels x freqs
+	std::vector<std::vector<float>> prevPower; // channels x freqs
 
 	float freqStep;
 	int nFreqs;
@@ -81,11 +78,6 @@ private:
 	InteractivePlot plt;
 
 	std::vector<float> xvalues;
-
-	float lerp(float a, float b, float f)
-	{
-		return a + f * (b - a);
-	}
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumCanvas);
 };
