@@ -36,6 +36,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <iostream>
 #include<fstream>
 
+#define MAX_CHANS 8
+
 enum DisplayType {
 	COHEROGRAM = 3,
 	SPECTROGRAM = 2,
@@ -88,13 +90,11 @@ public:
 	int getNumActiveChans();
 
 	/** Variable to store incoming data */
+	Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
 	AtomicallyShared<Array<FFTWArrayType>> dataBuffer;
 
 	/** Array of powers across frequencies, for multiple channels */
 	AtomicallyShared<std::vector<std::vector<float>>> power;
-
-	/** Array of coherence values across frequencies */
-	AtomicallyShared<std::vector<double>> coherence;
 
 	/** Type of visualization (currently only POWER_SPECTRUM is supported) */
 	DisplayType displayType;
@@ -102,7 +102,7 @@ public:
 private:
 
 	/** Append FFTWArrays to data buffer */
-	void updateDataBufferSize(int size1, int size2);
+	void updateDataBufferSize(int size);
 
 	/** Change the size of the data buffer*/
 	void updateDisplayBufferSize(int newSize);
@@ -126,14 +126,8 @@ private:
 
 	Array<int> channels;
 	Array<int> bufferIdx;
-	Array<int> sampleIdx;
-	Array<float> lastValue;
 
-	int bufferSize = 0;
-
-	const float targetRate = 40000;
-
-	int downsampleFactor = 10;
+	int bufferSize;
     
     uint16 activeStream = 0;
 

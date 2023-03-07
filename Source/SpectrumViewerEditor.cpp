@@ -48,13 +48,17 @@ Visualizer* SpectrumViewerEditor::createNewCanvas()
 
 void SpectrumViewerEditor::startAcquisition()
 {
-    enable();
+    streamSelection->setEnabled(false);
+	streamSelector->setEnabled(false);
+	enable();
 }
 
 
 void SpectrumViewerEditor::stopAcquisition()
 {
-    disable();
+    streamSelection->setEnabled(false);
+	streamSelection->setEnabled(false);
+	disable();
 }
 
 void SpectrumViewerEditor::updateSettings()
@@ -104,14 +108,5 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 				}
 			}
 		}
-	}
-}
-
-void SpectrumViewerEditor::selectedStreamHasChanged()
-{
-	if (streamSelection->indexOfItemId(getCurrentStream()) != -1)
-	{
-		activeStream = getCurrentStream();
-		streamSelection->setSelectedId(activeStream, sendNotification);
 	}
 }

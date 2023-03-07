@@ -27,7 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define MS_FROM_START Time::highResolutionTicksToSeconds(Time::getHighResolutionTicks() - start) * 1000
 
 
-CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float winLen, float stepLen, float freqStep,
+CumulativeTFR::CumulativeTFR(int nChans, int nf, int nt, int Fs, float winLen, float stepLen, float freqStep,
 	int freqStart, double fftSec, double alpha)
 	: nFreqs(nf)
 	, Fs(Fs)
@@ -38,7 +38,7 @@ CumulativeTFR::CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs, float win
 	, freqStep(freqStep)
 	, freqStart(freqStart)
 	, windowLen(winLen)
-	, powBuffer(ng1 + ng2,
+	, powBuffer(nChans,
 		vector<vector<RealWeightedAccum>>(nf,
 			vector<RealWeightedAccum>(nt, RealWeightedAccum(alpha))))
 {

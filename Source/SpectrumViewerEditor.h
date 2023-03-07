@@ -50,9 +50,6 @@ public:
     /** Called when a ComboBox changes*/
 	void comboBoxChanged(ComboBox* comboBox);
 
-    /** Notifies editor that the selected stream has changed.*/
-    void selectedStreamHasChanged() override;
-
     /** Creates the canvas */
     Visualizer* createNewCanvas();
 

@@ -47,16 +47,9 @@ SpectrumViewer::SpectrumViewer()
 		"active_stream", "Currently selected stream",
 		0, 0, 200000, false);
 
-	addSelectedChannelsParameter(Parameter::STREAM_SCOPE, "Channels", "The channels to analyze", 2);
+	addSelectedChannelsParameter(Parameter::STREAM_SCOPE, "Channels", "The channels to analyze", MAX_CHANS);
 
-	bufferIdx.add(0);
-	bufferIdx.add(0);
-
-	sampleIdx.add(0);
-	sampleIdx.add(0);
-
-	lastValue.add(0.0f);
-	lastValue.add(0.0f);
+	bufferIdx.resize(MAX_CHANS);
 }
 
 AudioProcessorEditor* SpectrumViewer::createEditor()
@@ -82,8 +75,7 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 
 			bufferSize = int(Fs * tfrParams.winLen);
 
-			std::cout << "Updating data buffers for " << Fs << std::endl;
-			updateDataBufferSize(bufferSize, bufferSize);
+			updateDataBufferSize(bufferSize);
 
 			tfrParams.Fs = Fs;
 
@@ -93,7 +85,6 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 			//freqStep = 1; // for debugging
 			tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep) + 1;
 
-			std::cout << "Updating display buffers to " << tfrParams.nFreqs << " frequencies." << std::endl;
 			updateDisplayBufferSize(tfrParams.nFreqs);
 
 			resetTFR();
@@ -117,6 +108,9 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 
 void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 {
+	// Nothing to do when no channels selected
+	if(channels.isEmpty())
+		return;
 
 	///// Add incoming data to data buffer. ////
 	AtomicScopedWritePtr<Array<FFTWArrayType>> dataWriter(dataBuffer);
@@ -131,7 +125,8 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 	int nSamples = getNumSamplesInBlock(activeStream); // all channels the same?
 
 	bool updateBuffer = false;
-	int samplesAdded[2] = { 0, 0 };
+	Array<int> samplesAdded;
+	samplesAdded.insertMultiple(0, 0, channels.size());
 
 	for (int i = 0; i < channels.size(); i++)
 	{
@@ -159,37 +154,25 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 			{
 				dataWriter->getReference(i).set(bufferIdx[i], incomingDataPointer[n]);
 				bufferIdx.set(i, bufferIdx[i] + 1);
+
+				if(bufferIdx[i] == bufferSize)
+				{
+					samplesAdded.set(i, samplesAdded[i] + 1);
+					break;
+				}
 			}
 			else
 			{
 				dataWriter->getReference(i).set((bufferSize - nSamples) + n, incomingDataPointer[n]);
 			}
 
-			samplesAdded[i]++;
+			samplesAdded.set(i, samplesAdded[i] + 1);
 
-			// if (bufferIdx[i] == maxSamples)
-			// {
-			// 	updateBuffer = true;
-			// 	break;
-			// }
-					
-			// }
 		}
 
 	}
 
-	// channel buf is full. Update buffer.
-	// if (updateBuffer)
-	// {
-	// 	//std::cout << "Pushing buffer update" << std::endl;
-	// 	dataWriter.pushUpdate();
-	// 	// Reset samples added and increment trial number
-	// 	// bufferIdx.set(0, 0);
-	// 	// bufferIdx.set(1, 0);
-	// 	// numTrials++;
-	// 	updateBuffer = false;
-	// }
-
+	// Add remaining samples (if any) after pushing update
 	if (samplesAdded[0] < nSamples)
 	{
 		dataWriter.pushUpdate();
@@ -206,12 +189,9 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 			int samplesLeft = nSamples - samplesAdded[i]; 
 
 			// Copy BufferSize - NumSamples data from previous buffer
-			if(bufferIdx[i] == bufferSize)
-			{
-				auto dataPointer = dataWriter->getReference(i).getReadPointer(samplesLeft);
-				for(int samp = 0; samp < bufferSize - samplesLeft; samp++)
-					dataWriter->getReference(i).set(samp, dataPointer[samp]);
-			}
+			auto dataPointer = dataWriter->getReference(i).getReadPointer(samplesLeft);
+			for(int samp = 0; samp < bufferSize - samplesLeft; samp++)
+				dataWriter->getReference(i).set(samp, dataPointer[samp]);
 
 			const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
 
@@ -219,8 +199,6 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 			for (int n = samplesAdded[i]; n < nSamples; n++)
 			{
 				dataWriter->getReference(i).set((bufferSize - samplesLeft) + n, incomingDataPointer[n]);
-				samplesAdded[i]++;
-
 				// if (bufferIdx[i] == bufferSize)
 				// {
 				// 	updateBuffer = true;
@@ -261,14 +239,13 @@ void SpectrumViewer::run()
 			for (int activeChan = 0; activeChan < channels.size(); activeChan++)
 			{
 				//std::cout << "Adding channel " << activeChan << std::endl;
-				TFR->addTrial(dataReader->getUnchecked(activeChan), activeChan);
+				auto chanData = dataReader->getUnchecked(activeChan);
+				TFR->addTrial(chanData, activeChan);
 			}
 
 			if (displayType == POWER_SPECTRUM)
 				TFR->getPowerForChannels(power);
 
-			else if (displayType == COHERENCE)
-				TFR->getMeanCoherence(0, 1, coherence, 0); // check "comb" value
 		}
 	}
 }
@@ -286,17 +263,18 @@ void SpectrumViewer::updateSettings()
 
 }
 
-void SpectrumViewer::updateDataBufferSize(int size1, int size2)
+void SpectrumViewer::updateDataBufferSize(int size)
 {
 	// no writers or readers can exist here
 	// so this can't be called during acquisition
 
 	dataBuffer.map([=](Array<FFTWArrayType>& arr)
 	{
-		std::cout << "Resizing data buffer to " << size1 << ", " << size2 << std::endl;
-		arr.resize(2);
-		arr.getReference(0).resize(size1);
-		arr.getReference(1).resize(size2);
+		LOGD("Resizing data buffer to ", size);
+		arr.resize(MAX_CHANS);
+
+		for(int i = 0; i < MAX_CHANS; i++)
+			arr.getReference(i).resize(size);
 	});
 
 	///// Add incoming data to data buffer. Let thread get the ok to start at 8 seconds of data ////
@@ -318,10 +296,12 @@ void SpectrumViewer::updateDisplayBufferSize(int newSize)
 {
 	power.map([=](std::vector<std::vector<float>>& vec)
 	{
-		std::cout << "Resizing power buffer to " << newSize << ", " << newSize << std::endl;
-		vec.resize(2);
-		vec[0].resize(newSize);
-		vec[1].resize(newSize);
+		LOGD("Resizing power buffer to ", newSize);
+		vec.resize(MAX_CHANS);
+
+		for(int i = 0; i < MAX_CHANS; i++)
+			vec[i].resize(newSize);
+
 	});
 
 	// coherence.map([=](std::vector<double>& vec)
@@ -344,8 +324,7 @@ void SpectrumViewer::resetTFR()
 					   // (nSamplesWin)) / tfrParams.Fs *
 						//(1 / tfrParams.stepLen) + 1; // Trim half of window on both sides, so 1 window length is trimmed total
 
-	TFR = new CumulativeTFR(1, // group 1 channel count
-		1, // group 2 channel count
+	TFR = new CumulativeTFR(MAX_CHANS, // channel count
 		tfrParams.nFreqs, 
 		tfrParams.nTimes, 
 		tfrParams.Fs, // 2000
@@ -378,16 +357,11 @@ bool SpectrumViewer::startAcquisition()
 {
 	if (isEnabled)
 	{
-		// Start coherence calculation thread
-		numTrials = 0;
-		//numArtifacts = 0;
 		startThread(THREAD_PRIORITY);
 
-		for (int i = 0; i < 2; i++)
+		for (int i = 0; i < MAX_CHANS; i++)
 		{
 			bufferIdx.set(i, 0);
-			lastValue.set(i, 0.0f);
-			sampleIdx.set(i, 0);
 		}
 	}
 	return isEnabled;

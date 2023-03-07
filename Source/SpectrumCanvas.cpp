@@ -30,7 +30,7 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	, canvas(new Component("canvas"))
 	, processor(n)
 	, canvasBounds(0, 0, 1, 1)
-	, numActiveChans(2)
+	, numActiveChans(1)
 {
 	refreshRate = 60;
 
@@ -41,7 +41,7 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	XYRange range{ 0, 1000, 0, 20 };
 	plt.setRange(range);
 	plt.xlabel("Frequency (Hz)");
-	plt.ylabel("");
+	plt.ylabel("Power");
 
 	canvas->addAndMakeVisible(plt);
 
@@ -54,17 +54,26 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	viewport->setScrollBarsShown(true, true);
 	addAndMakeVisible(viewport);
 
-	currPower.resize(2);
-	prevPower.resize(2);
-
 	nFreqs = processor->tfrParams.nFreqs;
 	freqStep = processor->tfrParams.freqStep;
 
-	for (int ch = 0; ch < 2; ch++)
+	currPower.resize(MAX_CHANS);
+	prevPower.resize(MAX_CHANS);
+
+	for (int ch = 0; ch < MAX_CHANS; ch++)
 	{
 		currPower[ch].clear();
 		prevPower[ch].clear();
 	}
+
+	chanColors.add(Colour(224,185,36));
+    chanColors.add(Colour(214,210,182));
+    chanColors.add(Colour(243,119,33));
+    chanColors.add(Colour(186,157,168));
+    chanColors.add(Colour(237,37,36));
+    chanColors.add(Colour(179,122,79));
+    chanColors.add(Colour(217,46,171));
+    chanColors.add(Colour(217, 139,196));
 
 	for (int i = 0; i < nFreqs; i++)
 	{
@@ -88,7 +97,10 @@ void SpectrumCanvas::paint(Graphics& g)
 
 void SpectrumCanvas::update()
 {
+	stopCallbacks();
 	numActiveChans = processor->getNumActiveChans();
+	startCallbacks();
+
 }
 
 void SpectrumCanvas::refresh()
@@ -147,36 +159,10 @@ void SpectrumCanvas::refresh()
 				}
 				//std::cout << "Max ind: " << maxind << std::endl;
 
-				Colour chanColor;
-
-				if (ch == 0)
-					chanColor = Colours::yellow;
-				else
-					chanColor = Colours::lightgreen;
-
-				plt.plot(xvalues, currPower[ch], chanColor, 1.5f);
+				plt.plot(xvalues, currPower[ch], chanColors[ch], 1.5f);
 
 				prevPower[ch] = currPower[ch];
 				currPower[ch].clear();
-
-				// for (int i = 0; i < 5; i++)
-				// {
-
-				// 	int startIndex = bufferIndex[ch];
-				// 	int trueIndex = negativeAwareModulo((startIndex - i), 5);
-				// 	float opacity = 1.0f - i * 0.2f;
-					
-				// 	// LOGC("********** True Index: ", trueIndex, ", Alpha Val: ", alphaValue);
-
-				// 	Colour color;
-
-				// 	if (ch == 0)
-				// 		color = Colours::yellow;
-				// 	else
-				// 		color = Colours::lightgreen;
-
-				// 	plt.plot(xvalues, power[ch][trueIndex], color, 1.5f, opacity);
-				// }
 			}	
 		}
 

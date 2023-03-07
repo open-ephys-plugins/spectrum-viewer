@@ -109,7 +109,7 @@ class CumulativeTFR
 	};
 
 public:
-	CumulativeTFR(int ng1, int ng2, int nf, int nt, int Fs,
+	CumulativeTFR(int nchans, int nf, int nt, int Fs,
 		float winLen = 2, float stepLen = 0.1, float freqStep = 0.25,
 		int freqStart = 1, double fftSec = 10.0, double alpha = 0);
 

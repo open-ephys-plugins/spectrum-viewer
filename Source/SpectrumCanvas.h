@@ -70,6 +70,8 @@ private:
 	std::vector<std::vector<float>> currPower; // channels x freqs
 	std::vector<std::vector<float>> prevPower; // channels x freqs
 
+	Array<Colour> chanColors;
+
 	float freqStep;
 	int nFreqs;
 
