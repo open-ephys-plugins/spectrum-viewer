@@ -56,8 +56,8 @@ void SpectrumViewerEditor::startAcquisition()
 
 void SpectrumViewerEditor::stopAcquisition()
 {
-    streamSelection->setEnabled(false);
-	streamSelection->setEnabled(false);
+    streamSelection->setEnabled(true);
+	streamSelector->setEnabled(true);
 	disable();
 }
 
@@ -97,6 +97,7 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 		if (activeStream > 0)
 		{
 			getProcessor()->getParameter("active_stream")->setNextValue(activeStream);
+			streamSelector->setViewedIndex(cb->getSelectedItemIndex());
 
 			for(auto ped : parameterEditors)
 			{
@@ -110,3 +111,12 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 		}
 	}
 }
+
+void SpectrumViewerEditor::selectedStreamHasChanged()
+ {
+ 	if (streamSelection->indexOfItemId(getCurrentStream()) != -1)
+ 	{
+ 		activeStream = getCurrentStream();
+ 		streamSelection->setSelectedId(activeStream, sendNotification);
+ 	}
+ }

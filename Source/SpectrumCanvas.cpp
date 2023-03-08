@@ -38,10 +38,13 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	
 	plt.setBounds(bounds = { 20, 20, 1200, 800 });
 	plt.title("POWER SPECTRUM");
-	XYRange range{ 0, 1000, 0, 20 };
+	XYRange range{ 0, 1000, 0, 5 };
 	plt.setRange(range);
 	plt.xlabel("Frequency (Hz)");
 	plt.ylabel("Power");
+	plt.setBackgroundColour(Colours::grey);
+	plt.setGridColour(Colours::darkgrey);
+	plt.setInteractive(InteractivePlotMode::OFF);
 
 	canvas->addAndMakeVisible(plt);
 
@@ -66,14 +69,14 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 		prevPower[ch].clear();
 	}
 
-	chanColors.add(Colour(224,185,36));
-    chanColors.add(Colour(214,210,182));
-    chanColors.add(Colour(243,119,33));
-    chanColors.add(Colour(186,157,168));
-    chanColors.add(Colour(237,37,36));
-    chanColors.add(Colour(179,122,79));
-    chanColors.add(Colour(217,46,171));
-    chanColors.add(Colour(217, 139,196));
+	chanColors.add(Colour(0, 0, 0));
+    chanColors.add(Colour(230, 159, 0));
+    chanColors.add(Colour(86, 180, 233));
+    chanColors.add(Colour(0, 158, 115));
+    chanColors.add(Colour(240, 228, 66));
+    chanColors.add(Colour(0, 114, 178));
+    chanColors.add(Colour(242, 66, 53));
+    chanColors.add(Colour(204, 121, 167));
 
 	for (int i = 0; i < nFreqs; i++)
 	{
@@ -97,10 +100,20 @@ void SpectrumCanvas::paint(Graphics& g)
 
 void SpectrumCanvas::update()
 {
-	stopCallbacks();
-	numActiveChans = processor->getNumActiveChans();
-	startCallbacks();
+	plt.clear();
 
+	if(CoreServices::getAcquisitionStatus())
+	{
+		stopCallbacks();
+		numActiveChans = processor->getNumActiveChans();
+		startCallbacks();
+	}
+	else
+	{
+		numActiveChans = processor->getNumActiveChans();
+		XYRange newRange = { 0, 1000, 0, 5 };
+		plt.setRange(newRange); 
+	}
 }
 
 void SpectrumCanvas::refresh()
@@ -119,22 +132,17 @@ void SpectrumCanvas::refresh()
 		{
 			plt.clear();
 
+			float maxpower = -1;
+
 			for (int ch = 0; ch < numActiveChans; ch++)
 			{
 				// LOGC("********** Buffer Index: ", bufferIndex[ch]);
-				
-				float maxpower = -1;
-				int maxind = -1;
-
 				for (int n = 0; n < nFreqs; n++)
 				{
 					float p = powerReader->at(ch)[n];
 
 					if (p > maxpower)
-					{
 						maxpower = p;
-						maxind = n;
-					}
 
 					if (p > 0)
 					{
@@ -149,24 +157,26 @@ void SpectrumCanvas::refresh()
 						}
 					}
 				}
-				
-				XYRange pltRange;
-				plt.getRange(pltRange);
-				if(pltRange.ymax < log(maxpower))
-				{
-					pltRange.ymax = log(maxpower);
-					plt.setRange(pltRange);
-				}
-				//std::cout << "Max ind: " << maxind << std::endl;
 
-				plt.plot(xvalues, currPower[ch], chanColors[ch], 1.5f);
+				if(maxpower > 0);
+				{
+					XYRange pltRange;
+					plt.getRange(pltRange);
+
+					float logPower = log(maxpower);
+
+					if(pltRange.ymax < logPower || (pltRange.ymax - logPower) > 5)
+					{
+						pltRange.ymax = logPower;
+						plt.setRange(pltRange);
+					}
+				}
+
+				plt.plot(xvalues, currPower[ch], chanColors[ch], 2.0f);
 
 				prevPower[ch] = currPower[ch];
 				currPower[ch].clear();
 			}	
-		}
-
-		plt.show();
-		
+		}		
 	}
 }

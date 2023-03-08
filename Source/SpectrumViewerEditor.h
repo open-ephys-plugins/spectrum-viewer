@@ -53,6 +53,9 @@ public:
     /** Creates the canvas */
     Visualizer* createNewCanvas();
 
+    /** Notifies editor that the selected stream has changed.*/
+     void selectedStreamHasChanged() override;
+
 private:
 
     std::unique_ptr<ComboBox> streamSelection;

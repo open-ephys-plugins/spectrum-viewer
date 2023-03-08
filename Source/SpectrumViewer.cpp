@@ -40,6 +40,7 @@ SpectrumViewer::SpectrumViewer()
 	tfrParams.winLen = 0.25;
 	tfrParams.interpRatio = 1;
 	tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
+	tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep) + 1;
 	tfrParams.Fs = 2000;
 	tfrParams.alpha = 0;
 
@@ -70,8 +71,6 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 			activeStream = candidateStream;
 
 			float Fs = getDataStream(activeStream)->getSampleRate();
-
-			// downsampleFactor = (int) Fs / targetRate;
 
 			bufferSize = int(Fs * tfrParams.winLen);
 
@@ -267,6 +266,7 @@ void SpectrumViewer::updateDataBufferSize(int size)
 {
 	// no writers or readers can exist here
 	// so this can't be called during acquisition
+	dataBuffer.reset();
 
 	dataBuffer.map([=](Array<FFTWArrayType>& arr)
 	{
@@ -285,15 +285,12 @@ void SpectrumViewer::updateDataBufferSize(int size)
 		jassertfalse; // atomic sync data writer broken
 	}
 
-
-	int maxSamples = dataWriter->getReference(0).getLength();
-
-	std::cout << "TOTAL BUFFER SIZE: " << maxSamples << std::endl;
-
 }
 
 void SpectrumViewer::updateDisplayBufferSize(int newSize)
 {
+	power.reset();
+	
 	power.map([=](std::vector<std::vector<float>>& vec)
 	{
 		LOGD("Resizing power buffer to ", newSize);
@@ -324,7 +321,7 @@ void SpectrumViewer::resetTFR()
 					   // (nSamplesWin)) / tfrParams.Fs *
 						//(1 / tfrParams.stepLen) + 1; // Trim half of window on both sides, so 1 window length is trimmed total
 
-	TFR = new CumulativeTFR(MAX_CHANS, // channel count
+	TFR.reset(new CumulativeTFR(MAX_CHANS, // channel count
 		tfrParams.nFreqs, 
 		tfrParams.nTimes, 
 		tfrParams.Fs, // 2000
@@ -333,7 +330,7 @@ void SpectrumViewer::resetTFR()
 		tfrParams.freqStep, 
 		tfrParams.freqStart, 
 		tfrParams.segLen, //fftSec
-		tfrParams.alpha);
+		tfrParams.alpha));
 
 }
 
@@ -369,7 +366,7 @@ bool SpectrumViewer::startAcquisition()
 
 bool SpectrumViewer::stopAcquisition()
 {
-	signalThreadShouldExit();
+	stopThread(1000);
 
 	return true;
 }
