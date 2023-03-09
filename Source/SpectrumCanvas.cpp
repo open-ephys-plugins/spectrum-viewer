@@ -26,17 +26,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <climits>
 
 SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
-	: viewport(new Viewport())
-	, canvas(new Component("canvas"))
-	, processor(n)
-	, canvasBounds(0, 0, 1, 1)
+	: processor(n)
 	, numActiveChans(1)
 {
 	refreshRate = 60;
-
-	juce::Rectangle<int> bounds;
 	
-	plt.setBounds(bounds = { 20, 20, 1200, 800 });
 	plt.title("POWER SPECTRUM");
 	XYRange range{ 0, 1000, 0, 5 };
 	plt.setRange(range);
@@ -46,16 +40,13 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	plt.setGridColour(Colours::darkgrey);
 	plt.setInteractive(InteractivePlotMode::OFF);
 
-	canvas->addAndMakeVisible(plt);
+	canvasPlot = std::make_unique<CanvasPlot>(processor);
+	canvasPlot->addAndMakeVisible(plt);
 
-	canvasBounds = canvasBounds.getUnion(bounds);
-	canvasBounds.setBottom(canvasBounds.getBottom() + 10);
-	canvasBounds.setRight(canvasBounds.getRight() + 10);
-	canvas->setBounds(canvasBounds);
-
-	viewport->setViewedComponent(canvas, false);
+	viewport = std::make_unique<Viewport>();
+	viewport->setViewedComponent(canvasPlot.get(), false);
 	viewport->setScrollBarsShown(true, true);
-	addAndMakeVisible(viewport);
+	addAndMakeVisible(viewport.get());
 
 	nFreqs = processor->tfrParams.nFreqs;
 	freqStep = processor->tfrParams.freqStep;
@@ -69,15 +60,6 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 		prevPower[ch].clear();
 	}
 
-	chanColors.add(Colour(0, 0, 0));
-    chanColors.add(Colour(230, 159, 0));
-    chanColors.add(Colour(86, 180, 233));
-    chanColors.add(Colour(0, 158, 115));
-    chanColors.add(Colour(240, 228, 66));
-    chanColors.add(Colour(0, 114, 178));
-    chanColors.add(Colour(242, 66, 53));
-    chanColors.add(Colour(204, 121, 167));
-
 	for (int i = 0; i < nFreqs; i++)
 	{
 		xvalues.push_back(i * freqStep);
@@ -88,7 +70,23 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 
 void SpectrumCanvas::resized()
 {
-	viewport->setSize(getWidth(), getHeight());
+	int plotWidth, plotHeight;
+	
+	viewport->setBounds(0, 0, getWidth(), getHeight());
+	
+	if(viewport->getMaximumVisibleWidth() < 840 + canvasPlot->legendThickness)
+		plotWidth = 800;
+	else
+		plotWidth = viewport->getMaximumVisibleWidth() - canvasPlot->legendThickness - 40;
+	
+	if(viewport->getMaximumVisibleHeight() < 640)
+		plotHeight = 600;
+	else
+		plotHeight = viewport->getMaximumVisibleHeight() - 40;
+		
+	canvasPlot->setBounds(0, 0, plotWidth + canvasPlot->legendThickness + 40, plotHeight + 40);
+	plt.setBounds(20, 30, plotWidth, plotHeight);
+
 }
 
 void SpectrumCanvas::refreshState() {}
@@ -102,18 +100,22 @@ void SpectrumCanvas::update()
 {
 	plt.clear();
 
+	canvasPlot->activeChannels = processor->getActiveChans();
+
 	if(CoreServices::getAcquisitionStatus())
 	{
 		stopCallbacks();
-		numActiveChans = processor->getNumActiveChans();
+		numActiveChans = canvasPlot->activeChannels.size();
 		startCallbacks();
 	}
 	else
 	{
-		numActiveChans = processor->getNumActiveChans();
+		numActiveChans = canvasPlot->activeChannels.size();
 		XYRange newRange = { 0, 1000, 0, 5 };
 		plt.setRange(newRange); 
 	}
+
+	canvasPlot->repaint();
 }
 
 void SpectrumCanvas::refresh()
@@ -178,5 +180,59 @@ void SpectrumCanvas::refresh()
 				currPower[ch].clear();
 			}	
 		}		
+	}
+}
+
+
+
+CanvasPlot::CanvasPlot(SpectrumViewer* p)
+	: activeChannels({1})
+	, processor(p)
+{
+
+}
+
+
+void CanvasPlot::resized()
+{
+
+}
+
+void CanvasPlot::paint(Graphics& g)
+{
+	g.fillAll(Colour(28,28,28));
+
+	g.setColour(Colours::grey);
+
+	int left = getWidth() - legendThickness - 10;
+	int top = 60;
+
+	g.fillRoundedRectangle( left
+						  , top
+						  , legendThickness
+						  , rowHeight * activeChannels.size()
+						  , 5.0 );
+	
+	g.setFont(Font("Fira Code", "SemiBold", 16.0f));
+	
+	for(int i = 0; i < activeChannels.size(); i++)
+	{
+		top = (i+1) * rowHeight + 10;
+
+		g.setColour(Colours::black);
+		String chan = processor->getChanName(activeChannels[i]);
+		g.drawFittedText( chan
+						, left + 10
+						, top + 10
+						, (legendThickness - 20) / 2
+						, 30
+						, Justification::centredLeft
+						, 1);
+		
+		g.setColour(chanColors.at(i));
+		g.fillRect( left + (legendThickness / 2)
+				  , top + 10
+				  , (legendThickness - 20) / 2
+				  , 30);
 	}
 }

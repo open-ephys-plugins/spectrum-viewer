@@ -29,6 +29,47 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "AtomicSynchronizer.h"
 #include "SpectrumViewer.h"
 
+class SpectrumCanvas;
+
+const std::vector<Colour> chanColors = { Colour(0, 0, 0)
+										, Colour(230, 159, 0)
+										, Colour(86, 180, 233)
+										, Colour(0, 158, 115)
+										, Colour(240, 228, 66)
+										, Colour(0, 114, 178)
+										, Colour(242, 66, 53)
+										, Colour(204, 121, 167) };
+
+// Component for housing power spectrum & spectrograph plots
+class CanvasPlot : public Component
+{
+public:
+
+	/** Constructor */
+	CanvasPlot(SpectrumViewer* p);
+
+	/** Destructor */
+	~CanvasPlot() { }
+
+	/** Draws the canvas */
+	void paint(Graphics& g) override;
+
+	/** Updates component boundaries */
+	void resized() override;
+
+	int legendThickness = 250;
+
+	Array<int> activeChannels;
+
+private:
+
+	SpectrumViewer* processor;
+	
+	int rowHeight = 50;
+
+	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CanvasPlot);
+};
+
 /** 
 
 	Draws the real-time power spectrum
@@ -63,14 +104,12 @@ private:
 
 	SpectrumViewer* processor;
 
-	ScopedPointer<Viewport>  viewport;
-	ScopedPointer<Component> canvas;
+	std::unique_ptr<Viewport>  viewport;
+	std::unique_ptr<CanvasPlot> canvasPlot;
 	juce::Rectangle<int> canvasBounds;
 
 	std::vector<std::vector<float>> currPower; // channels x freqs
 	std::vector<std::vector<float>> prevPower; // channels x freqs
-
-	Array<Colour> chanColors;
 
 	float freqStep;
 	int nFreqs;

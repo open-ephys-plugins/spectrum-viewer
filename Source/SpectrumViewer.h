@@ -87,7 +87,9 @@ public:
     void parameterValueChanged(Parameter* param) override;
 
 	/** Called by the canvas to get the number of active chans*/
-	int getNumActiveChans();
+	Array<int> getActiveChans();
+
+	const String& getChanName(int localIdx);
 
 	/** Variable to store incoming data */
 	Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;

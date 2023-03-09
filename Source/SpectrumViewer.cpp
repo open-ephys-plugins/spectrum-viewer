@@ -345,10 +345,15 @@ bool SpectrumViewer::streamExists(uint16 streamId)
 	return false;
 }
 
-int SpectrumViewer::getNumActiveChans()
+Array<int> SpectrumViewer::getActiveChans()
 {
-	return channels.size();
+	return channels;
 }
+
+const String& SpectrumViewer::getChanName(int localIdx)
+{
+	return getDataStream(activeStream)->getContinuousChannels()[localIdx]->getName();
+};
 
 bool SpectrumViewer::startAcquisition()
 {
