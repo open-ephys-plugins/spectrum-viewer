@@ -57,6 +57,10 @@ public:
 	/** Updates component boundaries */
 	void resized() override;
 
+	void setFrequencyRange(int freqStart, int freqEnd, int freqStep, int nFreqs);
+
+	void plotPowerSpectrum(std::vector<std::vector<float>> powerData);
+
 	int legendThickness = 250;
 
 	Array<int> activeChannels;
@@ -65,7 +69,10 @@ public:
 
 	void drawSpectrogram(std::vector<float> chanData);
 
-	void clearSpectrogram();
+	/** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
+	void setDisplayType(DisplayType type);
+
+	void clear();
 
 private:
 
@@ -73,8 +80,15 @@ private:
 	
 	int rowHeight = 50;
 
-	// Holds the first incoming channels power data
-	std::vector<float> chanData;
+	std::vector<std::vector<float>> currPower; // channels x freqs
+	std::vector<std::vector<float>> prevPower; // channels x freqs
+
+	std::vector<float> xvalues;
+
+	InteractivePlot plt;
+
+	int freqStep;
+	int nFreqs;
 
 	/** Image to draw*/
 	std::unique_ptr<Image> spectrogramImg;
@@ -122,18 +136,6 @@ private:
 	std::unique_ptr<Viewport>  viewport;
 	std::unique_ptr<CanvasPlot> canvasPlot;
 	juce::Rectangle<int> canvasBounds;
-
-	std::vector<std::vector<float>> currPower; // channels x freqs
-	std::vector<std::vector<float>> prevPower; // channels x freqs
-
-	float freqStep;
-	int nFreqs;
-
-	int numActiveChans;
-
-	InteractivePlot plt;
-
-	std::vector<float> xvalues;
 
 	DisplayType displayType;
 

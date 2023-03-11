@@ -34,13 +34,13 @@ SpectrumViewer::SpectrumViewer()
 	, displayType(POWER_SPECTRUM)
 {
 	tfrParams.segLen = 1;
-	tfrParams.freqStart = 4;
+	tfrParams.freqStart = 0;
 	tfrParams.freqEnd = 1000;
 	tfrParams.stepLen = 0.1;
 	tfrParams.winLen = 0.25;
 	tfrParams.interpRatio = 1;
 	tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
-	tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep) + 1;
+	tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 	tfrParams.Fs = 2000;
 	tfrParams.alpha = 0;
 

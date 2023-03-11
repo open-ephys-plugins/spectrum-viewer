@@ -27,45 +27,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	: processor(n)
-	, numActiveChans(1)
 	, displayType(POWER_SPECTRUM)
 {
 	refreshRate = 60;
-	
-	plt.title("POWER SPECTRUM");
-	XYRange range{ 0, 1000, 0, 5 };
-	plt.setRange(range);
-	plt.xlabel("Frequency (Hz)");
-	plt.ylabel("Power");
-	plt.setBackgroundColour(Colours::grey);
-	plt.setGridColour(Colours::darkgrey);
-	plt.setInteractive(InteractivePlotMode::OFF);
 
 	canvasPlot = std::make_unique<CanvasPlot>(processor);
-	canvasPlot->addAndMakeVisible(plt);
 
 	viewport = std::make_unique<Viewport>();
 	viewport->setViewedComponent(canvasPlot.get(), false);
 	viewport->setScrollBarsShown(true, true);
 	addAndMakeVisible(viewport.get());
-
-	nFreqs = processor->tfrParams.nFreqs;
-	freqStep = processor->tfrParams.freqStep;
-
-	currPower.resize(MAX_CHANS);
-	prevPower.resize(MAX_CHANS);
-
-	for (int ch = 0; ch < MAX_CHANS; ch++)
-	{
-		currPower[ch].clear();
-		prevPower[ch].clear();
-	}
-
-	for (int i = 0; i < nFreqs; i++)
-	{
-		xvalues.push_back(i * freqStep);
-	}
 	
+	canvasPlot->setFrequencyRange(processor->tfrParams.freqStart,
+								  processor->tfrParams.freqEnd,
+								  processor->tfrParams.freqStep,
+								  processor->tfrParams.nFreqs);
 }
 
 
@@ -82,13 +58,12 @@ void SpectrumCanvas::resized()
 		else
 			plotWidth = viewport->getMaximumVisibleWidth() - canvasPlot->legendThickness - 40;
 		
-		if(viewport->getMaximumVisibleHeight() < 640)
+		if(viewport->getMaximumVisibleHeight() < 650)
 			plotHeight = 600;
 		else
-			plotHeight = viewport->getMaximumVisibleHeight() - 40;
+			plotHeight = viewport->getMaximumVisibleHeight() - 50;
 			
-		canvasPlot->setBounds(0, 0, plotWidth + canvasPlot->legendThickness + 40, plotHeight + 40);
-		plt.setBounds(20, 30, plotWidth, plotHeight);
+		canvasPlot->setBounds(0, 0, plotWidth + canvasPlot->legendThickness + 40, plotHeight + 50);
 	}
 	else
 	{
@@ -106,24 +81,9 @@ void SpectrumCanvas::paint(Graphics& g)
 
 void SpectrumCanvas::update()
 {
-	plt.clear();
-
 	canvasPlot->activeChannels = processor->getActiveChans();
 
-	if(CoreServices::getAcquisitionStatus())
-	{
-		stopCallbacks();
-		numActiveChans = canvasPlot->activeChannels.size();
-		startCallbacks();
-	}
-	else
-	{
-		numActiveChans = canvasPlot->activeChannels.size();
-		XYRange newRange = { 0, 1000, 0, 5 };
-		plt.setRange(newRange); 
-	}
-
-	canvasPlot->clearSpectrogram();
+	canvasPlot->clear();
 	canvasPlot->repaint();
 }
 
@@ -143,53 +103,7 @@ void SpectrumCanvas::refresh()
 		{
 			if(displayType == POWER_SPECTRUM)
 			{
-				plt.clear();
-
-				float maxpower = -1;
-
-				for (int ch = 0; ch < numActiveChans; ch++)
-				{
-					// LOGC("********** Buffer Index: ", bufferIndex[ch]);
-					for (int n = 0; n < nFreqs; n++)
-					{
-						float p = powerReader->at(ch)[n];
-
-						if (p > maxpower)
-							maxpower = p;
-
-						if (p > 0)
-						{
-							if(prevPower[ch].empty())
-							{
-								currPower.at(ch).push_back(log(p));
-							}
-							else
-							{
-								float wAvg = ((9 * prevPower[ch][n]) + log(p)) / 10;
-								currPower.at(ch).push_back(wAvg);
-							}
-						}
-					}
-
-					if(maxpower > 0);
-					{
-						XYRange pltRange;
-						plt.getRange(pltRange);
-
-						float logPower = log(maxpower);
-
-						if(pltRange.ymax < logPower || (pltRange.ymax - logPower) > 5)
-						{
-							pltRange.ymax = logPower;
-							plt.setRange(pltRange);
-						}
-					}
-
-					plt.plot(xvalues, currPower[ch], chanColors[ch], 2.0f);
-
-					prevPower[ch] = currPower[ch];
-					currPower[ch].clear();
-				}
+				canvasPlot->plotPowerSpectrum(*powerReader);
 			}
 			else //Spectrogram
 			{
@@ -202,32 +116,21 @@ void SpectrumCanvas::refresh()
 
 void SpectrumCanvas::setDisplayType(DisplayType type)
 {
-	if(type == SPECTROGRAM)
-	{
-		plt.setVisible(false);
-		canvasPlot->clearSpectrogram();
-	}
-	else
-	{
-		plt.clear();
-		plt.setVisible(true);
-	}
 	
 	if(CoreServices::getAcquisitionStatus())
 	{
 		stopCallbacks();
 		displayType = type;
-		canvasPlot->displayType = type;
+		canvasPlot->setDisplayType(type);
 		startCallbacks();
 	}
 	else
 	{
 		displayType = type;
-		canvasPlot->displayType = type;
+		canvasPlot->setDisplayType(type);
 	}
 
 	resized();
-	canvasPlot->repaint();
 }
 
 
@@ -237,15 +140,133 @@ CanvasPlot::CanvasPlot(SpectrumViewer* p)
 	: activeChannels({1})
 	, processor(p)
 	, displayType(POWER_SPECTRUM)
+	, freqStep(4)
+	, nFreqs(250)
 {
+	plt.title("POWER SPECTRUM");
+	XYRange range{ 0, 1000, 0, 5 };
+	plt.setRange(range);
+	plt.xlabel("Frequency (Hz)");
+	plt.ylabel("Power");
+	plt.setBackgroundColour(Colours::grey);
+	plt.setGridColour(Colours::darkgrey);
+	plt.setInteractive(InteractivePlotMode::OFF);
+	addAndMakeVisible(plt);
+
 	spectrogramImg = std::make_unique<Image>(Image::RGB, 1000, 1000, true);
 	setOpaque(true);
+
+	currPower.resize(MAX_CHANS);
+	prevPower.resize(MAX_CHANS);
+
+	for (int ch = 0; ch < MAX_CHANS; ch++)
+	{
+		currPower[ch].clear();
+		prevPower[ch].clear();
+	}
+
+	for (int i = 0; i < nFreqs; i++)
+	{
+		xvalues.push_back(i * freqStep);
+	}
 }
 
 
 void CanvasPlot::resized()
 {
+	plt.setBounds(20, 30, getWidth() - legendThickness - 40, getHeight() - 50);
+}
 
+void CanvasPlot::setFrequencyRange(int freqStart_, int freqEnd_, int freqStep_, int nFreqs_)
+{
+	freqStep = freqStep_;
+	nFreqs = nFreqs_;
+
+	xvalues.clear();
+	for (int i = 0; i < nFreqs; i++)
+	{
+		xvalues.push_back(i * freqStep);
+	}
+
+	XYRange range{ (float)freqStart_, (float)freqEnd_, 0, 5 };
+	plt.setRange(range);
+}
+
+void CanvasPlot::setDisplayType(DisplayType type)
+{
+	displayType = type;
+
+	if(displayType == SPECTROGRAM)
+		plt.setVisible(false);
+	else
+		plt.setVisible(true);
+
+	clear();
+	repaint();
+}
+
+void CanvasPlot::plotPowerSpectrum(std::vector<std::vector<float>> powerData)
+{
+
+	plt.clear();
+
+	float maxpower = -1;
+
+	for (int ch = 0; ch < activeChannels.size(); ch++)
+	{
+		// LOGC("********** Buffer Index: ", bufferIndex[ch]);
+		for (int n = 0; n < powerData.at(ch).size(); n++)
+		{
+			float p = powerData.at(ch)[n];
+
+			if (p > 0)
+			{
+				if (p > maxpower)
+					maxpower = p;
+
+				if(prevPower[ch].empty())
+				{
+					currPower.at(ch).push_back(log(p));
+				}
+				else
+				{
+					float wAvg = ((9 * prevPower[ch][n]) + log(p)) / 10;
+					currPower.at(ch).push_back(wAvg);
+				}
+			}
+			else
+			{
+				if(prevPower[ch].empty())
+				{
+					currPower.at(ch).push_back(0);
+				}
+				else
+				{
+					float wAvg = ((9 * prevPower[ch][n])) / 10;
+					currPower.at(ch).push_back(wAvg);
+				}
+			}
+		}
+
+		if(maxpower > 0);
+		{
+			XYRange pltRange;
+			plt.getRange(pltRange);
+
+			float logPower = log(maxpower);
+
+			if(pltRange.ymax < logPower || (pltRange.ymax - logPower) > 5)
+			{
+				pltRange.ymax = logPower;
+				plt.setRange(pltRange);
+			}
+		}
+
+		plt.plot(xvalues, currPower[ch], chanColors[ch], 2.0f);
+
+		prevPower[ch] = currPower[ch];
+		currPower[ch].clear();
+	}
 }
 
 void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
@@ -253,13 +274,12 @@ void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
 	auto imageWidth = spectrogramImg->getWidth() - 1;
     auto imageHeight = spectrogramImg->getHeight();
 
-	// first, shuffle our image leftwards by 1 pixel..
+	// first, shuffle our image rightwards by 1 pixel..
     spectrogramImg->moveImageSection (1, 0, 0, 0, imageWidth, imageHeight);
 
 	// find the range of values produced, so we can scale our rendering to
     // show up the detail clearly
     auto maxLevel = juce::FloatVectorOperations::findMaximum (chanData.data(), chanData.size());
-	// juce::FloatVectorOperations::findMaximum()
 
 	for (auto y = 0; y < imageHeight; ++y)
 	{
@@ -365,7 +385,8 @@ void CanvasPlot::paint(Graphics& g)
     }
 }
 
-void CanvasPlot::clearSpectrogram()
+void CanvasPlot::clear()
 {
 	spectrogramImg->clear(spectrogramImg->getBounds());
+	plt.clear();
 }
