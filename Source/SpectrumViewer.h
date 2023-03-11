@@ -34,15 +34,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <chrono>
 #include <ctime> 
 #include <iostream>
-#include<fstream>
+#include <fstream>
 
 #define MAX_CHANS 8
 
 enum DisplayType {
-	COHEROGRAM = 3,
-	SPECTROGRAM = 2,
-	COHERENCE = 1,
-	POWER_SPECTRUM = 0
+	POWER_SPECTRUM = 1,
+	SPECTROGRAM = 2
 };
 
 /*
@@ -89,7 +87,7 @@ public:
 	/** Called by the canvas to get the number of active chans*/
 	Array<int> getActiveChans();
 
-	const String& getChanName(int localIdx);
+	const String getChanName(int localIdx);
 
 	/** Variable to store incoming data */
 	Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;

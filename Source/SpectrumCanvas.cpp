@@ -28,6 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	: processor(n)
 	, numActiveChans(1)
+	, displayType(POWER_SPECTRUM)
 {
 	refreshRate = 60;
 	
@@ -74,18 +75,25 @@ void SpectrumCanvas::resized()
 	
 	viewport->setBounds(0, 0, getWidth(), getHeight());
 	
-	if(viewport->getMaximumVisibleWidth() < 840 + canvasPlot->legendThickness)
-		plotWidth = 800;
-	else
-		plotWidth = viewport->getMaximumVisibleWidth() - canvasPlot->legendThickness - 40;
-	
-	if(viewport->getMaximumVisibleHeight() < 640)
-		plotHeight = 600;
-	else
-		plotHeight = viewport->getMaximumVisibleHeight() - 40;
+	if(displayType == POWER_SPECTRUM)
+	{
+		if(viewport->getMaximumVisibleWidth() < 840 + canvasPlot->legendThickness)
+			plotWidth = 800;
+		else
+			plotWidth = viewport->getMaximumVisibleWidth() - canvasPlot->legendThickness - 40;
 		
-	canvasPlot->setBounds(0, 0, plotWidth + canvasPlot->legendThickness + 40, plotHeight + 40);
-	plt.setBounds(20, 30, plotWidth, plotHeight);
+		if(viewport->getMaximumVisibleHeight() < 640)
+			plotHeight = 600;
+		else
+			plotHeight = viewport->getMaximumVisibleHeight() - 40;
+			
+		canvasPlot->setBounds(0, 0, plotWidth + canvasPlot->legendThickness + 40, plotHeight + 40);
+		plt.setBounds(20, 30, plotWidth, plotHeight);
+	}
+	else
+	{
+		canvasPlot->setBounds(0, 0, viewport->getMaximumVisibleWidth(), viewport->getMaximumVisibleHeight());
+	}
 
 }
 
@@ -93,7 +101,7 @@ void SpectrumCanvas::refreshState() {}
 
 void SpectrumCanvas::paint(Graphics& g)
 {
-	g.fillAll(Colour(28,28,28));
+	// g.fillAll(Colour(28,28,28));
 }
 
 void SpectrumCanvas::update()
@@ -115,6 +123,7 @@ void SpectrumCanvas::update()
 		plt.setRange(newRange); 
 	}
 
+	canvasPlot->clearSpectrogram();
 	canvasPlot->repaint();
 }
 
@@ -132,64 +141,105 @@ void SpectrumCanvas::refresh()
 
 		if (powerReader.isValid())
 		{
-			plt.clear();
-
-			float maxpower = -1;
-
-			for (int ch = 0; ch < numActiveChans; ch++)
+			if(displayType == POWER_SPECTRUM)
 			{
-				// LOGC("********** Buffer Index: ", bufferIndex[ch]);
-				for (int n = 0; n < nFreqs; n++)
+				plt.clear();
+
+				float maxpower = -1;
+
+				for (int ch = 0; ch < numActiveChans; ch++)
 				{
-					float p = powerReader->at(ch)[n];
-
-					if (p > maxpower)
-						maxpower = p;
-
-					if (p > 0)
+					// LOGC("********** Buffer Index: ", bufferIndex[ch]);
+					for (int n = 0; n < nFreqs; n++)
 					{
-						if(prevPower[ch].empty())
+						float p = powerReader->at(ch)[n];
+
+						if (p > maxpower)
+							maxpower = p;
+
+						if (p > 0)
 						{
-							currPower.at(ch).push_back(log(p));
-						}
-						else
-						{
-							float wAvg = ((9 * prevPower[ch][n]) + log(p)) / 10;
-							currPower.at(ch).push_back(wAvg);
+							if(prevPower[ch].empty())
+							{
+								currPower.at(ch).push_back(log(p));
+							}
+							else
+							{
+								float wAvg = ((9 * prevPower[ch][n]) + log(p)) / 10;
+								currPower.at(ch).push_back(wAvg);
+							}
 						}
 					}
-				}
 
-				if(maxpower > 0);
-				{
-					XYRange pltRange;
-					plt.getRange(pltRange);
-
-					float logPower = log(maxpower);
-
-					if(pltRange.ymax < logPower || (pltRange.ymax - logPower) > 5)
+					if(maxpower > 0);
 					{
-						pltRange.ymax = logPower;
-						plt.setRange(pltRange);
+						XYRange pltRange;
+						plt.getRange(pltRange);
+
+						float logPower = log(maxpower);
+
+						if(pltRange.ymax < logPower || (pltRange.ymax - logPower) > 5)
+						{
+							pltRange.ymax = logPower;
+							plt.setRange(pltRange);
+						}
 					}
+
+					plt.plot(xvalues, currPower[ch], chanColors[ch], 2.0f);
+
+					prevPower[ch] = currPower[ch];
+					currPower[ch].clear();
 				}
-
-				plt.plot(xvalues, currPower[ch], chanColors[ch], 2.0f);
-
-				prevPower[ch] = currPower[ch];
-				currPower[ch].clear();
-			}	
+			}
+			else //Spectrogram
+			{
+				canvasPlot->drawSpectrogram(powerReader->at(0));
+			}
 		}		
 	}
 }
 
 
+void SpectrumCanvas::setDisplayType(DisplayType type)
+{
+	if(type == SPECTROGRAM)
+	{
+		plt.setVisible(false);
+		canvasPlot->clearSpectrogram();
+	}
+	else
+	{
+		plt.clear();
+		plt.setVisible(true);
+	}
+	
+	if(CoreServices::getAcquisitionStatus())
+	{
+		stopCallbacks();
+		displayType = type;
+		canvasPlot->displayType = type;
+		startCallbacks();
+	}
+	else
+	{
+		displayType = type;
+		canvasPlot->displayType = type;
+	}
+
+	resized();
+	canvasPlot->repaint();
+}
+
+
+/** CANVAS PLOT - Stores the plot along with it's legend*/
 
 CanvasPlot::CanvasPlot(SpectrumViewer* p)
 	: activeChannels({1})
 	, processor(p)
+	, displayType(POWER_SPECTRUM)
 {
-
+	spectrogramImg = std::make_unique<Image>(Image::RGB, 1000, 1000, true);
+	setOpaque(true);
 }
 
 
@@ -198,41 +248,124 @@ void CanvasPlot::resized()
 
 }
 
+void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
+{
+	auto imageWidth = spectrogramImg->getWidth() - 1;
+    auto imageHeight = spectrogramImg->getHeight();
+
+	// first, shuffle our image leftwards by 1 pixel..
+    spectrogramImg->moveImageSection (1, 0, 0, 0, imageWidth, imageHeight);
+
+	// find the range of values produced, so we can scale our rendering to
+    // show up the detail clearly
+    auto maxLevel = juce::FloatVectorOperations::findMaximum (chanData.data(), chanData.size());
+	// juce::FloatVectorOperations::findMaximum()
+
+	for (auto y = 0; y < imageHeight; ++y)
+	{
+		auto skewedProportionY = 1.0f - (float) y / (float) imageHeight;
+		auto dataIndex = (size_t) jlimit (0, (int)chanData.size(), (int) (skewedProportionY * chanData.size()));
+		auto level = juce::jmap (chanData[dataIndex], 0.0f, juce::jmax (maxLevel, 1e-5f), 0.0f, 1.0f);
+		spectrogramImg->setPixelAt (0, y, juce::Colour::fromHSV (level, 1.0f, level, 1.0f));
+	}
+
+	repaint();
+}
+
 void CanvasPlot::paint(Graphics& g)
 {
 	g.fillAll(Colour(28,28,28));
 
-	g.setColour(Colours::grey);
-
-	int left = getWidth() - legendThickness - 10;
-	int top = 60;
-
-	g.fillRoundedRectangle( left
-						  , top
-						  , legendThickness
-						  , rowHeight * activeChannels.size()
-						  , 5.0 );
-	
-	g.setFont(Font("Fira Code", "SemiBold", 16.0f));
-	
-	for(int i = 0; i < activeChannels.size(); i++)
+	if(displayType == POWER_SPECTRUM)
 	{
-		top = (i+1) * rowHeight + 10;
+		if(activeChannels.size() ==  0)
+			return;
 
-		g.setColour(Colours::black);
-		String chan = processor->getChanName(activeChannels[i]);
-		g.drawFittedText( chan
-						, left + 10
-						, top + 10
-						, (legendThickness - 20) / 2
-						, 30
-						, Justification::centredLeft
-						, 1);
+		// Draw channel color legend next to the plot
+		g.setColour(Colours::grey);
+
+		int left = getWidth() - legendThickness - 10;
+		int top = 60;
+
+		g.fillRoundedRectangle( left
+							, top
+							, legendThickness
+							, rowHeight * activeChannels.size()
+							, 5.0 );
 		
-		g.setColour(chanColors.at(i));
-		g.fillRect( left + (legendThickness / 2)
-				  , top + 10
-				  , (legendThickness - 20) / 2
-				  , 30);
+		g.setFont(Font("Fira Code", "SemiBold", 16.0f));
+		
+		for(int i = 0; i < activeChannels.size(); i++)
+		{
+			top = (i+1) * rowHeight + 10;
+
+			g.setColour(Colours::black);
+			String chan = processor->getChanName(activeChannels[i]);
+			g.drawFittedText( chan
+							, left + 20
+							, top + 10
+							, (legendThickness - 20) / 2
+							, 30
+							, Justification::centredLeft
+							, 1);
+			
+			g.setColour(chanColors.at(i));
+			g.fillRect( left + (legendThickness / 2)
+					, top + 10
+					, (legendThickness - 30) / 2
+					, 30);
+		}
 	}
+	else
+	{
+        g.setColour(Colours::white);
+
+		int w = 50;
+		int h = getHeight();
+
+		int padding = 10;
+
+		g.drawLine(w-3, padding, w-3, h-padding, 2.0);
+
+		int ticklabelWidth = 60;
+		int tickLabelHeight = 20;
+
+
+		for (int k = 0; k <= 10; k++)
+		{
+			float ytickloc = padding + ((k) * (h - padding*2) / 10);
+
+			ytickloc = h - ytickloc;
+
+			g.drawLine(w -13, ytickloc, w-3, ytickloc, 2.0);
+
+			String yTick;
+
+			if(k != 0)
+				yTick = String(k*100);
+			else
+				yTick = String(0);
+				
+			
+			g.drawText(yTick, 
+						0, ytickloc - tickLabelHeight / 2, 
+						w - 15, 
+						tickLabelHeight, 
+						Justification::right, 
+						false);
+
+		}
+		
+		auto imgBounds = getLocalBounds();
+		imgBounds.setLeft(60);
+		imgBounds.setRight(getWidth() - 10);
+		imgBounds.setBottom(getHeight() - 10);
+		imgBounds.setTop(10);
+		g.drawImage (*spectrogramImg, imgBounds.toFloat());
+    }
+}
+
+void CanvasPlot::clearSpectrogram()
+{
+	spectrogramImg->clear(spectrogramImg->getBounds());
 }

@@ -58,7 +58,11 @@ public:
 
 private:
 
+    std::unique_ptr<Label> streamLabel;
     std::unique_ptr<ComboBox> streamSelection;
+
+    std::unique_ptr<Label> displayLabel;
+    std::unique_ptr<ComboBox> displayType;
 
     uint16 activeStream;
 

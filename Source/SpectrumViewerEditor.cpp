@@ -29,15 +29,36 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
-    : VisualizerEditor(p, "Power Spectrum"),
+    : VisualizerEditor(p, "Power Spectrum", 240),
       activeStream(0)
 {
-    streamSelection = std::make_unique<ComboBox>("Display Stream");
-    streamSelection->setBounds(15, 40, 150, 20);
+	streamSelection = std::make_unique<ComboBox>("Display Stream");
+    streamSelection->setBounds(15, 50, 100, 20);
     streamSelection->addListener(this);
     addAndMakeVisible(streamSelection.get());
 
-    addSelectedChannelsParameterEditor("Channels", 55, 80);    
+	streamLabel = std::make_unique<Label>("StreamNameLabel", "Stream");
+	streamLabel->setFont(Font("Silkscreen", "Regular", 12));
+	streamLabel->setColour(Label::textColourId, Colours::darkgrey);
+	streamLabel->setSize(100, 20);
+	streamLabel->attachToComponent(streamSelection.get(), false);
+	addAndMakeVisible(streamLabel.get());
+
+    addSelectedChannelsParameterEditor("Channels", 15, 90);
+
+	displayType = std::make_unique<ComboBox>("Display Stream");
+    displayType->setBounds(125, 50, 110, 20);
+    displayType->addListener(this);
+	displayType->addItemList({"Power Spectrum", "Spectrogram"}, 1);
+	displayType->setSelectedId(1, dontSendNotification);
+    addAndMakeVisible(displayType.get());
+
+	displayLabel = std::make_unique<Label>("DisplayTypeLabel", "Display");
+	displayLabel->setFont(Font("Silkscreen", "Regular", 12));
+	displayLabel->setColour(Label::textColourId, Colours::darkgrey);
+	displayLabel->setSize(100, 20);
+	displayLabel->attachToComponent(displayType.get(), false);
+	addAndMakeVisible(displayLabel.get());
 }
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
@@ -108,6 +129,29 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 					sp->setNextValue(sp->getValue());
 				}
 			}
+		}
+	}
+	else if (cb == displayType.get())
+	{
+		auto sc = static_cast<SpectrumCanvas*>(canvas.get());
+
+		auto type = (DisplayType)displayType->getSelectedId();
+
+		sc->setDisplayType(type);
+
+		if(type == POWER_SPECTRUM)
+			tabText = "Power Spectrum";
+		else
+			tabText = "Spectrogram";
+
+		if(tabIndex != -1)
+		{
+			removeTab(tabIndex);
+			addTab(tabText, canvas.get());
+		}
+		else if(dataWindow->isVisible())
+		{
+			dataWindow->setName(tabText);
 		}
 	}
 }

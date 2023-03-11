@@ -61,11 +61,23 @@ public:
 
 	Array<int> activeChannels;
 
+	DisplayType displayType;
+
+	void drawSpectrogram(std::vector<float> chanData);
+
+	void clearSpectrogram();
+
 private:
 
 	SpectrumViewer* processor;
 	
 	int rowHeight = 50;
+
+	// Holds the first incoming channels power data
+	std::vector<float> chanData;
+
+	/** Image to draw*/
+	std::unique_ptr<Image> spectrogramImg;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CanvasPlot);
 };
@@ -100,6 +112,9 @@ public:
 	/** Updates component boundaries */
 	void resized() override;
 
+	/** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
+	void setDisplayType(DisplayType type);
+
 private:
 
 	SpectrumViewer* processor;
@@ -119,6 +134,8 @@ private:
 	InteractivePlot plt;
 
 	std::vector<float> xvalues;
+
+	DisplayType displayType;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumCanvas);
 };

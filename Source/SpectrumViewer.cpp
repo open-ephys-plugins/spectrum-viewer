@@ -242,8 +242,7 @@ void SpectrumViewer::run()
 				TFR->addTrial(chanData, activeChan);
 			}
 
-			if (displayType == POWER_SPECTRUM)
-				TFR->getPowerForChannels(power);
+			TFR->getPowerForChannels(power);
 
 		}
 	}
@@ -350,7 +349,7 @@ Array<int> SpectrumViewer::getActiveChans()
 	return channels;
 }
 
-const String& SpectrumViewer::getChanName(int localIdx)
+const String SpectrumViewer::getChanName(int localIdx)
 {
 	return getDataStream(activeStream)->getContinuousChannels()[localIdx]->getName();
 };
