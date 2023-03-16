@@ -82,7 +82,10 @@ void SpectrumCanvas::paint(Graphics& g)
 void SpectrumCanvas::update()
 {
 	canvasPlot->activeChannels = processor->getActiveChans();
-
+	canvasPlot->setFrequencyRange(processor->tfrParams.freqStart,
+								  processor->tfrParams.freqEnd,
+								  processor->tfrParams.freqStep,
+								  processor->tfrParams.nFreqs);
 	canvasPlot->clear();
 	canvasPlot->repaint();
 }
@@ -142,6 +145,7 @@ CanvasPlot::CanvasPlot(SpectrumViewer* p)
 	, displayType(POWER_SPECTRUM)
 	, freqStep(4)
 	, nFreqs(250)
+	, freqEnd(1000)
 {
 	plt.title("POWER SPECTRUM");
 	XYRange range{ 0, 1000, 0, 5 };
@@ -177,10 +181,11 @@ void CanvasPlot::resized()
 	plt.setBounds(20, 30, getWidth() - legendThickness - 40, getHeight() - 50);
 }
 
-void CanvasPlot::setFrequencyRange(int freqStart_, int freqEnd_, int freqStep_, int nFreqs_)
+void CanvasPlot::setFrequencyRange(int freqStart_, int freqEnd_, float freqStep_, int nFreqs_)
 {
 	freqStep = freqStep_;
 	nFreqs = nFreqs_;
+	freqEnd = freqEnd_;
 
 	xvalues.clear();
 	for (int i = 0; i < nFreqs; i++)
@@ -362,7 +367,7 @@ void CanvasPlot::paint(Graphics& g)
 			String yTick;
 
 			if(k != 0)
-				yTick = String(k*100);
+				yTick = String((freqEnd * k) / 10);
 			else
 				yTick = String(0);
 				

@@ -57,7 +57,7 @@ public:
 	/** Updates component boundaries */
 	void resized() override;
 
-	void setFrequencyRange(int freqStart, int freqEnd, int freqStep, int nFreqs);
+	void setFrequencyRange(int freqStart, int freqEnd, float freqStep, int nFreqs);
 
 	void plotPowerSpectrum(std::vector<std::vector<float>> powerData);
 
@@ -87,8 +87,9 @@ private:
 
 	InteractivePlot plt;
 
-	int freqStep;
+	float freqStep;
 	int nFreqs;
+	int freqEnd;
 
 	/** Image to draw*/
 	std::unique_ptr<Image> spectrogramImg;

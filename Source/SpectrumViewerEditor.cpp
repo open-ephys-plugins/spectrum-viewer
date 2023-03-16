@@ -29,13 +29,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
-    : VisualizerEditor(p, "Power Spectrum", 240),
-      activeStream(0)
+	: VisualizerEditor(p, "Power Spectrum", 240)
+	, activeStream(0)
 {
 	streamSelection = std::make_unique<ComboBox>("Display Stream");
-    streamSelection->setBounds(15, 50, 100, 20);
-    streamSelection->addListener(this);
-    addAndMakeVisible(streamSelection.get());
+	streamSelection->setBounds(15, 50, 100, 20);
+	streamSelection->addListener(this);
+	addAndMakeVisible(streamSelection.get());
 
 	streamLabel = std::make_unique<Label>("StreamNameLabel", "Stream");
 	streamLabel->setFont(Font("Silkscreen", "Regular", 12));
@@ -44,14 +44,14 @@ SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
 	streamLabel->attachToComponent(streamSelection.get(), false);
 	addAndMakeVisible(streamLabel.get());
 
-    addSelectedChannelsParameterEditor("Channels", 15, 90);
+	addSelectedChannelsParameterEditor("Channels", 15, 90);
 
 	displayType = std::make_unique<ComboBox>("Display Stream");
-    displayType->setBounds(125, 50, 110, 20);
-    displayType->addListener(this);
+	displayType->setBounds(125, 50, 110, 20);
+	displayType->addListener(this);
 	displayType->addItemList({"Power Spectrum", "Spectrogram"}, 1);
 	displayType->setSelectedId(1, dontSendNotification);
-    addAndMakeVisible(displayType.get());
+	addAndMakeVisible(displayType.get());
 
 	displayLabel = std::make_unique<Label>("DisplayTypeLabel", "Display");
 	displayLabel->setFont(Font("Silkscreen", "Regular", 12));
@@ -59,26 +59,45 @@ SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
 	displayLabel->setSize(100, 20);
 	displayLabel->attachToComponent(displayType.get(), false);
 	addAndMakeVisible(displayLabel.get());
+
+	freqRanges.add(Range(0, 100));
+	freqRanges.add(Range(0, 500));
+	freqRanges.add(Range(0, 1000));
+	frequencyRange = std::make_unique<ComboBox>("FreqRange");
+	frequencyRange->setBounds(125, 95, 110, 20);
+	frequencyRange->addListener(this);
+	frequencyRange->addItemList({"0 - 100", "0 - 500", "0 - 1000"}, 1);
+	frequencyRange->setSelectedId(3, dontSendNotification);
+	addAndMakeVisible(frequencyRange.get());
+
+	frequencyLabel = std::make_unique<Label>("FreqRangeLabel", "Freq. Range");
+	frequencyLabel->setFont(Font("Silkscreen", "Regular", 12));
+	frequencyLabel->setColour(Label::textColourId, Colours::darkgrey);
+	frequencyLabel->setSize(100, 20);
+	frequencyLabel->attachToComponent(frequencyRange.get(), false);
+	addAndMakeVisible(frequencyLabel.get());
 }
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
 {
-    return new SpectrumCanvas((SpectrumViewer*)getProcessor());
+	return new SpectrumCanvas((SpectrumViewer*)getProcessor());
 }
 
 
 void SpectrumViewerEditor::startAcquisition()
 {
-    streamSelection->setEnabled(false);
+	streamSelection->setEnabled(false);
 	streamSelector->setEnabled(false);
+	frequencyRange->setEnabled(false);
 	enable();
 }
 
 
 void SpectrumViewerEditor::stopAcquisition()
 {
-    streamSelection->setEnabled(true);
+	streamSelection->setEnabled(true);
 	streamSelector->setEnabled(true);
+	frequencyRange->setEnabled(true);
 	disable();
 }
 
@@ -117,6 +136,26 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 		
 		if (activeStream > 0)
 		{
+			// Add or change the currently selected stream's max frequency
+			float maxFreq = getProcessor()->getDataStream(activeStream)->getSampleRate() / 2;
+
+			freqRanges.set(3, Range(0, (int)maxFreq));
+			
+			if(frequencyRange->getNumItems() == 4)
+			{
+				int selectedId = frequencyRange->getSelectedId();
+				frequencyRange->changeItemText(4, "0 - " + String(maxFreq));
+
+				if(selectedId == 4)
+				{
+					frequencyRange->setText("0 - " + String(maxFreq), sendNotification);
+				}
+			}
+			else
+				frequencyRange->addItem("0 - " + String(maxFreq), 4);
+			
+
+			// send updates for active stream and selected channels
 			getProcessor()->getParameter("active_stream")->setNextValue(activeStream);
 			streamSelector->setViewedIndex(cb->getSelectedItemIndex());
 
@@ -127,8 +166,10 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 					auto sp = getProcessor()->getDataStream(activeStream)->getParameter("Channels");
 					ped->setParameter(sp);
 					sp->setNextValue(sp->getValue());
+					break;
 				}
 			}
+			
 		}
 	}
 	else if (cb == displayType.get())
@@ -154,13 +195,18 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 			dataWindow->setName(tabText);
 		}
 	}
+	else if (cb == frequencyRange.get())
+	{
+		auto processor = static_cast<SpectrumViewer*>(getProcessor());
+		processor->setFrequencyRange(freqRanges[cb->getSelectedItemIndex()]);
+	}
 }
 
 void SpectrumViewerEditor::selectedStreamHasChanged()
- {
- 	if (streamSelection->indexOfItemId(getCurrentStream()) != -1)
- 	{
- 		activeStream = getCurrentStream();
- 		streamSelection->setSelectedId(activeStream, sendNotification);
- 	}
- }
+{
+	if (streamSelection->indexOfItemId(getCurrentStream()) != -1)
+	{
+		activeStream = getCurrentStream();
+		streamSelection->setSelectedId(activeStream, sendNotification);
+	}
+}

@@ -70,19 +70,17 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 		{
 			activeStream = candidateStream;
 
-			float Fs = getDataStream(activeStream)->getSampleRate();
+			tfrParams.Fs = getDataStream(activeStream)->getSampleRate();
 
-			bufferSize = int(Fs * tfrParams.winLen);
-
-			updateDataBufferSize(bufferSize);
-
-			tfrParams.Fs = Fs;
+			bufferSize = int(tfrParams.Fs * tfrParams.winLen);
 
 			// (Start - end freq) / stepsize
 			tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
 
 			//freqStep = 1; // for debugging
-			tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep) + 1;
+			tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
+
+			updateDataBufferSize(bufferSize);
 
 			updateDisplayBufferSize(tfrParams.nFreqs);
 
@@ -100,6 +98,33 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 		{
 			channels.add(int(i));
 		}
+
+		getEditor()->updateVisualizer();
+	}
+}
+
+void SpectrumViewer::setFrequencyRange(Range<int> newRange)
+{
+	if(newRange.getEnd() != tfrParams.freqEnd)
+	{
+		tfrParams.freqEnd = newRange.getEnd();
+		
+		if(tfrParams.freqEnd == 100)
+			tfrParams.winLen = 2;
+		else if(tfrParams.freqEnd == 500)
+			tfrParams.winLen = 0.5;
+		else if(tfrParams.freqEnd == 1000)
+			tfrParams.winLen = 0.25;
+		else
+			tfrParams.winLen = 0.1;
+
+		bufferSize = int(tfrParams.Fs * tfrParams.winLen);
+		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
+		tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
+
+		updateDataBufferSize(bufferSize);
+		updateDisplayBufferSize(tfrParams.nFreqs);
+		resetTFR();
 
 		getEditor()->updateVisualizer();
 	}
@@ -323,7 +348,7 @@ void SpectrumViewer::resetTFR()
 	TFR.reset(new CumulativeTFR(MAX_CHANS, // channel count
 		tfrParams.nFreqs, 
 		tfrParams.nTimes, 
-		tfrParams.Fs, // 2000
+		tfrParams.Fs, // sample rate
 		tfrParams.winLen, 
 		tfrParams.stepLen,
 		tfrParams.freqStep, 

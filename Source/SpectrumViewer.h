@@ -89,6 +89,8 @@ public:
 
 	const String getChanName(int localIdx);
 
+	void setFrequencyRange(Range<int>);
+
 	/** Variable to store incoming data */
 	Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
 	AtomicallyShared<Array<FFTWArrayType>> dataBuffer;

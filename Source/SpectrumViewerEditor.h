@@ -27,46 +27,51 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <VisualizerEditorHeaders.h>
 
 class SpectrumViewerEditor : public VisualizerEditor,
-                             public ComboBox::Listener
+							 public ComboBox::Listener
 {
-    friend class SpectrumCanvas;
+	friend class SpectrumCanvas;
 public:
 
-    /** Constructor */
-    SpectrumViewerEditor(GenericProcessor* parentNode);
+	/** Constructor */
+	SpectrumViewerEditor(GenericProcessor* parentNode);
 
-    /** Destructor */
-    ~SpectrumViewerEditor() { }
+	/** Destructor */
+	~SpectrumViewerEditor() { }
 
-    /** Enables animation */
-    void startAcquisition() override;
+	/** Enables animation */
+	void startAcquisition() override;
 
-    /** Disables animation*/
-    void stopAcquisition() override;
+	/** Disables animation*/
+	void stopAcquisition() override;
 
-    /** Called when underlying settings are updated */
-    void updateSettings() override;
+	/** Called when underlying settings are updated */
+	void updateSettings() override;
 
-    /** Called when a ComboBox changes*/
+	/** Called when a ComboBox changes*/
 	void comboBoxChanged(ComboBox* comboBox);
 
-    /** Creates the canvas */
-    Visualizer* createNewCanvas();
+	/** Creates the canvas */
+	Visualizer* createNewCanvas();
 
-    /** Notifies editor that the selected stream has changed.*/
-     void selectedStreamHasChanged() override;
+	/** Notifies editor that the selected stream has changed.*/
+	 void selectedStreamHasChanged() override;
 
 private:
 
-    std::unique_ptr<Label> streamLabel;
-    std::unique_ptr<ComboBox> streamSelection;
+	std::unique_ptr<Label> streamLabel;
+	std::unique_ptr<ComboBox> streamSelection;
 
-    std::unique_ptr<Label> displayLabel;
-    std::unique_ptr<ComboBox> displayType;
+	std::unique_ptr<Label> displayLabel;
+	std::unique_ptr<ComboBox> displayType;
+	
+	std::unique_ptr<Label> frequencyLabel;
+	std::unique_ptr<ComboBox> frequencyRange;
 
-    uint16 activeStream;
+	Array<Range<int>> freqRanges;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumViewerEditor);
+	uint16 activeStream;
+
+	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumViewerEditor);
 };
 
 

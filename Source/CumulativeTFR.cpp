@@ -44,16 +44,16 @@ CumulativeTFR::CumulativeTFR(int nChans, int nf, int nt, int Fs, float winLen, f
 {
 
 	std::cout << "Creating new TFR" << std::endl;
-	std::cout << "PARAMS:" << std::endl;
+	// std::cout << "PARAMS:" << std::endl;
 	std::cout << "nFreqs: " << nFreqs << std::endl;
-	std::cout << "Fs: " << Fs << std::endl;
-	std::cout << "stepLen: " << stepLen << std::endl;
-	std::cout << "nTimes: " << nTimes << std::endl;
-	std::cout << "nfft: " << nfft << std::endl;
-	std::cout << "alpha: " << alpha << std::endl;
+	// std::cout << "Fs: " << Fs << std::endl;
+	// std::cout << "stepLen: " << stepLen << std::endl;
+	// std::cout << "nTimes: " << nTimes << std::endl;
+	// std::cout << "nfft: " << nfft << std::endl;
+	// std::cout << "alpha: " << alpha << std::endl;
 	std::cout << "freqStep: " << freqStep << std::endl;
-	std::cout << "freqStart: " << freqStart << std::endl;
-	std::cout << "windowLen: " << windowLen << std::endl;
+	// std::cout << "freqStart: " << freqStart << std::endl;
+	// std::cout << "windowLen: " << windowLen << std::endl;
 
 	// std::cout << "Creating waveletArray" << std::endl;
 
