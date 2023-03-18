@@ -53,8 +53,6 @@ class SpectrumViewer :
 	public GenericProcessor, 
 	public Thread
 {
-	friend class SpectrumViewerEidtor;
-	friend class SpectrumCanvas;
 public:
 
 	/** Constructor */
@@ -91,6 +89,8 @@ public:
 
 	void setFrequencyRange(Range<int>);
 
+	float getFreqStep() { return tfrParams.freqStep; };
+
 	/** Variable to store incoming data */
 	Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
 	AtomicallyShared<Array<FFTWArrayType>> dataBuffer;
@@ -113,13 +113,8 @@ private:
 
 	ScopedPointer<CumulativeTFR> TFR;
 
-	int nSamplesAdded; // holds how many samples were added for each channel
-	AudioBuffer<float> channelData; // Holds the segment buffer for each channel.
-	int nSamplesWait; // How many seconds to wait after an artifact is seen.
-	int nSamplesWaited; // Holds how many samples we've waited after an artifact. (wait 1 second before getting data again)
-
-	// Total Combinations
-	int nGroupCombs;
+	int nSamplesToAdd; // holds how many samples to add for each channel before sending an update
+	Array<int> samplesAdded; // samples added to each channel so far.
 
 	// from 0 to 10
 	static const int THREAD_PRIORITY = 5;
@@ -137,16 +132,6 @@ private:
 
 	// This is to store data in case of switch and we wish to retrive old data
 	AtomicallyShared<Array<FFTWArrayType>> dataBufferII;
-
-	enum ParameterType
-	{
-		SEGMENT_LENGTH,
-		WINDOW_LENGTH,
-		START_FREQ,
-		END_FREQ,
-		STEP_LENGTH,
-		ARTIFACT_THRESHOLD
-	};
 
 	struct TFRParameters
 	{

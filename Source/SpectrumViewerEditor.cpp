@@ -80,7 +80,11 @@ SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
 {
-	return new SpectrumCanvas((SpectrumViewer*)getProcessor());
+	auto sp = (SpectrumViewer*)getProcessor();
+	auto spectrumCanvas = new SpectrumCanvas(sp);
+	Range<int> range = freqRanges[frequencyRange->getSelectedItemIndex()];
+	spectrumCanvas->getPlotPtr()->setFrequencyRange(range.getStart(), range.getEnd(), sp->getFreqStep());
+	return spectrumCanvas;
 }
 
 
@@ -130,14 +134,17 @@ void SpectrumViewerEditor::updateSettings()
 
 void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 {
+	auto sc = static_cast<SpectrumCanvas*>(canvas.get());
+
 	if (cb == streamSelection.get())
 	{
 		activeStream = cb->getSelectedId();
 		
 		if (activeStream > 0)
 		{
+			auto stream = getProcessor()->getDataStream(activeStream);
 			// Add or change the currently selected stream's max frequency
-			float maxFreq = getProcessor()->getDataStream(activeStream)->getSampleRate() / 2;
+			float maxFreq = stream->getSampleRate() / 2;
 
 			freqRanges.set(3, Range(0, (int)maxFreq));
 			
@@ -163,7 +170,7 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 			{
 				if(ped->getParameterName().equalsIgnoreCase("Channels"))
 				{
-					auto sp = getProcessor()->getDataStream(activeStream)->getParameter("Channels");
+					auto sp = stream->getParameter("Channels");
 					ped->setParameter(sp);
 					sp->setNextValue(sp->getValue());
 					break;
@@ -174,7 +181,6 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 	}
 	else if (cb == displayType.get())
 	{
-		auto sc = static_cast<SpectrumCanvas*>(canvas.get());
 
 		auto type = (DisplayType)displayType->getSelectedId();
 
@@ -197,8 +203,19 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 	}
 	else if (cb == frequencyRange.get())
 	{
+		Range<int> range = freqRanges[cb->getSelectedItemIndex()];
+		
+		// Send frequency range update to processor
 		auto processor = static_cast<SpectrumViewer*>(getProcessor());
-		processor->setFrequencyRange(freqRanges[cb->getSelectedItemIndex()]);
+		processor->setFrequencyRange(range);
+
+		// Send frequency range update to canvas plot
+		if(sc != nullptr)
+		{
+			sc->getPlotPtr()->setFrequencyRange(range.getStart(),
+												range.getEnd(),
+												processor->getFreqStep());
+		}
 	}
 }
 

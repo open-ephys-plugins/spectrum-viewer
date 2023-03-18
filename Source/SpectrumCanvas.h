@@ -29,6 +29,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "AtomicSynchronizer.h"
 #include "SpectrumViewer.h"
 
+#include <DspLib.h>
+
 class SpectrumCanvas;
 
 const std::vector<Colour> chanColors = { Colour(0, 0, 0)
@@ -57,7 +59,7 @@ public:
 	/** Updates component boundaries */
 	void resized() override;
 
-	void setFrequencyRange(int freqStart, int freqEnd, float freqStep, int nFreqs);
+	void setFrequencyRange(int freqStart, int freqEnd, float freqStep);
 
 	void plotPowerSpectrum(std::vector<std::vector<float>> powerData);
 
@@ -81,7 +83,6 @@ private:
 	int rowHeight = 50;
 
 	std::vector<std::vector<float>> currPower; // channels x freqs
-	std::vector<std::vector<float>> prevPower; // channels x freqs
 
 	std::vector<float> xvalues;
 
@@ -129,6 +130,8 @@ public:
 
 	/** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
 	void setDisplayType(DisplayType type);
+
+	CanvasPlot* getPlotPtr() { return canvasPlot.get(); };
 
 private:
 

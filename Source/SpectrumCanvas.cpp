@@ -29,19 +29,14 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	: processor(n)
 	, displayType(POWER_SPECTRUM)
 {
-	refreshRate = 60;
+	// refreshRate = 60;
 
 	canvasPlot = std::make_unique<CanvasPlot>(processor);
 
 	viewport = std::make_unique<Viewport>();
-	viewport->setViewedComponent(canvasPlot.get(), false);
+	viewport->setViewedComponent(canvasPlot.get(), true);
 	viewport->setScrollBarsShown(true, true);
 	addAndMakeVisible(viewport.get());
-	
-	canvasPlot->setFrequencyRange(processor->tfrParams.freqStart,
-								  processor->tfrParams.freqEnd,
-								  processor->tfrParams.freqStep,
-								  processor->tfrParams.nFreqs);
 }
 
 
@@ -82,10 +77,6 @@ void SpectrumCanvas::paint(Graphics& g)
 void SpectrumCanvas::update()
 {
 	canvasPlot->activeChannels = processor->getActiveChans();
-	canvasPlot->setFrequencyRange(processor->tfrParams.freqStart,
-								  processor->tfrParams.freqEnd,
-								  processor->tfrParams.freqStep,
-								  processor->tfrParams.nFreqs);
 	canvasPlot->clear();
 	canvasPlot->repaint();
 }
@@ -140,8 +131,7 @@ void SpectrumCanvas::setDisplayType(DisplayType type)
 /** CANVAS PLOT - Stores the plot along with it's legend*/
 
 CanvasPlot::CanvasPlot(SpectrumViewer* p)
-	: activeChannels({1})
-	, processor(p)
+	: processor(p)
 	, displayType(POWER_SPECTRUM)
 	, freqStep(4)
 	, nFreqs(250)
@@ -157,22 +147,21 @@ CanvasPlot::CanvasPlot(SpectrumViewer* p)
 	plt.setInteractive(InteractivePlotMode::OFF);
 	addAndMakeVisible(plt);
 
+	activeChannels = processor->getActiveChans();
+
 	spectrogramImg = std::make_unique<Image>(Image::RGB, 1000, 1000, true);
 	setOpaque(true);
 
 	currPower.resize(MAX_CHANS);
-	prevPower.resize(MAX_CHANS);
 
 	for (int ch = 0; ch < MAX_CHANS; ch++)
-	{
 		currPower[ch].clear();
-		prevPower[ch].clear();
-	}
 
 	for (int i = 0; i < nFreqs; i++)
 	{
 		xvalues.push_back(i * freqStep);
 	}
+	
 }
 
 
@@ -181,11 +170,11 @@ void CanvasPlot::resized()
 	plt.setBounds(20, 30, getWidth() - legendThickness - 40, getHeight() - 50);
 }
 
-void CanvasPlot::setFrequencyRange(int freqStart_, int freqEnd_, float freqStep_, int nFreqs_)
+void CanvasPlot::setFrequencyRange(int freqStart_, int freqEnd_, float freqStep_)
 {
 	freqStep = freqStep_;
-	nFreqs = nFreqs_;
 	freqEnd = freqEnd_;
+	nFreqs = (int)(freqEnd_ - freqStart_)/freqStep_;
 
 	xvalues.clear();
 	for (int i = 0; i < nFreqs; i++)
@@ -215,10 +204,21 @@ void CanvasPlot::plotPowerSpectrum(std::vector<std::vector<float>> powerData)
 
 	plt.clear();
 
-	float maxpower = -1;
+	float maxpower = -1.0f;
 
 	for (int ch = 0; ch < activeChannels.size(); ch++)
 	{
+		auto pData = powerData[ch].data();
+
+		Dsp::SmoothedFilterDesign<Dsp::Butterworth::Design::LowPass<2>, 1, Dsp::DirectFormII> lowPassFilter(1);
+		Dsp::Params params;
+		params[0] = 50;                 		// sample rate
+		params[1] = 2;                          // order
+		params[2] = 4;                         // cut-off frequency
+		lowPassFilter.setParams(params);
+
+		lowPassFilter.process((int)powerData.at(ch).size(), &pData);
+
 		// LOGC("********** Buffer Index: ", bufferIndex[ch]);
 		for (int n = 0; n < powerData.at(ch).size(); n++)
 		{
@@ -229,27 +229,11 @@ void CanvasPlot::plotPowerSpectrum(std::vector<std::vector<float>> powerData)
 				if (p > maxpower)
 					maxpower = p;
 
-				if(prevPower[ch].empty())
-				{
-					currPower.at(ch).push_back(log(p));
-				}
-				else
-				{
-					float wAvg = ((9 * prevPower[ch][n]) + log(p)) / 10;
-					currPower.at(ch).push_back(wAvg);
-				}
+				currPower.at(ch).push_back(log(p));
 			}
 			else
 			{
-				if(prevPower[ch].empty())
-				{
-					currPower.at(ch).push_back(0);
-				}
-				else
-				{
-					float wAvg = ((9 * prevPower[ch][n])) / 10;
-					currPower.at(ch).push_back(wAvg);
-				}
+				currPower.at(ch).push_back(0);
 			}
 		}
 
@@ -269,7 +253,6 @@ void CanvasPlot::plotPowerSpectrum(std::vector<std::vector<float>> powerData)
 
 		plt.plot(xvalues, currPower[ch], chanColors[ch], 2.0f);
 
-		prevPower[ch] = currPower[ch];
 		currPower[ch].clear();
 	}
 }
@@ -284,13 +267,27 @@ void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
 
 	// find the range of values produced, so we can scale our rendering to
     // show up the detail clearly
-    auto maxLevel = juce::FloatVectorOperations::findMaximum (chanData.data(), chanData.size());
+    auto powerRange = juce::FloatVectorOperations::findMinAndMax (chanData.data(), chanData.size());
 
 	for (auto y = 0; y < imageHeight; ++y)
 	{
 		auto skewedProportionY = 1.0f - (float) y / (float) imageHeight;
 		auto dataIndex = (size_t) jlimit (0, (int)chanData.size(), (int) (skewedProportionY * chanData.size()));
-		auto level = juce::jmap (chanData[dataIndex], 0.0f, juce::jmax (maxLevel, 1e-5f), 0.0f, 1.0f);
+
+		float logPower = log(chanData[dataIndex]);
+		float logMax = log(powerRange.getEnd());
+		float logMin = log(powerRange.getStart());
+		
+		if(chanData[dataIndex] < 1)
+			logPower = 0;
+		
+		if(powerRange.getEnd() < 0)
+			logMax = 0;
+		
+		if(powerRange.getStart() < 0)
+			logMin = 0;
+
+		auto level = juce::jmap (logPower, logMin, juce::jmax (logMax, 1e-5f), 0.0f, 1.0f);
 		spectrogramImg->setPixelAt (0, y, juce::Colour::fromHSV (level, 1.0f, level, 1.0f));
 	}
 
