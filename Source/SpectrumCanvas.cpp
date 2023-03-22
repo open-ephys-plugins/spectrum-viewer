@@ -76,9 +76,7 @@ void SpectrumCanvas::paint(Graphics& g)
 
 void SpectrumCanvas::update()
 {
-	canvasPlot->activeChannels = processor->getActiveChans();
-	canvasPlot->clear();
-	canvasPlot->repaint();
+	canvasPlot->updateActiveChans();
 }
 
 void SpectrumCanvas::refresh()
@@ -155,7 +153,10 @@ CanvasPlot::CanvasPlot(SpectrumViewer* p)
 	currPower.resize(MAX_CHANS);
 
 	for (int ch = 0; ch < MAX_CHANS; ch++)
+	{
 		currPower[ch].clear();
+		lowPassFilters.add(new OwnedArray<Dsp::Filter>());
+	}
 
 	for (int i = 0; i < nFreqs; i++)
 	{
@@ -168,6 +169,13 @@ CanvasPlot::CanvasPlot(SpectrumViewer* p)
 void CanvasPlot::resized()
 {
 	plt.setBounds(20, 30, getWidth() - legendThickness - 40, getHeight() - 50);
+}
+
+void CanvasPlot::updateActiveChans()
+{
+	activeChannels = processor->getActiveChans();
+	clear();
+	repaint();
 }
 
 void CanvasPlot::setFrequencyRange(int freqStart_, int freqEnd_, float freqStep_)
@@ -184,6 +192,26 @@ void CanvasPlot::setFrequencyRange(int freqStart_, int freqEnd_, float freqStep_
 
 	XYRange range{ (float)freqStart_, (float)freqEnd_, 0, 5 };
 	plt.setRange(range);
+
+	// Create a low pass filter for each frequency within each channel
+	for (int ch = 0; ch < MAX_CHANS; ch++)
+	{
+		lowPassFilters[ch]->clear();
+		for (int i = 0; i < nFreqs; i++)
+		{
+			lowPassFilters[ch]->add(new Dsp::SmoothedFilterDesign
+							<Dsp::Butterworth::Design::LowPass    // design type
+							<2>,                                   // order
+							1,                                     // number of channels (must be const)
+							Dsp::DirectFormII>(1));
+			
+			Dsp::Params params;
+			params[0] = 50;                 		// sample rate (Hz)
+			params[1] = 2;                          // order
+			params[2] = 4;                         // cut-off frequency
+			lowPassFilters[ch]->getLast()->setParams(params);
+		}
+	}
 }
 
 void CanvasPlot::setDisplayType(DisplayType type)
@@ -210,18 +238,12 @@ void CanvasPlot::plotPowerSpectrum(std::vector<std::vector<float>> powerData)
 	{
 		auto pData = powerData[ch].data();
 
-		Dsp::SmoothedFilterDesign<Dsp::Butterworth::Design::LowPass<2>, 1, Dsp::DirectFormII> lowPassFilter(1);
-		Dsp::Params params;
-		params[0] = 50;                 		// sample rate
-		params[1] = 2;                          // order
-		params[2] = 4;                         // cut-off frequency
-		lowPassFilter.setParams(params);
-
-		lowPassFilter.process((int)powerData.at(ch).size(), &pData);
-
-		// LOGC("********** Buffer Index: ", bufferIndex[ch]);
 		for (int n = 0; n < powerData.at(ch).size(); n++)
 		{
+			// Apply low pass filter for that frequency
+			float* pData = &powerData[ch][n];
+			lowPassFilters[ch]->getUnchecked(n)->process(1, &pData);
+
 			float p = powerData.at(ch)[n];
 
 			if (p > 0)
@@ -389,6 +411,16 @@ void CanvasPlot::paint(Graphics& g)
 
 void CanvasPlot::clear()
 {
+	for (int ch = 0; ch < MAX_CHANS; ch++)
+	{
+		currPower[ch].clear();
+
+		for (int i = 0; i < nFreqs; i++)
+			lowPassFilters[ch]->getUnchecked(i)->reset();
+	}
+
+	lowPassFilters[0]->getUnchecked(0)->reset();
+
 	spectrogramImg->clear(spectrogramImg->getBounds());
 	plt.clear();
 }

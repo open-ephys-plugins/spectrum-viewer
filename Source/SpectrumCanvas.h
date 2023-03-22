@@ -59,15 +59,11 @@ public:
 	/** Updates component boundaries */
 	void resized() override;
 
+	void updateActiveChans();
+
 	void setFrequencyRange(int freqStart, int freqEnd, float freqStep);
 
 	void plotPowerSpectrum(std::vector<std::vector<float>> powerData);
-
-	int legendThickness = 250;
-
-	Array<int> activeChannels;
-
-	DisplayType displayType;
 
 	void drawSpectrogram(std::vector<float> chanData);
 
@@ -75,6 +71,10 @@ public:
 	void setDisplayType(DisplayType type);
 
 	void clear();
+
+	int legendThickness = 250;
+
+	DisplayType displayType;
 
 private:
 
@@ -92,8 +92,12 @@ private:
 	int nFreqs;
 	int freqEnd;
 
+	Array<int> activeChannels;
+
 	/** Image to draw*/
 	std::unique_ptr<Image> spectrogramImg;
+
+	OwnedArray<OwnedArray<Dsp::Filter>> lowPassFilters;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CanvasPlot);
 };
