@@ -83,9 +83,8 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 			//freqStep = 1; // for debugging
 			tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
-			updateDataBufferSize(bufferSize);
-
-			updateDisplayBufferSize(tfrParams.nFreqs);
+			BufferResizer bufferResize(bufferSize, tfrParams.nFreqs, this);
+			bufferResize.runThread();
 
 			resetTFR();
 		}
@@ -125,8 +124,8 @@ void SpectrumViewer::setFrequencyRange(Range<int> newRange)
 		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
 		tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
-		updateDataBufferSize(bufferSize);
-		updateDisplayBufferSize(tfrParams.nFreqs);
+		BufferResizer bufferResize(bufferSize, tfrParams.nFreqs, this);
+		bufferResize.runThread();
 		resetTFR();
 
 		getEditor()->updateVisualizer();
@@ -428,3 +427,59 @@ bool SpectrumViewer::stopAcquisition()
 	return true;
 }
 
+
+BufferResizer::BufferResizer(int dataBuffSize, int displayBuffSize, SpectrumViewer* p)
+	: ThreadWithProgressWindow("Spectrum Viewer", true, false)
+	, dataBuffersize(dataBuffSize)
+	, displayBufferSize(displayBuffSize)
+	, processor(p)
+{
+	setStatusMessage("Resizing buffers...");
+}
+
+void BufferResizer::run()
+{
+	setStatusMessage("Resizing data buffer for all channels");
+	
+	// Resize Data Buffer
+	processor->dataBuffer.reset();
+
+	processor->dataBuffer.map([=](Array<FFTWArrayType>& arr)
+	{
+		LOGD("Resizing data buffer to ", dataBuffersize);
+		arr.resize(MAX_CHANS);
+
+		for(int i = 0; i < MAX_CHANS; i++)
+		{
+			arr.getReference(i).resize(dataBuffersize);
+			setProgress((i + 1) / (double)MAX_CHANS);
+		}
+	});
+
+	///// Add incoming data to data buffer. Let thread get the ok to start at 8 seconds of data ////
+	AtomicScopedWritePtr<Array<FFTWArrayType>> dataWriter(processor->dataBuffer);
+	// Check writer
+	if (!dataWriter.isValid())
+	{
+		jassertfalse; // atomic sync data writer broken
+	}
+
+	setStatusMessage("Resizing power buffer for all channels");
+	setProgress(0.0f);
+
+	// Resize Power Buffer
+	processor->power.reset();
+	
+	processor->power.map([=](std::vector<std::vector<float>>& vec)
+	{
+		LOGD("Resizing power buffer to ", displayBufferSize);
+		vec.resize(MAX_CHANS);
+
+		for(int i = 0; i < MAX_CHANS; i++)
+		{
+			vec[i].resize(displayBufferSize);
+			setProgress((i + 1) / (double)MAX_CHANS);
+		}
+
+	});
+}

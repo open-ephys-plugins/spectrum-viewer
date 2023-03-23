@@ -43,6 +43,29 @@ enum DisplayType {
 	SPECTROGRAM = 2
 };
 
+class SpectrumViewer;
+
+/*
+	Resize data and power buffers, and show a progress window
+*/
+class BufferResizer : public ThreadWithProgressWindow
+{
+public:
+
+	/** Constructor */
+	BufferResizer(int dataBufferSize, int displayBufferSize, SpectrumViewer* processor);
+
+	void run() override;
+
+private:
+
+	int dataBuffersize;
+	int displayBufferSize;
+	SpectrumViewer* processor;
+
+	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BufferResizer);
+};
+
 /*
 
 	Compute and display power spectra for incoming
