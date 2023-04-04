@@ -43,15 +43,15 @@ CumulativeTFR::CumulativeTFR(int nChans, int nf, int nt, int Fs, float winLen, f
 			vector<RealWeightedAccum>(nt, RealWeightedAccum(alpha))))
 {
 
-	std::cout << "Creating new TFR" << std::endl;
+	//std::cout << "Creating new TFR" << std::endl;
 	// std::cout << "PARAMS:" << std::endl;
-	std::cout << "nFreqs: " << nFreqs << std::endl;
+	//std::cout << "nFreqs: " << nFreqs << std::endl;
 	// std::cout << "Fs: " << Fs << std::endl;
 	// std::cout << "stepLen: " << stepLen << std::endl;
 	// std::cout << "nTimes: " << nTimes << std::endl;
 	// std::cout << "nfft: " << nfft << std::endl;
 	// std::cout << "alpha: " << alpha << std::endl;
-	std::cout << "freqStep: " << freqStep << std::endl;
+	//std::cout << "freqStep: " << freqStep << std::endl;
 	// std::cout << "freqStart: " << freqStart << std::endl;
 	// std::cout << "windowLen: " << windowLen << std::endl;
 
@@ -80,59 +80,18 @@ CumulativeTFR::CumulativeTFR(int nChans, int nf, int nt, int Fs, float winLen, f
 	printout = true;
 }
 
-void CumulativeTFR::addTrial(FFTWArrayType& fftBuffer, int chanIt)
+void CumulativeTFR::computeFFT(FFTWArrayType& fftBuffer, int channelIndex)
 {
 	// auto start = Time::getHighResolutionTicks();
-	fftBuffer.fftReal();
+	fftBuffer.fftReal(); // perform fft
 	
-
 	// std::cout << "fftBuffer.REAL(): " << MS_FROM_START << std::endl;
 
-	float nWindow = Fs * windowLen;
-
-	//// Use freqData to find generate spectrum and get power ////
+	// Compute the power (square of the absolute value of the fft buffer)
 	for (int freq = 0; freq < nFreqs; freq++)
 	{
-		powBuffer[chanIt][freq][0].reset();
-		powBuffer[chanIt][freq][0].addValue(square(std::abs(fftBuffer.getAsComplex(freq))));
-
-		if (0)
-		{
-			// Multiply fft data by wavelet
-			for (int n = 0; n < nfft; n++)
-			{
-				ifftBuffer.set(n, std::imag(fftBuffer.getAsComplex(n)) * waveletArray[freq][n]);
-			}
-
-			// Inverse FFT on data multiplied by wavelet
-			ifftBuffer.ifft();
-
-			powBuffer[chanIt][freq][0].reset();
-
-			// Loop over nfft
-			for (int n = 0; n < nfft; n++)
-			{
-				std::complex<double> complex = std::imag(ifftBuffer.getAsComplex(n));
-
-				complex *= sqrt(2.0 / nWindow) / double(nfft); // divide by nfft from matlab ifft
-															   // sqrt(2/nWindow) from ft_specest_mtmconvol.m 
-
-				double power = std::abs(complex);
-
-				if (printout && freq == 1)
-					std::cout << n << ": " << power << std::endl;
-
-				//powBuffer[chanIt][freq][0].addValue(power);
-
-			}
-
-			if (printout)
-				printout = false;
-		}
-		
-
-		///Save convOutput for crss later (TO CHECK)
-	    //spectrumBuffer[chanIt][freq][t] = complex;
+		powBuffer[channelIndex][freq][0].reset();
+		powBuffer[channelIndex][freq][0].addValue(square(std::abs(fftBuffer.getAsComplex(freq))));
 	}
 }
 
@@ -180,26 +139,21 @@ void CumulativeTFR::getMeanCoherence(int itX, int itY, AtomicallyShared<std::vec
 	dataWriter.pushUpdate();
 }
 
-void CumulativeTFR::getPowerForChannels(AtomicallyShared<std::vector<std::vector<float>>>& power)
+void CumulativeTFR::getPower(std::vector<float>& power, int channelIndex)
 {
 	//std::cout << "Getting power." << std::endl;
 
-	AtomicScopedWritePtr<std::vector<std::vector<float>>> dataWriter(power);
+	//AtomicScopedWritePtr<std::vector<std::vector<float>>> dataWriter(power);
 
-	int numChans = powBuffer.size();
-	int numFreqs = powBuffer[0].size();
-	int numTimes = powBuffer[0][0].size();
+	//int numChans = powBuffer.size();
+	//int numFreqs = powBuffer[0].size();
+	//int numTimes = powBuffer[0][0].size();
 
-	for (int chn = 0; chn < numChans; ++chn)
+	for (int frq = 0; frq < power.size(); ++frq)
 	{
-		for (int frq = 0; frq < numFreqs; ++frq)
-		{
-			dataWriter->at(chn)[frq] = (float) powBuffer[chn][frq][0].getAverage();
-		}
+		power[frq] = (float) powBuffer[channelIndex][frq][0].getAverage();
 	}
 
-	//std::cout << "Pushing update!" << std::endl;
-	dataWriter.pushUpdate();
 }
 
 

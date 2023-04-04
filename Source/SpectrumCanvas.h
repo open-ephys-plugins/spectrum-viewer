@@ -33,7 +33,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 class SpectrumCanvas;
 
-const std::vector<Colour> chanColors = { Colour(0, 0, 0)
+const std::vector<Colour> chanColors = { Colour(200, 200, 200)
 										, Colour(230, 159, 0)
 										, Colour(86, 180, 233)
 										, Colour(0, 158, 115)
@@ -63,16 +63,18 @@ public:
 
 	void setFrequencyRange(int freqStart, int freqEnd, float freqStep);
 
-	void plotPowerSpectrum(std::vector<std::vector<float>> powerData);
+	void updatePowerSpectrum(std::vector<float> powerData, int channelIndex);
 
-	void drawSpectrogram(std::vector<float> chanData);
+	void plotPowerSpectrum();
+
+	void drawSpectrogram(std::vector<float> powerData);
 
 	/** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
 	void setDisplayType(DisplayType type);
 
 	void clear();
 
-	int legendThickness = 250;
+	int legendWidth = 150;
 
 	DisplayType displayType;
 
@@ -81,6 +83,8 @@ private:
 	SpectrumViewer* processor;
 	
 	int rowHeight = 50;
+
+	float maxPower = 1.0f;
 
 	std::vector<std::vector<float>> currPower; // channels x freqs
 

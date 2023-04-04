@@ -48,19 +48,22 @@ class SpectrumViewer;
 /*
 	Resize data and power buffers, and show a progress window
 */
-class BufferResizer : public ThreadWithProgressWindow
+class BufferResizer : public Thread
 {
 public:
 
 	/** Constructor */
-	BufferResizer(int dataBufferSize, int displayBufferSize, SpectrumViewer* processor);
+	BufferResizer(SpectrumViewer* processor);
 
-	void run() override;
+	/** Resizes buffer */
+	void resize();
 
 private:
 
-	int dataBuffersize;
-	int displayBufferSize;
+	/** Resizes buffer in the background */
+	void run() override;
+
+	/** Pointer to processor */
 	SpectrumViewer* processor;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BufferResizer);
@@ -108,18 +111,138 @@ public:
 	/** Called by the canvas to get the number of active chans*/
 	Array<int> getActiveChans();
 
+	/** Returns the name of the selected channel at a given index */
 	const String getChanName(int localIdx);
 
+	/** Sets the min/max frequency range*/
 	void setFrequencyRange(Range<int>);
 
+	/** Returns the frequency step for the currently selected range*/
 	float getFreqStep() { return tfrParams.freqStep; };
 
-	/** Variable to store incoming data */
-	Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
-	AtomicallyShared<Array<FFTWArrayType>> dataBuffer;
+	/** Holds incoming samples and outgoing powers */
+	struct PowerBuffer
+	{
+		/** Incoming samples for each time step */
+		OwnedArray<AtomicallyShared<FFTWArrayType>> incomingSamples;
 
-	/** Array of powers across frequencies, for multiple channels */
-	AtomicallyShared<std::vector<std::vector<float>>> power;
+		/** Outgoing power for each time step */
+		OwnedArray<AtomicallyShared<std::vector<float>>> power;
+
+		/** Write index */
+		Array<int> writeIndex;
+
+		/** Hamming window to apply to buffer */
+		Array<float> window;
+
+		/** Size of each buffer in samples */
+		int bufferSize = 0;
+
+		/** Step size in samples */
+		int stepSize = 0;
+
+		/** Steps per buffer samples */
+		int stepsPerBuffer = 0;
+
+		/** Number of fft frequencies */
+		int nFreqs;
+
+		/** Keep track of total samples written */
+		long int totalSamplesWritten = 0;
+
+		/** true if buffer size was updated */
+		bool bufferSizeChanged = true;
+
+		/** true if number of freqs was updated */
+		bool numFreqsChanged = true;
+
+		/** Changes buffer size*/
+		void setBufferSize(int bufferSize_, int stepSize_)
+		{
+			if (bufferSize != bufferSize_)
+			{
+				bufferSize = bufferSize_;
+				stepSize = stepSize_;
+				stepsPerBuffer = bufferSize / stepSize;
+				bufferSizeChanged = true;
+			}
+		}
+
+		/** Changes num freqs */
+		void setNumFreqs(int nFreqs_)
+		{
+			if (nFreqs != nFreqs_)
+			{
+				nFreqs = nFreqs_;
+				numFreqsChanged = true;
+			}
+		}
+
+		/** Resets all shared objects and indices */
+		void reset()
+		{
+			for (int i = 0; i < stepsPerBuffer + 5; i++)
+			{
+				incomingSamples[i]->reset();
+				power[i]->reset();
+				writeIndex.set(i, -1 * i * stepSize);
+				totalSamplesWritten = 0;
+			}
+		}
+
+		/** Resizes all buffers */
+		void resize()
+		{
+			if (bufferSizeChanged)
+			{
+				incomingSamples.clear();
+
+				LOGD("Creating ", stepsPerBuffer + 5, " sample buffers of length ", bufferSize);
+
+				for (int i = 0; i < stepsPerBuffer + 5; i++)
+				{
+					incomingSamples.add(new AtomicallyShared<FFTWArrayType>());
+					incomingSamples.getLast()->map([=](FFTWArrayType& arr)
+					{
+						arr.resize(bufferSize);
+					});
+				}
+
+				bufferSizeChanged = false;
+
+				window.clear();
+
+				const float N = float(bufferSize);
+				const float PI = 3.1415926535;
+
+				for (int n = 0; n < bufferSize; n++)
+				{
+					window.add(0.54 - 0.46 * cos(2 * PI * n / N));
+				}
+			}
+			
+			if (numFreqsChanged)
+			{
+				power.clear();
+
+				LOGD("Creating ", stepsPerBuffer + 5, " power buffers of length ", nFreqs);
+
+				for (int i = 0; i < stepsPerBuffer + 5; i++)
+				{
+					power.add(new AtomicallyShared<std::vector<float>>());
+					power.getLast()->map([=](std::vector<float>& arr)
+					{
+						arr.resize(nFreqs);
+					});
+				}
+
+				numFreqsChanged = false;
+			}
+		}
+	};
+
+	/** Array of buffers */
+	PowerBuffer powerBuffers[MAX_CHANS];
 
 	/** Type of visualization (currently only POWER_SPECTRUM is supported) */
 	DisplayType displayType;
@@ -132,29 +255,31 @@ private:
 	/** Change the size of the data buffer*/
 	void updateDisplayBufferSize(int newSize);
 
+	/** Returns true if a given stream ID is available*/
 	bool streamExists(uint16 streamId);
 
 	ScopedPointer<CumulativeTFR> TFR;
 
-	int nSamplesToAdd; // holds how many samples to add for each channel before sending an update
-	Array<int> samplesAdded; // samples added to each channel so far.
-
-	// from 0 to 10
+	/** Priority from 0 to 10 */
 	static const int THREAD_PRIORITY = 5;
 
+	/** Resets buffers*/
 	void resetTFR();
 
 	Array<int> channels;
-	Array<int> bufferIdx;
+	Array<Array<int>> bufferIdx; // channels x stepsPerBuffer
 
-	int bufferSize;
+	//int bufferSize;
+	//int stepSize;
+	//int stepsPerBuffer;
     
     uint16 activeStream = 0;
 
 	int numTrials;
 
 	// This is to store data in case of switch and we wish to retrive old data
-	AtomicallyShared<Array<FFTWArrayType>> dataBufferII;
+	//AtomicallyShared<Array<FFTWArrayType>> dataBufferII;
+	//Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
 
 	struct TFRParameters
 	{
@@ -182,6 +307,7 @@ private:
 	};
 
 	TFRParameters tfrParams;
+	std::unique_ptr<BufferResizer> bufferResizer;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumViewer);
 };

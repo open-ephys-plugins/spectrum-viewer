@@ -114,14 +114,13 @@ public:
 		int freqStart = 1, double fftSec = 10.0, double alpha = 0);
 
 	// Handle a new buffer of data. Perform FFT and create pxxs, pyys.
-	void addTrial(FFTWArrayType& fftBuffer, int chan);
+	void computeFFT(FFTWArrayType& fftBuffer, int channelIndex);
 
 	// Function to get coherence between two channels
 	void getMeanCoherence(int chanX, int chanY, AtomicallyShared<std::vector<double>>& coherence, int comb);
 
-	// Calculates power for all the input channels based on powerbuffer size. 
-	// Returns a vector of vector of float type i.e Vect[] corresponds to vector of power for different frequency
-	void getPowerForChannels(AtomicallyShared<std::vector<std::vector<float>>>& power);
+	// Calculates power for input channels based on powerbuffer size. 
+	void getPower(std::vector<float>& power, int channelIndex);
 
 
 private:

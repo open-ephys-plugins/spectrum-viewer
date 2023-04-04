@@ -30,13 +30,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 SpectrumViewer::SpectrumViewer()
 	: GenericProcessor("Spectrum Viewer")
 	, Thread("FFT Thread")
-	, bufferSize(0)
 	, displayType(POWER_SPECTRUM)
 {
 	tfrParams.segLen = 1;
 	tfrParams.freqStart = 0;
 	tfrParams.freqEnd = 1000;
-	tfrParams.stepLen = 0.02;
+	tfrParams.stepLen = 0.020; // update every 20 ms (50 Hz)
 	tfrParams.winLen = 0.25;
 	tfrParams.interpRatio = 1;
 	tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
@@ -48,10 +47,13 @@ SpectrumViewer::SpectrumViewer()
 		"active_stream", "Currently selected stream",
 		0, 0, 200000, true);
 
-	addSelectedChannelsParameter(Parameter::STREAM_SCOPE, "Channels", "The channels to analyze", MAX_CHANS, true);
+	addSelectedChannelsParameter(Parameter::STREAM_SCOPE, 
+		"Channels", 
+		"The channels to analyze", 
+		MAX_CHANS, 
+		false);
 
-	bufferIdx.resize(MAX_CHANS);
-	samplesAdded.insertMultiple(0, 0, MAX_CHANS);
+	bufferResizer = std::make_unique<BufferResizer>(this);
 }
 
 AudioProcessorEditor* SpectrumViewer::createEditor()
@@ -72,19 +74,18 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 			activeStream = candidateStream;
 
 			tfrParams.Fs = getDataStream(activeStream)->getSampleRate();
-
-			bufferSize = int(tfrParams.Fs * tfrParams.winLen);
-
-			nSamplesToAdd = tfrParams.stepLen * tfrParams.Fs;
-
-			// (Start - end freq) / stepsize
 			tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
-
-			//freqStep = 1; // for debugging
 			tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
-			BufferResizer bufferResize(bufferSize, tfrParams.nFreqs, this);
-			bufferResize.runThread();
+			int bufferSize = int(tfrParams.Fs * tfrParams.winLen);
+
+			for (int i = 0; i < MAX_CHANS; i++)
+			{
+				powerBuffers[i].setBufferSize(bufferSize, tfrParams.stepLen * tfrParams.Fs);
+				powerBuffers[i].setNumFreqs(tfrParams.nFreqs);
+			}
+
+			bufferResizer->resize();
 
 			resetTFR();
 		}
@@ -120,12 +121,15 @@ void SpectrumViewer::setFrequencyRange(Range<int> newRange)
 		else
 			tfrParams.winLen = 0.1;
 
-		bufferSize = int(tfrParams.Fs * tfrParams.winLen);
 		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
 		tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
-		BufferResizer bufferResize(bufferSize, tfrParams.nFreqs, this);
-		bufferResize.runThread();
+		for (int i = 0; i < MAX_CHANS; i++)
+		{
+			powerBuffers[i].setNumFreqs(tfrParams.nFreqs);
+		}
+
+		bufferResizer->resize();
 		resetTFR();
 
 		getEditor()->updateVisualizer();
@@ -138,167 +142,117 @@ void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
 	if(channels.isEmpty())
 		return;
 
-	///// Add incoming data to data buffer. ////
-	AtomicScopedWritePtr<Array<FFTWArrayType>> dataWriter(dataBuffer);
+	// same number of samples for all channels in stream
+	int incomingSampleCount = getNumSamplesInBlock(activeStream);
 
-	// Check writer
-	if (!dataWriter.isValid())
-	{
-		jassertfalse; // atomic sync data writer broken
-	}
+	//bool updateBuffer = false;
 
-	//for loop over active channels and update buffer with new data
-	int nSamples = getNumSamplesInBlock(activeStream); // all channels the same?
-
-	bool updateBuffer = false;
-
+	// loop over active channels
 	for (int i = 0; i < channels.size(); i++)
 	{
+
 		int globalChanIdx = getGlobalChannelIndex(activeStream, channels[i]);
+		const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
 
 		if (globalChanIdx < 0)
 			continue;
 
-		int remainingSamples = nSamplesToAdd - samplesAdded[i]; 
+		PowerBuffer* buffer = &powerBuffers[i];
 
-		// Copy BufferSize -  data from previous buffer
-		if(bufferIdx[i] == bufferSize)
+		// loop over buffers
+		for (int j = 0; j < buffer->incomingSamples.size(); j++)
 		{
-			auto dataPointer = dataWriter->getReference(i).getReadPointer(remainingSamples);
 
-			for(int samp = 0; samp < bufferSize - remainingSamples; samp++)
-				dataWriter->getReference(i).set(samp, dataPointer[samp]);			
-		}
+			AtomicScopedWritePtr<FFTWArrayType> dataWriter(*buffer->incomingSamples[j]);
+			int writeIndex = buffer->writeIndex[j];
 
-		const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
+			//LOGD("Buffer ", j, " write index: ", writeIndex);
 
-		// loop through available samples
-		for (int n = 0; n < nSamples; n++)
-		{
-			if(bufferIdx[i] < bufferSize)
+			// Check writer
+			if (!dataWriter.isValid())
 			{
-				dataWriter->getReference(i).set(bufferIdx[i], incomingDataPointer[n]);
-				bufferIdx.set(i, bufferIdx[i] + 1);
+				jassertfalse; // atomic sync data writer broken
+			}
 
-				if(bufferIdx[i] == bufferSize)
+			// loop over samples
+			for (int n = 0; n < incomingSampleCount; n++)
+			{
+
+				writeIndex++;
+
+				if (writeIndex > 0) // make sure we have enough samples
 				{
-					samplesAdded.set(i, 0);
-					updateBuffer = true;
+					dataWriter->set(writeIndex - 1, incomingDataPointer[n]);
+				}
+
+				if (writeIndex == buffer->bufferSize)
+				{
+
+					// apply window
+
+					for (int m = 0; m < buffer->bufferSize; m++)
+					{
+						dataWriter->set(m, dataWriter->getAsReal(m) * buffer->window[m]);
+					}
+					dataWriter.pushUpdate();
+					//LOGD("Buffer ", j, " is full.");
+					writeIndex = -5 * buffer->stepSize; // loop around to the beginning
 					break;
 				}
 			}
-			else
-			{
-				if(n == remainingSamples)
-				{
-					updateBuffer = true;
-					break;
-				}
-				dataWriter->getReference(i).set((bufferSize - remainingSamples) + n, incomingDataPointer[n]);
-			}
 
-			samplesAdded.set(i, samplesAdded[i] + 1);
+			buffer->writeIndex.set(j, writeIndex);
 
 		}
-
-	}
-
-	if(updateBuffer)
-	{
-		dataWriter.pushUpdate();
-		updateBuffer = false;
-	}
-
-	// Add remaining samples (if any) after pushing update
-	while (samplesAdded[0] < nSamples)
-	{
-		bool moveToNextBuffer = false;
-
-		for (int i = 0; i < channels.size(); i++)
-		{
-			int globalChanIdx = getGlobalChannelIndex(activeStream, channels[i]);
-
-			if (globalChanIdx < 0)
-				continue;
-
-			int samplesLeft = nSamples - samplesAdded[i];
-			int startSample = samplesAdded[i];
-
-			if(samplesLeft >= nSamplesToAdd)
-			{	
-
-				// Copy BufferSize - NumSamples data from previous buffer
-				auto dataPointer = dataWriter->getReference(i).getReadPointer(nSamplesToAdd);
-				for(int samp = 0; samp < bufferSize - nSamplesToAdd; samp++)
-					dataWriter->getReference(i).set(samp, dataPointer[samp]);
-
-				const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
-
-				// loop through available samples
-				for (int n = 0; n < nSamplesToAdd; n++)
-				{
-					dataWriter->getReference(i).set((bufferSize - nSamplesToAdd) + n, incomingDataPointer[startSample + n]);
-					samplesAdded.set(i, samplesAdded[i] + 1);
-				}
-
-				if(samplesLeft == nSamplesToAdd)
-					samplesAdded.set(i, 0);
-
-				updateBuffer = true;
-			}
-			else
-			{
-				// Copy BufferSize - NumSamples data from previous buffer
-				auto dataPointer = dataWriter->getReference(i).getReadPointer(samplesLeft);
-				for(int samp = 0; samp < bufferSize - samplesLeft; samp++)
-					dataWriter->getReference(i).set(samp, dataPointer[samp]);
-
-				const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
-
-				// loop through available samples
-				for (int n = 0; n < samplesLeft; n++)
-				{
-					dataWriter->getReference(i).set((bufferSize - samplesLeft) + n, incomingDataPointer[startSample + n]);
-				}
-
-				samplesAdded.set(i, nSamplesToAdd - samplesLeft);
-				moveToNextBuffer = true;
-			}
-		}
-
-		if (updateBuffer)
-		{
-			dataWriter.pushUpdate();
-			updateBuffer = false;
-		}
-
-		if(moveToNextBuffer)
-			break;
 	}
 }
 
 void SpectrumViewer::run()
 {
-	AtomicScopedReadPtr<Array<FFTWArrayType>> dataReader(dataBuffer);
+	
 
 	while (!threadShouldExit())
 	{
-		//// Check for new filled data buffer and run stats ////
-		if (dataBuffer.hasUpdate())
-		{
-			//std::cout << "Got buffer update, adding trial" << std::endl;
-			dataReader.pullUpdate();
 
-			for (int activeChan = 0; activeChan < channels.size(); activeChan++)
+		// loop over active channels
+		for (int i = 0; i < channels.size(); i++)
+		{
+
+			PowerBuffer* buffer = &powerBuffers[i];
+
+			// loop over buffers
+			for (int j = 0; j < buffer->incomingSamples.size(); j++)
 			{
-				//std::cout << "Adding channel " << activeChan << std::endl;
-				auto chanData = dataReader->getUnchecked(activeChan);
-				TFR->addTrial(chanData, activeChan);
+
+				if (buffer->incomingSamples[j]->hasUpdate())
+				{
+
+					//LOGD("Buffer ", j, " has update.");
+
+					AtomicScopedReadPtr<FFTWArrayType> fftReader(*buffer->incomingSamples[j]);
+					AtomicScopedWritePtr<FFTWArrayType> fftWriter(*buffer->incomingSamples[j]);
+					AtomicScopedWritePtr<std::vector<float>> powerWriter(*buffer->power[j]);
+
+					if (fftReader.isValid() && fftWriter.isValid() && powerWriter.isValid())
+					{
+						fftReader.pullUpdate();
+
+						TFR->computeFFT(fftWriter.operator*(), i);
+						TFR->getPower(powerWriter.operator*(), i);
+						
+						powerWriter.pushUpdate();
+
+						//LOGD("Buffer ", j, " computed FFT.");
+					}
+
+					
+				}
+
 			}
 
-			TFR->getPowerForChannels(power);
-
 		}
+
+		
 	}
 }
 
@@ -313,53 +267,6 @@ void SpectrumViewer::updateSettings()
 	// 	getParameter("active_stream")->setNextValue(activeStream);
 	// }
 
-}
-
-void SpectrumViewer::updateDataBufferSize(int size)
-{
-	// no writers or readers can exist here
-	// so this can't be called during acquisition
-	MouseCursor::showWaitCursor();
-	dataBuffer.reset();
-
-	dataBuffer.map([=](Array<FFTWArrayType>& arr)
-	{
-		LOGD("Resizing data buffer to ", size);
-		arr.resize(MAX_CHANS);
-
-		for(int i = 0; i < MAX_CHANS; i++)
-			arr.getReference(i).resize(size);
-	});
-
-	///// Add incoming data to data buffer. Let thread get the ok to start at 8 seconds of data ////
-	AtomicScopedWritePtr<Array<FFTWArrayType>> dataWriter(dataBuffer);
-	// Check writer
-	if (!dataWriter.isValid())
-	{
-		jassertfalse; // atomic sync data writer broken
-	}
-	MouseCursor::hideWaitCursor();
-}
-
-void SpectrumViewer::updateDisplayBufferSize(int newSize)
-{
-	power.reset();
-	
-	power.map([=](std::vector<std::vector<float>>& vec)
-	{
-		LOGD("Resizing power buffer to ", newSize);
-		vec.resize(MAX_CHANS);
-
-		for(int i = 0; i < MAX_CHANS; i++)
-			vec[i].resize(newSize);
-
-	});
-
-	// coherence.map([=](std::vector<double>& vec)
-	// {
-	// 	std::cout << "Resizing coherence buffer to " << newSize << ", " << newSize << std::endl;
-	// 	vec.resize(newSize);
-	// });
 }
 
 
@@ -408,13 +315,16 @@ bool SpectrumViewer::startAcquisition()
 {
 	if (isEnabled)
 	{
-		startThread(THREAD_PRIORITY);
+
+		bufferResizer->waitForThreadToExit(5000);
 
 		for (int i = 0; i < MAX_CHANS; i++)
 		{
-			bufferIdx.set(i, 0);
-			samplesAdded.set(i, 0);
+			powerBuffers[i].reset();
 		}
+
+		startThread(THREAD_PRIORITY);
+
 	}
 	return isEnabled;
 }
@@ -422,64 +332,30 @@ bool SpectrumViewer::startAcquisition()
 bool SpectrumViewer::stopAcquisition()
 {
 	stopThread(1000);
-	dataBuffer.reset();
-	power.reset();
 	return true;
 }
 
 
-BufferResizer::BufferResizer(int dataBuffSize, int displayBuffSize, SpectrumViewer* p)
-	: ThreadWithProgressWindow("Spectrum Viewer", true, false)
-	, dataBuffersize(dataBuffSize)
-	, displayBufferSize(displayBuffSize)
+BufferResizer::BufferResizer(SpectrumViewer* p)
+	: Thread("Spectrum Viewer buffer resizer")
 	, processor(p)
 {
-	setStatusMessage("Resizing buffers...");
+	//setStatusMessage("Resizing buffers...");
+}
+
+void BufferResizer::resize()
+{
+	waitForThreadToExit(5000);
+
+	run();
 }
 
 void BufferResizer::run()
 {
-	setStatusMessage("Resizing data buffer for all channels");
+	//setStatusMessage("Resizing data buffer for all channels");
 	
-	// Resize Data Buffer
-	processor->dataBuffer.reset();
-
-	processor->dataBuffer.map([=](Array<FFTWArrayType>& arr)
+	for (int i = 0; i < MAX_CHANS; i++)
 	{
-		LOGD("Resizing data buffer to ", dataBuffersize);
-		arr.resize(MAX_CHANS);
-
-		for(int i = 0; i < MAX_CHANS; i++)
-		{
-			arr.getReference(i).resize(dataBuffersize);
-			setProgress((i + 1) / (double)MAX_CHANS);
-		}
-	});
-
-	///// Add incoming data to data buffer. Let thread get the ok to start at 8 seconds of data ////
-	AtomicScopedWritePtr<Array<FFTWArrayType>> dataWriter(processor->dataBuffer);
-	// Check writer
-	if (!dataWriter.isValid())
-	{
-		jassertfalse; // atomic sync data writer broken
+		processor->powerBuffers[i].resize();
 	}
-
-	setStatusMessage("Resizing power buffer for all channels");
-	setProgress(0.0f);
-
-	// Resize Power Buffer
-	processor->power.reset();
-	
-	processor->power.map([=](std::vector<std::vector<float>>& vec)
-	{
-		LOGD("Resizing power buffer to ", displayBufferSize);
-		vec.resize(MAX_CHANS);
-
-		for(int i = 0; i < MAX_CHANS; i++)
-		{
-			vec[i].resize(displayBufferSize);
-			setProgress((i + 1) / (double)MAX_CHANS);
-		}
-
-	});
 }

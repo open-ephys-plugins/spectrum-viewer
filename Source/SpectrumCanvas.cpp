@@ -29,7 +29,7 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	: processor(n)
 	, displayType(POWER_SPECTRUM)
 {
-	// refreshRate = 60;
+    refreshRate = 60;
 
 	canvasPlot = std::make_unique<CanvasPlot>(processor);
 
@@ -48,17 +48,17 @@ void SpectrumCanvas::resized()
 	
 	if(displayType == POWER_SPECTRUM)
 	{
-		if(viewport->getMaximumVisibleWidth() < 840 + canvasPlot->legendThickness)
+		if(viewport->getMaximumVisibleWidth() < 840 + canvasPlot->legendWidth)
 			plotWidth = 800;
 		else
-			plotWidth = viewport->getMaximumVisibleWidth() - canvasPlot->legendThickness - 40;
+			plotWidth = viewport->getMaximumVisibleWidth() - canvasPlot->legendWidth - 40;
 		
 		if(viewport->getMaximumVisibleHeight() < 650)
 			plotHeight = 600;
 		else
 			plotHeight = viewport->getMaximumVisibleHeight() - 50;
 			
-		canvasPlot->setBounds(0, 0, plotWidth + canvasPlot->legendThickness + 40, plotHeight + 50);
+		canvasPlot->setBounds(0, 0, plotWidth + canvasPlot->legendWidth + 40, plotHeight + 50);
 	}
 	else
 	{
@@ -82,27 +82,45 @@ void SpectrumCanvas::update()
 void SpectrumCanvas::refresh()
 {
 	//std::cout << "Refresh." << std::endl;
-	
-	if (processor->power.hasUpdate())
+
+	bool needsRedraw = false;
+
+	for (int i = 0; i < MAX_CHANS; i++)
 	{
-		//std::cout << "Reading power data" << std::endl;
+		SpectrumViewer::PowerBuffer* buffer = &processor->powerBuffers[i];
 
-		AtomicScopedReadPtr<std::vector<std::vector<float>>> powerReader(processor->power);
-
-		powerReader.pullUpdate();
-
-		if (powerReader.isValid())
+		for (int j = 0; j < buffer->power.size(); j++)
 		{
-			if(displayType == POWER_SPECTRUM)
+			if (buffer->power[j]->hasUpdate())
 			{
-				canvasPlot->plotPowerSpectrum(*powerReader);
+				AtomicScopedReadPtr<std::vector<float>> powerReader(*buffer->power[j]);
+
+				
+				powerReader.pullUpdate();
+
+				if (powerReader.isValid())
+				{
+					//LOGD("Buffer ", j, " drawing spectrum");
+					if (displayType == POWER_SPECTRUM)
+					{
+						needsRedraw = true;
+
+						canvasPlot->updatePowerSpectrum(powerReader.operator*(), i);
+					}
+					else //Spectrogram
+					{
+						if (i == 0)
+							canvasPlot->drawSpectrogram(powerReader.operator*());
+					}
+				}
+
 			}
-			else //Spectrogram
-			{
-				canvasPlot->drawSpectrogram(powerReader->at(0));
-			}
-		}		
+		}
 	}
+
+	if (needsRedraw)
+		canvasPlot->plotPowerSpectrum();
+
 }
 
 
@@ -140,8 +158,8 @@ CanvasPlot::CanvasPlot(SpectrumViewer* p)
 	plt.setRange(range);
 	plt.xlabel("Frequency (Hz)");
 	plt.ylabel("Power");
-	plt.setBackgroundColour(Colours::grey);
-	plt.setGridColour(Colours::darkgrey);
+	plt.setBackgroundColour(Colour(45,45,45));
+	plt.setGridColour(Colour(100,100,100));
 	plt.setInteractive(InteractivePlotMode::OFF);
 	addAndMakeVisible(plt);
 
@@ -168,13 +186,12 @@ CanvasPlot::CanvasPlot(SpectrumViewer* p)
 
 void CanvasPlot::resized()
 {
-	plt.setBounds(20, 30, getWidth() - legendThickness - 40, getHeight() - 50);
+	plt.setBounds(20, 30, getWidth() - legendWidth - 40, getHeight() - 50);
 }
 
 void CanvasPlot::updateActiveChans()
 {
 	activeChannels = processor->getActiveChans();
-	clear();
 	repaint();
 }
 
@@ -201,14 +218,14 @@ void CanvasPlot::setFrequencyRange(int freqStart_, int freqEnd_, float freqStep_
 		{
 			lowPassFilters[ch]->add(new Dsp::SmoothedFilterDesign
 							<Dsp::Butterworth::Design::LowPass    // design type
-							<2>,                                   // order
+							<5>,                                   // order
 							1,                                     // number of channels (must be const)
 							Dsp::DirectFormII>(1));
 			
 			Dsp::Params params;
 			params[0] = 50;                 		// sample rate (Hz)
-			params[1] = 2;                          // order
-			params[2] = 4;                         // cut-off frequency
+			params[1] = 5;                          // order
+			params[2] = 1;                         // cut-off frequency
 			lowPassFilters[ch]->getLast()->setParams(params);
 		}
 	}
@@ -227,56 +244,111 @@ void CanvasPlot::setDisplayType(DisplayType type)
 	repaint();
 }
 
-void CanvasPlot::plotPowerSpectrum(std::vector<std::vector<float>> powerData)
+void CanvasPlot::plotPowerSpectrum()
 {
-
 	plt.clear();
-
-	float maxpower = -1.0f;
-
-	for (int ch = 0; ch < activeChannels.size(); ch++)
+	
+	for (int i = 0; i < activeChannels.size(); i++)
 	{
-		auto pData = powerData[ch].data();
 
-		for (int n = 0; n < powerData.at(ch).size(); n++)
-		{
-			// Apply low pass filter for that frequency
-			float* pData = &powerData[ch][n];
-			lowPassFilters[ch]->getUnchecked(n)->process(1, &pData);
-
-			float p = powerData.at(ch)[n];
-
-			if (p > 0)
-			{
-				if (p > maxpower)
-					maxpower = p;
-
-				currPower.at(ch).push_back(log(p));
-			}
-			else
-			{
-				currPower.at(ch).push_back(0);
-			}
-		}
-
-		if(maxpower > 0);
+		if (maxPower > 0);
 		{
 			XYRange pltRange;
 			plt.getRange(pltRange);
 
-			float logPower = log(maxpower);
-
-			if(pltRange.ymax < logPower || (pltRange.ymax - logPower) > 5)
+			if (pltRange.ymax < maxPower || (pltRange.ymax - maxPower) > 5)
 			{
-				pltRange.ymax = logPower;
+				pltRange.ymax = maxPower;
 				plt.setRange(pltRange);
 			}
 		}
 
-		plt.plot(xvalues, currPower[ch], chanColors[ch], 2.0f);
-
-		currPower[ch].clear();
+		plt.plot(xvalues, currPower[i], chanColors[i], 1.0f);
 	}
+
+	maxPower = -1.0f;
+
+}
+
+void CanvasPlot::updatePowerSpectrum(std::vector<float> powerData, int channelIndex)
+{
+
+	float lastPower = 0;
+	currPower[channelIndex].clear();
+	std::vector<float> powerBuffer;
+
+	for (int n = 0; n < powerData.size(); n++)
+	{
+
+		if (powerData[n] > 0)
+		{
+
+			// Apply low pass filter for that frequency
+			float* pData = &powerData[n];
+			lowPassFilters[channelIndex]->getUnchecked(n)->process(1, &pData);
+
+			if (*pData > 0)
+			{
+				float logP = log(*pData);
+
+				if (logP > maxPower)
+					maxPower = logP;
+
+				powerBuffer.push_back(logP);
+				//currPower.at(channelIndex).push_back(logP);
+				lastPower = logP;
+
+				//std::cout << logP << std::endl;
+			}
+			else
+			{
+				powerBuffer.push_back(lastPower);
+				//currPower.at(channelIndex).push_back(lastPower);
+			}
+			
+		}
+		else
+		{
+			powerBuffer.push_back(lastPower);
+			//currPower.at(channelIndex).push_back(lastPower);
+		}
+	}
+
+
+	if (true)
+	{
+		float window[] = { 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111 };
+
+		// apply smoothing
+		for (int n = 0; n < powerBuffer.size(); n++)
+		{
+
+			float value = 0;
+
+			for (int offset = -4; offset < 5; offset++)
+			{
+				int i = n + offset;
+
+				if (i < 0)
+				{
+					i = 0;
+				}
+				else if (i >= powerBuffer.size())
+				{
+					i = powerBuffer.size() - 1;
+				}
+
+				value += (powerBuffer[i] * window[offset + 4]);
+
+			}
+
+			currPower.at(channelIndex).push_back(value);
+
+		}
+	}
+	
+
+
 }
 
 void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
@@ -294,7 +366,7 @@ void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
 	for (auto y = 0; y < imageHeight; ++y)
 	{
 		auto skewedProportionY = 1.0f - (float) y / (float) imageHeight;
-		auto dataIndex = (size_t) jlimit (0, (int)chanData.size(), (int) (skewedProportionY * chanData.size()));
+		auto dataIndex = (size_t) jlimit (0, (int)(chanData.size() - 1), (int) (skewedProportionY * (chanData.size() - 1)));
 
 		float logPower = log(chanData[dataIndex]);
 		float logMax = log(powerRange.getEnd());
@@ -325,39 +397,34 @@ void CanvasPlot::paint(Graphics& g)
 		if(activeChannels.size() ==  0)
 			return;
 
-		// Draw channel color legend next to the plot
-		g.setColour(Colours::grey);
-
-		int left = getWidth() - legendThickness - 10;
+		int left = getWidth() - legendWidth - 10;
 		int top = 60;
 
-		g.fillRoundedRectangle( left
-							, top
-							, legendThickness
-							, rowHeight * activeChannels.size()
-							, 5.0 );
-		
 		g.setFont(Font("Fira Code", "SemiBold", 16.0f));
 		
 		for(int i = 0; i < activeChannels.size(); i++)
 		{
 			top = (i+1) * rowHeight + 10;
 
-			g.setColour(Colours::black);
-			String chan = processor->getChanName(activeChannels[i]);
-			g.drawFittedText( chan
-							, left + 20
-							, top + 10
-							, (legendThickness - 20) / 2
-							, 30
-							, Justification::centredLeft
-							, 1);
-			
 			g.setColour(chanColors.at(i));
-			g.fillRect( left + (legendThickness / 2)
+			g.fillRect( left
 					, top + 10
-					, (legendThickness - 30) / 2
+					, 30
 					, 30);
+
+			g.setColour(Colours::lightgrey);
+			String chan = processor->getChanName(activeChannels[i]);
+			g.drawFittedText(chan
+				, left + 45
+				, top + 10
+				, (legendWidth - 20) / 2
+				, 30
+				, Justification::centredLeft
+				, 1);
+
+			g.setColour(Colours::grey);
+			g.drawRect(left, top + 10, 30, 30, 2);
+				
 		}
 	}
 	else
