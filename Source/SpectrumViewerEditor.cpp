@@ -227,3 +227,18 @@ void SpectrumViewerEditor::selectedStreamHasChanged()
 		streamSelection->setSelectedId(activeStream, sendNotification);
 	}
 }
+
+void SpectrumViewerEditor::saveVisualizerEditorParameters(XmlElement* xml)
+{
+	xml->setAttribute("display_type", displayType->getSelectedId());
+	xml->setAttribute("frequency_range", frequencyRange->getSelectedId());
+}
+
+void SpectrumViewerEditor::loadVisualizerEditorParameters(XmlElement* xml)
+{
+	int selectedType = xml->getIntAttribute("display_type", 1);
+	displayType->setSelectedId(selectedType, sendNotification);
+
+	int selectedRange = xml->getIntAttribute("frequency_range", 3);
+	frequencyRange->setSelectedId(selectedRange, sendNotification);
+}

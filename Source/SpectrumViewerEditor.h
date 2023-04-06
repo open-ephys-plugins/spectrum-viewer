@@ -56,6 +56,10 @@ public:
 	/** Notifies editor that the selected stream has changed.*/
 	 void selectedStreamHasChanged() override;
 
+	void saveVisualizerEditorParameters(XmlElement* xml) override;
+
+	void loadVisualizerEditorParameters(XmlElement* xml) override;
+
 private:
 
 	std::unique_ptr<Label> streamLabel;
