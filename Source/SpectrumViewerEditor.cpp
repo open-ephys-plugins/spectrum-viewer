@@ -80,10 +80,18 @@ SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
 {
+	// Create a new canvas and pass the processor ptr
 	auto sp = (SpectrumViewer*)getProcessor();
 	auto spectrumCanvas = new SpectrumCanvas(sp);
+
+	// Set frequency range for canvas
 	Range<int> range = freqRanges[frequencyRange->getSelectedItemIndex()];
 	spectrumCanvas->getPlotPtr()->setFrequencyRange(range.getStart(), range.getEnd(), sp->getFreqStep());
+
+	// Set display type for canvas
+	auto type = (DisplayType)displayType->getSelectedId();
+	spectrumCanvas->setDisplayType(type);
+
 	return spectrumCanvas;
 }
 
@@ -184,6 +192,9 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 
 		auto type = (DisplayType)displayType->getSelectedId();
 
+		if(!sc)
+			return;
+
 		sc->setDisplayType(type);
 
 		if(type == POWER_SPECTRUM)
@@ -196,7 +207,7 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 			removeTab(tabIndex);
 			addTab(tabText, canvas.get());
 		}
-		else if(dataWindow->isVisible())
+		else if(dataWindow)
 		{
 			dataWindow->setName(tabText);
 		}
