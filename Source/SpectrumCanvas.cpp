@@ -23,7 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "SpectrumCanvas.h"
 #include <math.h>
-#include <climits>
+// #include <cfloat>
 
 SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	: processor(n)
@@ -192,6 +192,7 @@ void CanvasPlot::resized()
 void CanvasPlot::updateActiveChans()
 {
 	activeChannels = processor->getActiveChans();
+	clear();
 	repaint();
 }
 
@@ -214,19 +215,22 @@ void CanvasPlot::setFrequencyRange(int freqStart_, int freqEnd_, float freqStep_
 	for (int ch = 0; ch < MAX_CHANS; ch++)
 	{
 		lowPassFilters[ch]->clear();
+		currPower[ch].clear();
 		for (int i = 0; i < nFreqs; i++)
 		{
 			lowPassFilters[ch]->add(new Dsp::SmoothedFilterDesign
 							<Dsp::Butterworth::Design::LowPass    // design type
-							<5>,                                   // order
+							<2>,                                   // order
 							1,                                     // number of channels (must be const)
 							Dsp::DirectFormII>(1));
 			
 			Dsp::Params params;
 			params[0] = 50;                 		// sample rate (Hz)
-			params[1] = 5;                          // order
+			params[1] = 2;                          // order
 			params[2] = 1;                         // cut-off frequency
 			lowPassFilters[ch]->getLast()->setParams(params);
+			
+			currPower[ch].push_back(0.0f);
 		}
 	}
 }
@@ -251,7 +255,7 @@ void CanvasPlot::plotPowerSpectrum()
 	for (int i = 0; i < activeChannels.size(); i++)
 	{
 
-		if (maxPower > 0);
+		if (std::isgreater(maxPower, 0.0f))
 		{
 			XYRange pltRange;
 			plt.getRange(pltRange);
@@ -266,28 +270,24 @@ void CanvasPlot::plotPowerSpectrum()
 		plt.plot(xvalues, currPower[i], chanColors[i], 1.0f);
 	}
 
-	maxPower = -1.0f;
-
 }
 
 void CanvasPlot::updatePowerSpectrum(std::vector<float> powerData, int channelIndex)
 {
 
-	float lastPower = 0;
-	currPower[channelIndex].clear();
+	// currPower[channelIndex].clear();
 	std::vector<float> powerBuffer;
 
 	for (int n = 0; n < powerData.size(); n++)
 	{
 
-		if (powerData[n] > 0)
+		if (std::isgreater(fabs(powerData[n]), 0.0f))
 		{
-
 			// Apply low pass filter for that frequency
 			float* pData = &powerData[n];
 			lowPassFilters[channelIndex]->getUnchecked(n)->process(1, &pData);
 
-			if (*pData > 0)
+			if (std::isgreaterequal(*pData, 1.0f))
 			{
 				float logP = log(*pData);
 
@@ -295,22 +295,16 @@ void CanvasPlot::updatePowerSpectrum(std::vector<float> powerData, int channelIn
 					maxPower = logP;
 
 				powerBuffer.push_back(logP);
-				//currPower.at(channelIndex).push_back(logP);
-				lastPower = logP;
-
-				//std::cout << logP << std::endl;
 			}
 			else
 			{
-				powerBuffer.push_back(lastPower);
-				//currPower.at(channelIndex).push_back(lastPower);
+				powerBuffer.push_back(currPower[channelIndex][n]);
 			}
 			
 		}
 		else
 		{
-			powerBuffer.push_back(lastPower);
-			//currPower.at(channelIndex).push_back(lastPower);
+			powerBuffer.push_back(currPower[channelIndex][n]);
 		}
 	}
 
@@ -342,7 +336,7 @@ void CanvasPlot::updatePowerSpectrum(std::vector<float> powerData, int channelIn
 
 			}
 
-			currPower.at(channelIndex).push_back(value);
+			currPower.at(channelIndex).at(n) = value;
 
 		}
 	}
@@ -363,7 +357,7 @@ void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
     // show up the detail clearly
     auto powerRange = juce::FloatVectorOperations::findMinAndMax (chanData.data(), chanData.size());
 
-	for (auto y = 0; y < imageHeight; ++y)
+	for (auto y = 0; y < imageHeight - 1; ++y)
 	{
 		auto skewedProportionY = 1.0f - (float) y / (float) imageHeight;
 		auto dataIndex = (size_t) jlimit (0, (int)(chanData.size() - 1), (int) (skewedProportionY * (chanData.size() - 1)));
@@ -372,13 +366,13 @@ void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
 		float logMax = log(powerRange.getEnd());
 		float logMin = log(powerRange.getStart());
 		
-		if(chanData[dataIndex] < 1)
+		if(std::isless(chanData[dataIndex], 1.0f))
 			logPower = 0;
 		
-		if(powerRange.getEnd() < 0)
+		if(std::isless(powerRange.getEnd(), 0.0f))
 			logMax = 0;
 		
-		if(powerRange.getStart() < 0)
+		if(std::isless(powerRange.getStart(), 0.0f))
 			logMin = 0;
 
 		auto level = juce::jmap (logPower, logMin, juce::jmax (logMax, 1e-5f), 0.0f, 1.0f);
@@ -483,10 +477,14 @@ void CanvasPlot::clear()
 		currPower[ch].clear();
 
 		for (int i = 0; i < nFreqs; i++)
+		{
 			lowPassFilters[ch]->getUnchecked(i)->reset();
+			currPower[ch].push_back(0.0f);
+		}
+		
 	}
 
-	lowPassFilters[0]->getUnchecked(0)->reset();
+	maxPower = 0.0f;
 
 	spectrogramImg->clear(spectrogramImg->getBounds());
 	plt.clear();

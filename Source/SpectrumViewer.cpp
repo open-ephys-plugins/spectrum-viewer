@@ -42,6 +42,7 @@ SpectrumViewer::SpectrumViewer()
 	tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 	tfrParams.Fs = 2000;
 	tfrParams.alpha = 0;
+	tfrParams.nTimes = 1;
 
 	addIntParameter(Parameter::GLOBAL_SCOPE,
 		"active_stream", "Currently selected stream",
@@ -259,23 +260,17 @@ void SpectrumViewer::run()
 void SpectrumViewer::updateSettings()
 {
 
-	// activeStream = 0;
-
-	// if (dataStreams.size() > 0)
-	// {
-	// 	activeStream = dataStreams[0]->getStreamId();
-	// 	getParameter("active_stream")->setNextValue(activeStream);
-	// }
+	if(getDataStreams().size() == 0)
+	{
+		activeStream = 0;
+		channels.clear();
+	}
 
 }
 
 
 void SpectrumViewer::resetTFR()
 {
-
-	tfrParams.nTimes = 1;// ((tfrParams.segLen * tfrParams.Fs) -
-					   // (nSamplesWin)) / tfrParams.Fs *
-						//(1 / tfrParams.stepLen) + 1; // Trim half of window on both sides, so 1 window length is trimmed total
 
 	TFR.reset(new CumulativeTFR(MAX_CHANS, // channel count
 		tfrParams.nFreqs, 
