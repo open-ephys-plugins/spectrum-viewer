@@ -244,7 +244,7 @@ public:
 	/** Array of buffers */
 	PowerBuffer powerBuffers[MAX_CHANS];
 
-	/** Type of visualization (currently only POWER_SPECTRUM is supported) */
+	/** Type of visualization */
 	DisplayType displayType;
 
 private:

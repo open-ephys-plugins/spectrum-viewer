@@ -77,7 +77,6 @@ CumulativeTFR::CumulativeTFR(int nChans, int nf, int nt, int Fs, float winLen, f
 	// // Trim time close to edge
 	// trimTime = windowLen / 2;
 
-	printout = true;
 }
 
 void CumulativeTFR::computeFFT(FFTWArrayType& fftBuffer, int channelIndex)
