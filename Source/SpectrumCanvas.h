@@ -125,7 +125,7 @@ public:
 	void refreshState();
 
 	/** Updates settings */
-	void update() override;
+	void updateSettings() override;
 
 	/** Called instead of repaint to avoid re-painting sub-components*/
 	void refresh() override;

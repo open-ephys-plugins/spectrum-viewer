@@ -44,17 +44,22 @@ SpectrumViewer::SpectrumViewer()
 	tfrParams.alpha = 0;
 	tfrParams.nTimes = 1;
 
-	addIntParameter(Parameter::GLOBAL_SCOPE,
-		"active_stream", "Currently selected stream",
-		0, 0, 200000, true);
+	bufferResizer = std::make_unique<BufferResizer>(this);
+}
+
+void SpectrumViewer::registerParameters()
+{
+	addSelectedStreamParameter (Parameter::PROCESSOR_SCOPE,
+		"active_stream", 
+		"Display Stream", 
+		"Currently selected stream", 
+		{}, 0, true, true);
 
 	addSelectedChannelsParameter(Parameter::STREAM_SCOPE, 
-		"Channels", 
+		"Channels", "Channels",
 		"The channels to analyze", 
 		MAX_CHANS, 
 		false);
-
-	bufferResizer = std::make_unique<BufferResizer>(this);
 }
 
 AudioProcessorEditor* SpectrumViewer::createEditor()
@@ -68,27 +73,36 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 	if (param->getName().equalsIgnoreCase("active_stream"))
 	{
 
-		uint16 candidateStream = (uint16) (int) param->getValue();
+		String streamKey = param->getValueAsString();
 
-		if (streamExists(candidateStream))
+		if (streamKey.isEmpty())
+			return;
+
+		LOGC("Setting active stream to: ", streamKey);
+
+		activeStream = getDataStream(streamKey)->getStreamId();
+
+		tfrParams.Fs = getDataStream(activeStream)->getSampleRate();
+		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
+		tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
+
+		int bufferSize = int(tfrParams.Fs * tfrParams.winLen);
+
+		for (int i = 0; i < MAX_CHANS; i++)
 		{
-			activeStream = candidateStream;
+			powerBuffers[i].setBufferSize(bufferSize, tfrParams.stepLen * tfrParams.Fs);
+			powerBuffers[i].setNumFreqs(tfrParams.nFreqs);
+		}
 
-			tfrParams.Fs = getDataStream(activeStream)->getSampleRate();
-			tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
-			tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
+		bufferResizer->resize();
 
-			int bufferSize = int(tfrParams.Fs * tfrParams.winLen);
+		resetTFR();
 
-			for (int i = 0; i < MAX_CHANS; i++)
-			{
-				powerBuffers[i].setBufferSize(bufferSize, tfrParams.stepLen * tfrParams.Fs);
-				powerBuffers[i].setNumFreqs(tfrParams.nFreqs);
-			}
-
-			bufferResizer->resize();
-
-			resetTFR();
+		SelectedChannelsParameter* p = (SelectedChannelsParameter*) getDataStream(activeStream)->getParameter("Channels");
+		if (p != nullptr)
+		{
+			channels = p->getArrayValue();
+			getEditor()->updateVisualizer();
 		}
 
 	}
@@ -98,10 +112,7 @@ void SpectrumViewer::parameterValueChanged(Parameter* param)
 		
 		SelectedChannelsParameter* p = (SelectedChannelsParameter*) param;
 		
-		for (auto i : p->getArrayValue())
-		{
-			channels.add(int(i));
-		}
+		channels = p->getArrayValue();
 
 		getEditor()->updateVisualizer();
 	}
@@ -259,13 +270,10 @@ void SpectrumViewer::run()
 
 void SpectrumViewer::updateSettings()
 {
-
-	if(getDataStreams().size() == 0)
+	if (dataStreams.size() > 0)
 	{
-		activeStream = 0;
-		channels.clear();
+		parameterValueChanged(getDataStream(activeStream)->getParameter("Channels"));
 	}
-
 }
 
 
@@ -318,7 +326,7 @@ bool SpectrumViewer::startAcquisition()
 			powerBuffers[i].reset();
 		}
 
-		startThread(THREAD_PRIORITY);
+		startThread();
 
 	}
 	return isEnabled;

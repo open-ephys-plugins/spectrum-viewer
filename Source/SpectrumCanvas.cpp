@@ -25,7 +25,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <math.h>
 
 SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
-	: processor(n)
+	: Visualizer((GenericProcessor*)n)
+	, processor(n)
 	, displayType(POWER_SPECTRUM)
 {
     refreshRate = 60;
@@ -73,7 +74,7 @@ void SpectrumCanvas::paint(Graphics& g)
 	// g.fillAll(Colour(28,28,28));
 }
 
-void SpectrumCanvas::update()
+void SpectrumCanvas::updateSettings()
 {
 	canvasPlot->updateActiveChans();
 }

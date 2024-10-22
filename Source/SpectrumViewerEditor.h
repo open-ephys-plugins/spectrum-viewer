@@ -44,9 +44,6 @@ public:
 	/** Disables animation*/
 	void stopAcquisition() override;
 
-	/** Called when underlying settings are updated */
-	void updateSettings() override;
-
 	/** Called when a ComboBox changes*/
 	void comboBoxChanged(ComboBox* comboBox);
 
@@ -62,9 +59,6 @@ public:
 
 private:
 
-	std::unique_ptr<Label> streamLabel;
-	std::unique_ptr<ComboBox> streamSelection;
-
 	std::unique_ptr<Label> displayLabel;
 	std::unique_ptr<ComboBox> displayType;
 	
@@ -72,8 +66,6 @@ private:
 	std::unique_ptr<ComboBox> frequencyRange;
 
 	Array<Range<int>> freqRanges;
-
-	uint16 activeStream;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumViewerEditor);
 };

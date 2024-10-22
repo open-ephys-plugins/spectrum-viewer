@@ -87,6 +87,9 @@ public:
 	/** Destructor */
     ~SpectrumViewer() { }
 
+	/** Register parameters for this processor */
+	void registerParameters() override;
+
 	/** Create SpectrumViewerEditor */
 	AudioProcessorEditor* createEditor() override;
 
