@@ -44,6 +44,7 @@ const std::vector<Colour> chanColors = { Colour(200, 200, 200)
 
 // Component for housing power spectrum & spectrograph plots
 class CanvasPlot : public Component
+				 , public Button::Listener
 {
 public:
 
@@ -72,6 +73,10 @@ public:
 	/** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
 	void setDisplayType(DisplayType type);
 
+	/** Called when a button is clicked */
+	void buttonClicked(Button* button) override;
+
+	/** Clears the plot */
 	void clear();
 
 	int legendWidth = 150;
@@ -80,11 +85,13 @@ public:
 
 private:
 
+	std::unique_ptr<UtilityButton> clearButton;
+
 	SpectrumViewer* processor;
 	
 	int rowHeight = 50;
 
-	float maxPower = 1.0f;
+	float maxPower = 0.0f;
 
 	std::vector<std::vector<float>> currPower; // channels x freqs
 
@@ -126,6 +133,12 @@ public:
 
 	/** Updates settings */
 	void updateSettings() override;
+
+	/** Called when data acquisition begins */
+    void beginAnimation() override;
+
+    /** Called when data acquisition ends */
+    void endAnimation() override;
 
 	/** Called instead of repaint to avoid re-painting sub-components*/
 	void refresh() override;

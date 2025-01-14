@@ -79,6 +79,17 @@ void SpectrumCanvas::updateSettings()
 	canvasPlot->updateActiveChans();
 }
 
+void SpectrumCanvas::beginAnimation()
+{
+	canvasPlot->clear();
+	startCallbacks();
+}
+
+void SpectrumCanvas::endAnimation()
+{
+	stopCallbacks();
+}
+
 void SpectrumCanvas::refresh()
 {
 	//std::cout << "Refresh." << std::endl;
@@ -163,6 +174,10 @@ CanvasPlot::CanvasPlot(SpectrumViewer* p)
 	plt.setInteractive(InteractivePlotMode::OFF);
 	addAndMakeVisible(plt);
 
+	clearButton = std::make_unique<UtilityButton>("Clear");
+	clearButton->addListener(this);
+	addAndMakeVisible(clearButton.get());
+
 	activeChannels = processor->getActiveChans();
 
 	spectrogramImg = std::make_unique<Image>(Image::RGB, 1000, 1000, true);
@@ -187,6 +202,7 @@ CanvasPlot::CanvasPlot(SpectrumViewer* p)
 void CanvasPlot::resized()
 {
 	plt.setBounds(20, 30, getWidth() - legendWidth - 40, getHeight() - 50);
+	clearButton->setBounds(plt.getRight() - 80, plt.getBottom() - 90, 60, 20);
 }
 
 void CanvasPlot::updateActiveChans()
@@ -240,9 +256,15 @@ void CanvasPlot::setDisplayType(DisplayType type)
 	displayType = type;
 
 	if(displayType == SPECTROGRAM)
+	{
 		plt.setVisible(false);
+		clearButton->setVisible(false);
+	}
 	else
+	{
 		plt.setVisible(true);
+		clearButton->setVisible(true);
+	}
 
 	clear();
 	repaint();
@@ -359,24 +381,16 @@ void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
 
 	for (auto y = 0; y < imageHeight - 1; ++y)
 	{
-		auto skewedProportionY = 1.0f - (float) y / (float) imageHeight;
-		auto dataIndex = (size_t) jlimit (0, (int)(chanData.size() - 1), (int) (skewedProportionY * (chanData.size() - 1)));
+	    auto skewedProportionY = 1.0f - (float) y / (float) imageHeight;
+	    auto dataIndex = (size_t) jlimit (0, (int)(chanData.size() - 1), (int) (skewedProportionY * (chanData.size() - 1)));
 
-		float logPower = log(chanData[dataIndex]);
-		float logMax = log(powerRange.getEnd());
-		float logMin = log(powerRange.getStart());
-		
-		if(std::isless(chanData[dataIndex], 1.0f))
-			logPower = 0;
-		
-		if(std::isless(powerRange.getEnd(), 0.0f))
-			logMax = 0;
-		
-		if(std::isless(powerRange.getStart(), 0.0f))
-			logMin = 0;
+	    float logPower = chanData[dataIndex] > 0.0f ? std::log10(1.0f + chanData[dataIndex]) : 0.0f;
+	    float logMax = powerRange.getEnd() > 0.0f ? std::log10(1.0f + powerRange.getEnd()) : 0.0f;
+	    float logMin = powerRange.getStart() > 0.0f ? std::log10(1.0f + powerRange.getStart()) : 0.0f;
 
-		auto level = juce::jmap (logPower, logMin, juce::jmax (logMax, 1e-5f), 0.0f, 1.0f);
-		spectrogramImg->setPixelAt (0, y, juce::Colour::fromHSV (level, 1.0f, level, 1.0f));
+	    auto level = juce::jmap (logPower, logMin, juce::jmax(logMax, 1e-5f), 0.0f, 1.0f);
+
+	    spectrogramImg->setPixelAt (0, y, juce::Colour::fromHSV (level, 1.0f, level, 1.0f));
 	}
 
 	repaint();
@@ -468,6 +482,14 @@ void CanvasPlot::paint(Graphics& g)
 		imgBounds.setTop(10);
 		g.drawImage (*spectrogramImg, imgBounds.toFloat());
     }
+}
+
+void CanvasPlot::buttonClicked(Button* button)
+{
+	if(button == clearButton.get())
+	{
+		clear();
+	}
 }
 
 void CanvasPlot::clear()
