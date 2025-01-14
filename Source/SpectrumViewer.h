@@ -224,23 +224,20 @@ public:
 				}
 			}
 			
-			if (numFreqsChanged)
+			power.clear();
+
+			LOGD("Creating ", stepsPerBuffer + 5, " power buffers of length ", nFreqs);
+
+			for (int i = 0; i < stepsPerBuffer + 5; i++)
 			{
-				power.clear();
-
-				LOGD("Creating ", stepsPerBuffer + 5, " power buffers of length ", nFreqs);
-
-				for (int i = 0; i < stepsPerBuffer + 5; i++)
+				power.add(new AtomicallyShared<std::vector<float>>());
+				power.getLast()->map([=](std::vector<float>& arr)
 				{
-					power.add(new AtomicallyShared<std::vector<float>>());
-					power.getLast()->map([=](std::vector<float>& arr)
-					{
-						arr.resize(nFreqs);
-					});
-				}
-
-				numFreqsChanged = false;
+					arr.resize(nFreqs);
+				});
 			}
+
+			numFreqsChanged = false;
 		}
 	};
 
