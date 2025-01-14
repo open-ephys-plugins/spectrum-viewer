@@ -180,7 +180,7 @@ void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
 				{
 					auto sp = stream->getParameter("Channels");
 					ped->setParameter(sp);
-					sp->setNextValue(sp->getValue());
+					getProcessor()->parameterChangeRequest(sp);
 					break;
 				}
 			}

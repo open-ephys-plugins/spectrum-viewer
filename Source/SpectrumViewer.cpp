@@ -125,8 +125,11 @@ void SpectrumViewer::setFrequencyRange(Range<int> newRange)
 		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
 		tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
+		int bufferSize = int(tfrParams.Fs * tfrParams.winLen);
+
 		for (int i = 0; i < MAX_CHANS; i++)
 		{
+			powerBuffers[i].setBufferSize(bufferSize, tfrParams.stepLen * tfrParams.Fs);
 			powerBuffers[i].setNumFreqs(tfrParams.nFreqs);
 		}
 
