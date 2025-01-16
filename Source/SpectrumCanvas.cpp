@@ -208,11 +208,11 @@ void CanvasPlot::resized()
 
 void CanvasPlot::lookAndFeelChanged()
 {
-	plt.setBackgroundColour(findColour(ThemeColours::componentParentBackground));
-	plt.setGridColour(findColour(ThemeColours::defaultText));
-	plt.setAxisColour(findColour(ThemeColours::defaultText));
+	plt.setBackgroundColour(findColour(ThemeColours::componentBackground));
+	plt.setGridColour(findColour(ThemeColours::controlPanelText).withAlpha(0.5f));
+	plt.setAxisColour(findColour(ThemeColours::controlPanelText));
 
-	chanColors[0] = findColour(ThemeColours::controlPanelText).withAlpha(0.6f);
+	chanColors[0] = findColour(ThemeColours::defaultText);
 	plt.plot(xvalues, currPower[0], chanColors[0], 1.0f);
 }
 
@@ -409,7 +409,7 @@ void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
 
 void CanvasPlot::paint(Graphics& g)
 {
-	g.fillAll(findColour (ThemeColours::componentBackground));
+	g.fillAll(findColour (ThemeColours::componentParentBackground));
 
 	if(displayType == POWER_SPECTRUM)
 	{
@@ -460,7 +460,7 @@ void CanvasPlot::paint(Graphics& g)
 		int ticklabelWidth = 60;
 		int tickLabelHeight = 20;
 
-		g.setFont(FontOptions("Inter", "Regular", 14.0f));
+		g.setFont(FontOptions("Inter", "Regular", 12.0f));
 
 		for (int k = 0; k <= 10; k++)
 		{
