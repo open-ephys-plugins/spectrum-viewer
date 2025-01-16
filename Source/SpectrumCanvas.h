@@ -33,15 +33,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 class SpectrumCanvas;
 
-const std::vector<Colour> chanColors = { Colour(200, 200, 200)
-										, Colour(230, 159, 0)
-										, Colour(86, 180, 233)
-										, Colour(0, 158, 115)
-										, Colour(240, 228, 66)
-										, Colour(0, 114, 178)
-										, Colour(242, 66, 53)
-										, Colour(204, 121, 167) };
-
 // Component for housing power spectrum & spectrograph plots
 class CanvasPlot : public Component
 				 , public Button::Listener
@@ -59,6 +50,9 @@ public:
 
 	/** Updates component boundaries */
 	void resized() override;
+
+	/** Called when the look and feel changes */
+	void lookAndFeelChanged() override;
 
 	void updateActiveChans();
 
@@ -85,6 +79,15 @@ public:
 
 private:
 
+	std::vector<Colour> chanColors = { Colour(200, 200, 200)
+										, Colour(230, 159, 0)
+										, Colour(86, 180, 233)
+										, Colour(0, 158, 115)
+										, Colour(240, 228, 66)
+										, Colour(0, 114, 178)
+										, Colour(242, 66, 53)
+										, Colour(204, 121, 167) };
+	
 	std::unique_ptr<UtilityButton> clearButton;
 
 	SpectrumViewer* processor;

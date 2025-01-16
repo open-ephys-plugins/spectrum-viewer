@@ -36,6 +36,7 @@ SpectrumCanvas::SpectrumCanvas(SpectrumViewer* n)
 	viewport = std::make_unique<Viewport>();
 	viewport->setViewedComponent(canvasPlot.get(), true);
 	viewport->setScrollBarsShown(true, true);
+	viewport->setScrollBarThickness (12);
 	addAndMakeVisible(viewport.get());
 }
 
@@ -203,6 +204,16 @@ void CanvasPlot::resized()
 {
 	plt.setBounds(20, 30, getWidth() - legendWidth - 40, getHeight() - 50);
 	clearButton->setBounds(plt.getRight() - 80, plt.getBottom() - 90, 60, 20);
+}
+
+void CanvasPlot::lookAndFeelChanged()
+{
+	plt.setBackgroundColour(findColour(ThemeColours::componentParentBackground));
+	plt.setGridColour(findColour(ThemeColours::defaultText));
+	plt.setAxisColour(findColour(ThemeColours::defaultText));
+
+	chanColors[0] = findColour(ThemeColours::controlPanelText).withAlpha(0.6f);
+	plt.plot(xvalues, currPower[0], chanColors[0], 1.0f);
 }
 
 void CanvasPlot::updateActiveChans()
@@ -398,7 +409,7 @@ void CanvasPlot::drawSpectrogram(std::vector<float> chanData)
 
 void CanvasPlot::paint(Graphics& g)
 {
-	g.fillAll(Colour(28,28,28));
+	g.fillAll(findColour (ThemeColours::componentBackground));
 
 	if(displayType == POWER_SPECTRUM)
 	{
@@ -408,7 +419,7 @@ void CanvasPlot::paint(Graphics& g)
 		int left = getWidth() - legendWidth - 10;
 		int top = 60;
 
-		g.setFont(Font("Fira Code", "SemiBold", 16.0f));
+		g.setFont(FontOptions("Inter", "Semi Bold", 16.0f));
 		
 		for(int i = 0; i < activeChannels.size(); i++)
 		{
@@ -420,7 +431,7 @@ void CanvasPlot::paint(Graphics& g)
 					, 30
 					, 30);
 
-			g.setColour(Colours::lightgrey);
+			g.setColour(findColour(ThemeColours::controlPanelText));
 			String chan = processor->getChanName(activeChannels[i]);
 			g.drawFittedText(chan
 				, left + 45
@@ -430,14 +441,14 @@ void CanvasPlot::paint(Graphics& g)
 				, Justification::centredLeft
 				, 1);
 
-			g.setColour(Colours::grey);
+			g.setColour(findColour(ThemeColours::defaultFill));
 			g.drawRect(left, top + 10, 30, 30, 2);
 				
 		}
 	}
 	else
 	{
-        g.setColour(Colours::white);
+        g.setColour(findColour(ThemeColours::controlPanelText));
 
 		int w = 50;
 		int h = getHeight();
@@ -449,6 +460,7 @@ void CanvasPlot::paint(Graphics& g)
 		int ticklabelWidth = 60;
 		int tickLabelHeight = 20;
 
+		g.setFont(FontOptions("Inter", "Regular", 14.0f));
 
 		for (int k = 0; k <= 10; k++)
 		{
