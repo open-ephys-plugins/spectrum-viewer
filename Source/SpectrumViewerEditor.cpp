@@ -21,149 +21,144 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-
 #include "SpectrumViewerEditor.h"
 
-#include "SpectrumViewer.h"
 #include "SpectrumCanvas.h"
+#include "SpectrumViewer.h"
 
-
-SpectrumViewerEditor::SpectrumViewerEditor(GenericProcessor* p)
-	: VisualizerEditor(p, "Power Spectrum", 220)
+SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
+    : VisualizerEditor (p, "Power Spectrum", 220)
 {
-	addSelectedStreamParameterEditor(Parameter::PROCESSOR_SCOPE, "active_stream", 15, 28);
-	getParameterEditor("active_stream")->setSize(210, 18);
+    addSelectedStreamParameterEditor (Parameter::PROCESSOR_SCOPE, "active_stream", 15, 28);
+    getParameterEditor ("active_stream")->setSize (210, 18);
 
-	addSelectedChannelsParameterEditor(Parameter::STREAM_SCOPE, "Channels", 15, 53);
-	getParameterEditor("Channels")->setSize(210, 18);
+    addSelectedChannelsParameterEditor (Parameter::STREAM_SCOPE, "Channels", 15, 53);
+    getParameterEditor ("Channels")->setSize (210, 18);
 
-	displayType = std::make_unique<ComboBox>("Display Type");
-	displayType->setBounds(15, 78, 100, 18);
-	displayType->addListener(this);
-	displayType->addItemList({"Power Spectrum", "Spectrogram"}, 1);
-	displayType->setSelectedId(1, dontSendNotification);
-	addAndMakeVisible(displayType.get());
+    displayType = std::make_unique<ComboBox> ("Display Type");
+    displayType->setBounds (15, 78, 100, 18);
+    displayType->addListener (this);
+    displayType->addItemList ({ "Power Spectrum", "Spectrogram" }, 1);
+    displayType->setSelectedId (1, dontSendNotification);
+    addAndMakeVisible (displayType.get());
 
-	displayLabel = std::make_unique<Label>("DisplayTypeLabel", "Display");
-	displayLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-	displayLabel->setBounds(123, 78, 80, 18);
-	addAndMakeVisible(displayLabel.get());
+    displayLabel = std::make_unique<Label> ("DisplayTypeLabel", "Display");
+    displayLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    displayLabel->setBounds (123, 78, 80, 18);
+    addAndMakeVisible (displayLabel.get());
 
-	freqRanges.add(Range(0, 100));
-	freqRanges.add(Range(0, 500));
-	freqRanges.add(Range(0, 1000));
-	frequencyRange = std::make_unique<ComboBox>("FreqRange");
-	frequencyRange->setBounds(15, 103, 100, 18);
-	frequencyRange->addListener(this);
-	frequencyRange->addItemList({"0 - 100", "0 - 500", "0 - 1000"}, 1);
-	frequencyRange->setSelectedId(3, dontSendNotification);
-	addAndMakeVisible(frequencyRange.get());
+    freqRanges.add (Range (0, 100));
+    freqRanges.add (Range (0, 500));
+    freqRanges.add (Range (0, 1000));
+    frequencyRange = std::make_unique<ComboBox> ("FreqRange");
+    frequencyRange->setBounds (15, 103, 100, 18);
+    frequencyRange->addListener (this);
+    frequencyRange->addItemList ({ "0 - 100", "0 - 500", "0 - 1000" }, 1);
+    frequencyRange->setSelectedId (3, dontSendNotification);
+    addAndMakeVisible (frequencyRange.get());
 
-	frequencyLabel = std::make_unique<Label>("FreqRangeLabel", "Freq. Range");
-	frequencyLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-	frequencyLabel->setBounds(123, 103, 80, 18);
-	addAndMakeVisible(frequencyLabel.get());
+    frequencyLabel = std::make_unique<Label> ("FreqRangeLabel", "Freq. Range");
+    frequencyLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    frequencyLabel->setBounds (123, 103, 80, 18);
+    addAndMakeVisible (frequencyLabel.get());
 }
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
 {
-	// Create a new canvas and pass the processor ptr
-	auto sp = (SpectrumViewer*)getProcessor();
-	auto spectrumCanvas = new SpectrumCanvas(sp);
+    // Create a new canvas and pass the processor ptr
+    auto sp = (SpectrumViewer*) getProcessor();
+    auto spectrumCanvas = new SpectrumCanvas (sp);
 
-	// Set frequency range for canvas
-	Range<int> range = freqRanges[frequencyRange->getSelectedItemIndex()];
-	spectrumCanvas->getPlotPtr()->setFrequencyRange(range.getStart(), range.getEnd(), sp->getFreqStep());
+    // Set frequency range for canvas
+    Range<int> range = freqRanges[frequencyRange->getSelectedItemIndex()];
+    spectrumCanvas->getPlotPtr()->setFrequencyRange (range.getStart(), range.getEnd(), sp->getFreqStep());
 
-	// Set display type for canvas
-	auto type = (DisplayType)displayType->getSelectedId();
-	spectrumCanvas->setDisplayType(type);
+    // Set display type for canvas
+    auto type = (DisplayType) displayType->getSelectedId();
+    spectrumCanvas->setDisplayType (type);
 
-	return spectrumCanvas;
+    return spectrumCanvas;
 }
-
 
 void SpectrumViewerEditor::startAcquisition()
 {
-	frequencyRange->setEnabled(false);
-	enable();
+    frequencyRange->setEnabled (false);
+    enable();
 }
 
 void SpectrumViewerEditor::stopAcquisition()
 {
-	frequencyRange->setEnabled(true);
-	disable();
+    frequencyRange->setEnabled (true);
+    disable();
 }
 
-void SpectrumViewerEditor::comboBoxChanged(ComboBox* cb)
+void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
 {
-	auto sc = static_cast<SpectrumCanvas*>(canvas.get());
+    auto sc = static_cast<SpectrumCanvas*> (canvas.get());
 
-	if (cb == displayType.get())
-	{
+    if (cb == displayType.get())
+    {
+        auto type = (DisplayType) displayType->getSelectedId();
 
-		auto type = (DisplayType)displayType->getSelectedId();
+        if (! sc)
+            return;
 
-		if(!sc)
-			return;
+        sc->setDisplayType (type);
+    }
+    else if (cb == frequencyRange.get())
+    {
+        Range<int> range = freqRanges[cb->getSelectedItemIndex()];
 
-		sc->setDisplayType(type);
-	}
-	else if (cb == frequencyRange.get())
-	{
-		Range<int> range = freqRanges[cb->getSelectedItemIndex()];
-		
-		// Send frequency range update to processor
-		auto processor = static_cast<SpectrumViewer*>(getProcessor());
-		processor->setFrequencyRange(range);
+        // Send frequency range update to processor
+        auto processor = static_cast<SpectrumViewer*> (getProcessor());
+        processor->setFrequencyRange (range);
 
-		// Send frequency range update to canvas plot
-		if(sc != nullptr)
-		{
-			sc->getPlotPtr()->setFrequencyRange(range.getStart(),
-												range.getEnd(),
-												processor->getFreqStep());
-		}
-	}
+        // Send frequency range update to canvas plot
+        if (sc != nullptr)
+        {
+            sc->getPlotPtr()->setFrequencyRange (range.getStart(),
+                                                 range.getEnd(),
+                                                 processor->getFreqStep());
+        }
+    }
 }
 
 void SpectrumViewerEditor::selectedStreamHasChanged()
 {
-	if (getProcessor()->getDataStreams().size() > 0)
-	{
-		auto stream = getProcessor()->getDataStream(getCurrentStream());
-		// Add or change the currently selected stream's max frequency
-		float maxFreq = stream->getSampleRate() / 2;
+    if (getProcessor()->getDataStreams().size() > 0)
+    {
+        auto stream = getProcessor()->getDataStream (getCurrentStream());
+        // Add or change the currently selected stream's max frequency
+        float maxFreq = stream->getSampleRate() / 2;
 
-		freqRanges.set(3, Range(0, (int)maxFreq));
-		
-		if(frequencyRange->getNumItems() == 4)
-		{
-			int selectedId = frequencyRange->getSelectedId();
-			frequencyRange->changeItemText(4, "0 - " + String(maxFreq));
+        freqRanges.set (3, Range (0, (int) maxFreq));
 
-			if(selectedId == 4)
-			{
-				frequencyRange->setText("0 - " + String(maxFreq), sendNotification);
-			}
-		}
-		else
-			frequencyRange->addItem("0 - " + String(maxFreq), 4);
+        if (frequencyRange->getNumItems() == 4)
+        {
+            int selectedId = frequencyRange->getSelectedId();
+            frequencyRange->changeItemText (4, "0 - " + String (maxFreq));
 
-	}
+            if (selectedId == 4)
+            {
+                frequencyRange->setText ("0 - " + String (maxFreq), sendNotification);
+            }
+        }
+        else
+            frequencyRange->addItem ("0 - " + String (maxFreq), 4);
+    }
 }
 
-void SpectrumViewerEditor::saveVisualizerEditorParameters(XmlElement* xml)
+void SpectrumViewerEditor::saveVisualizerEditorParameters (XmlElement* xml)
 {
-	xml->setAttribute("display_type", displayType->getSelectedId());
-	xml->setAttribute("frequency_range", frequencyRange->getSelectedId());
+    xml->setAttribute ("display_type", displayType->getSelectedId());
+    xml->setAttribute ("frequency_range", frequencyRange->getSelectedId());
 }
 
-void SpectrumViewerEditor::loadVisualizerEditorParameters(XmlElement* xml)
+void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
 {
-	int selectedType = xml->getIntAttribute("display_type", 1);
-	displayType->setSelectedId(selectedType, sendNotification);
+    int selectedType = xml->getIntAttribute ("display_type", 1);
+    displayType->setSelectedId (selectedType, sendNotification);
 
-	int selectedRange = xml->getIntAttribute("frequency_range", 3);
-	frequencyRange->setSelectedId(selectedRange, sendNotification);
+    int selectedRange = xml->getIntAttribute ("frequency_range", 3);
+    frequencyRange->setSelectedId (selectedRange, sendNotification);
 }

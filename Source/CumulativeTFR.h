@@ -28,141 +28,133 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "AtomicSynchronizer.h"
 
-#include <vector>
 #include <complex>
+#include <vector>
 
 using FFTWArrayType = FFTWTransformableArrayUsing<0U>;
 // Changed to FFTW_MEASURE, slow start. Better performance?
 
 class CumulativeTFR
 {
-	// shorten some things
-	template<typename T>
-	using vector = std::vector<T>;
+    // shorten some things
+    template <typename T>
+    using vector = std::vector<T>;
 
-	using RealAccum = StatisticsAccumulator<double>;
+    using RealAccum = StatisticsAccumulator<double>;
 
-	struct ComplexWeightedAccum
-	{
-		ComplexWeightedAccum(double alpha)
-			: count(0)
-			, sum(0, 0)
-			, alpha(alpha)
-		{}
+    struct ComplexWeightedAccum
+    {
+        ComplexWeightedAccum (double alpha)
+            : count (0), sum (0, 0), alpha (alpha)
+        {
+        }
 
-		std::complex<double> getAverage()
-		{
-			return count > 0 ? sum / (double)count : std::complex<double>();
-		}
+        std::complex<double> getAverage()
+        {
+            return count > 0 ? sum / (double) count : std::complex<double>();
+        }
 
-		void addValue(std::complex<double> x)
-		{
-			sum = x + (1 - alpha) * sum; // Maybe worried about intitial value skewing results..? Could be why its so high always.
-			count = 1 + (1 - alpha) * count;
-		}
+        void addValue (std::complex<double> x)
+        {
+            sum = x + (1 - alpha) * sum; // Maybe worried about intitial value skewing results..? Could be why its so high always.
+            count = 1 + (1 - alpha) * count;
+        }
 
-		void reset()
-		{
-			count = 0;
-			sum = (0, 0);
-		}
+        void reset()
+        {
+            count = 0;
+            sum = (0, 0);
+        }
 
-	private:
-		std::complex<double> sum;
-		size_t count;
+    private:
+        std::complex<double> sum;
+        size_t count;
 
-		const double alpha;
-	};
+        const double alpha;
+    };
 
+    struct RealWeightedAccum
+    {
+        RealWeightedAccum (double alpha)
+            : count (0), sum (0), alpha (alpha)
+        {
+        }
 
-	struct RealWeightedAccum
-	{
-		RealWeightedAccum(double alpha)
-			: count(0)
-			, sum(0)
-			, alpha(alpha)
-		{}
+        double getAverage()
+        {
+            return count > 0 ? sum / (double) count : double();
+        }
 
-		double getAverage()
-		{
-			return count > 0 ? sum / (double)count : double();
-		}
+        void addValue (double x)
+        {
+            sum = x + (1 - alpha) * sum;
+            count = 1 + (1 - alpha) * count;
+        }
 
-		void addValue(double x)
-		{
-			sum = x + (1 - alpha) * sum;
-			count = 1 + (1 - alpha) * count;
-		}
+        void reset()
+        {
+            count = 0;
+            sum = 0;
+        }
 
-		void reset()
-		{
-			count = 0;
-			sum = 0;
-		}
+    private:
+        double sum;
+        size_t count;
 
-	private:
-		double sum;
-		size_t count;
-
-		const double alpha;
-	};
+        const double alpha;
+    };
 
 public:
-	CumulativeTFR(int nchans, int nf, int nt, int Fs,
-		float winLen = 2, float stepLen = 0.1, float freqStep = 0.25,
-		int freqStart = 1, double fftSec = 10.0, double alpha = 0);
+    CumulativeTFR (int nchans, int nf, int nt, int Fs, float winLen = 2, float stepLen = 0.1, float freqStep = 0.25, int freqStart = 1, double fftSec = 10.0, double alpha = 0);
 
-	// Handle a new buffer of data. Perform FFT and create pxxs, pyys.
-	void computeFFT(FFTWArrayType& fftBuffer, int channelIndex);
+    // Handle a new buffer of data. Perform FFT and create pxxs, pyys.
+    void computeFFT (FFTWArrayType& fftBuffer, int channelIndex);
 
-	// Function to get coherence between two channels
-	void getMeanCoherence(int chanX, int chanY, AtomicallyShared<std::vector<double>>& coherence, int comb);
+    // Function to get coherence between two channels
+    void getMeanCoherence (int chanX, int chanY, AtomicallyShared<std::vector<double>>& coherence, int comb);
 
-	// Calculates power for input channels based on powerbuffer size. 
-	void getPower(std::vector<float>& power, int channelIndex);
-
+    // Calculates power for input channels based on powerbuffer size.
+    void getPower (std::vector<float>& power, int channelIndex);
 
 private:
-	// Generate wavelet to be multplied by the channel spectrum
-	void generateWavelet();
+    // Generate wavelet to be multplied by the channel spectrum
+    void generateWavelet();
 
-	const int nFreqs;
-	const int Fs;
-	const int nTimes;
-	const int nfft;
-	int segmentLen;
-	float windowLen;
-	float stepLen;
+    const int nFreqs;
+    const int Fs;
+    const int nTimes;
+    const int nfft;
+    int segmentLen;
+    float windowLen;
+    float stepLen;
 
-	float freqStep;
-	int freqStart;
-	int freqEnd;
+    float freqStep;
+    int freqStart;
+    int freqEnd;
 
-	int trimTime;
+    int trimTime;
 
+    bool printout;
 
-	bool printout;
+    // # channels x # frequencies x # times
+    vector<vector<vector<std::complex<double>>>> spectrumBuffer;
 
+    // dimensions?
+    vector<vector<std::complex<double>>> waveletArray;
 
-	// # channels x # frequencies x # times
-	vector<vector<vector<std::complex<double>>>> spectrumBuffer;
+    FFTWArrayType ifftBuffer;
 
-	// dimensions?
-	vector<vector<std::complex<double>>> waveletArray;
+    // For exponential average
+    double alpha;
+    // Store cross-spectra : # channel combinations x # frequencies x # times
+    vector<vector<vector<ComplexWeightedAccum>>> pxys;
+    // Store power : # channels x # frequencies x # times
+    vector<vector<vector<RealWeightedAccum>>> powBuffer;
 
-	FFTWArrayType ifftBuffer;
+    // calculate a single magnitude-squared coherence from cross spectrum and auto-power values
+    static double singleCoherence (double pxx, double pyy, std::complex<double> pxy);
 
-	// For exponential average
-	double alpha;
-	// Store cross-spectra : # channel combinations x # frequencies x # times
-	vector<vector<vector<ComplexWeightedAccum>>> pxys;
-	// Store power : # channels x # frequencies x # times
-	vector<vector<vector<RealWeightedAccum>>> powBuffer;
-
-	// calculate a single magnitude-squared coherence from cross spectrum and auto-power values
-	static double singleCoherence(double pxx, double pyy, std::complex<double> pxy);
-
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CumulativeTFR);
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CumulativeTFR);
 };
 
 #endif // CUMULATIVE_TFR_H_INCLUDED

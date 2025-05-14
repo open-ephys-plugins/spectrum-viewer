@@ -25,343 +25,319 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "SpectrumViewerEditor.h"
 
-#define MS_FROM_START Time::highResolutionTicksToSeconds(Time::getHighResolutionTicks() - start) * 1000
+#define MS_FROM_START Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - start) * 1000
 
 SpectrumViewer::SpectrumViewer()
-	: GenericProcessor("Spectrum Viewer")
-	, Thread("FFT Thread")
-	, displayType(POWER_SPECTRUM)
+    : GenericProcessor ("Spectrum Viewer"), Thread ("FFT Thread"), displayType (POWER_SPECTRUM)
 {
-	tfrParams.segLen = 1;
-	tfrParams.freqStart = 0;
-	tfrParams.freqEnd = 1000;
-	tfrParams.stepLen = 0.020; // update every 20 ms (50 Hz)
-	tfrParams.winLen = 0.25;
-	tfrParams.interpRatio = 1;
-	tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
-	tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
-	tfrParams.Fs = 2000;
-	tfrParams.alpha = 0;
-	tfrParams.nTimes = 1;
+    tfrParams.segLen = 1;
+    tfrParams.freqStart = 0;
+    tfrParams.freqEnd = 1000;
+    tfrParams.stepLen = 0.020; // update every 20 ms (50 Hz)
+    tfrParams.winLen = 0.25;
+    tfrParams.interpRatio = 1;
+    tfrParams.freqStep = 1.0 / float (tfrParams.winLen * tfrParams.interpRatio);
+    tfrParams.nFreqs = int ((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
+    tfrParams.Fs = 2000;
+    tfrParams.alpha = 0;
+    tfrParams.nTimes = 1;
 
-	bufferResizer = std::make_unique<BufferResizer>(this);
+    bufferResizer = std::make_unique<BufferResizer> (this);
 }
 
 void SpectrumViewer::registerParameters()
 {
-	addSelectedStreamParameter (Parameter::PROCESSOR_SCOPE,
-		"active_stream", 
-		"Display Stream", 
-		"Currently selected stream", 
-		{}, 0, true, true);
+    addSelectedStreamParameter (Parameter::PROCESSOR_SCOPE,
+                                "active_stream",
+                                "Display Stream",
+                                "Currently selected stream",
+                                {},
+                                0,
+                                true,
+                                true);
 
-	addSelectedChannelsParameter(Parameter::STREAM_SCOPE, 
-		"Channels", "Channels",
-		"The channels to analyze", 
-		MAX_CHANS, 
-		false);
+    addSelectedChannelsParameter (Parameter::STREAM_SCOPE,
+                                  "Channels",
+                                  "Channels",
+                                  "The channels to analyze",
+                                  MAX_CHANS,
+                                  false);
 }
 
 AudioProcessorEditor* SpectrumViewer::createEditor()
 {
-	editor = std::make_unique<SpectrumViewerEditor>(this);
-	return editor.get();
+    editor = std::make_unique<SpectrumViewerEditor> (this);
+    return editor.get();
 }
 
-void SpectrumViewer::parameterValueChanged(Parameter* param)
+void SpectrumViewer::parameterValueChanged (Parameter* param)
 {
-	if (param->getName().equalsIgnoreCase("active_stream"))
-	{
+    if (param->getName().equalsIgnoreCase ("active_stream"))
+    {
+        String streamKey = param->getValueAsString();
 
-		String streamKey = param->getValueAsString();
+        if (streamKey.isEmpty())
+            return;
 
-		if (streamKey.isEmpty())
-			return;
+        LOGC ("Setting active stream to: ", streamKey);
 
-		LOGC("Setting active stream to: ", streamKey);
+        activeStream = getDataStream (streamKey)->getStreamId();
 
-		activeStream = getDataStream(streamKey)->getStreamId();
+        tfrParams.Fs = getDataStream (activeStream)->getSampleRate();
+        tfrParams.freqStep = 1.0 / float (tfrParams.winLen * tfrParams.interpRatio);
+        tfrParams.nFreqs = int ((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
-		tfrParams.Fs = getDataStream(activeStream)->getSampleRate();
-		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
-		tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
+        int bufferSize = int (tfrParams.Fs * tfrParams.winLen);
 
-		int bufferSize = int(tfrParams.Fs * tfrParams.winLen);
+        for (int i = 0; i < MAX_CHANS; i++)
+        {
+            powerBuffers[i].setBufferSize (bufferSize, tfrParams.stepLen * tfrParams.Fs);
+            powerBuffers[i].setNumFreqs (tfrParams.nFreqs);
+        }
 
-		for (int i = 0; i < MAX_CHANS; i++)
-		{
-			powerBuffers[i].setBufferSize(bufferSize, tfrParams.stepLen * tfrParams.Fs);
-			powerBuffers[i].setNumFreqs(tfrParams.nFreqs);
-		}
+        bufferResizer->resize();
 
-		bufferResizer->resize();
+        resetTFR();
 
-		resetTFR();
+        SelectedChannelsParameter* p = (SelectedChannelsParameter*) getDataStream (activeStream)->getParameter ("Channels");
+        if (p != nullptr)
+        {
+            channels = p->getArrayValue();
+            getEditor()->updateVisualizer();
+        }
+    }
+    else if (param->getName() == "Channels")
+    {
+        channels.clear();
 
-		SelectedChannelsParameter* p = (SelectedChannelsParameter*) getDataStream(activeStream)->getParameter("Channels");
-		if (p != nullptr)
-		{
-			channels = p->getArrayValue();
-			getEditor()->updateVisualizer();
-		}
+        SelectedChannelsParameter* p = (SelectedChannelsParameter*) param;
 
-	}
-	else if (param->getName() == "Channels")
-	{
-		channels.clear();
-		
-		SelectedChannelsParameter* p = (SelectedChannelsParameter*) param;
-		
-		channels = p->getArrayValue();
+        channels = p->getArrayValue();
 
-		getEditor()->updateVisualizer();
-	}
+        getEditor()->updateVisualizer();
+    }
 }
 
-void SpectrumViewer::setFrequencyRange(Range<int> newRange)
+void SpectrumViewer::setFrequencyRange (Range<int> newRange)
 {
-	if(newRange.getEnd() != tfrParams.freqEnd)
-	{
-		tfrParams.freqEnd = newRange.getEnd();
-		
-		if(tfrParams.freqEnd == 100)
-			tfrParams.winLen = 2;
-		else if(tfrParams.freqEnd == 500)
-			tfrParams.winLen = 0.5;
-		else if(tfrParams.freqEnd == 1000)
-			tfrParams.winLen = 0.25;
-		else
-			tfrParams.winLen = 0.1;
+    if (newRange.getEnd() != tfrParams.freqEnd)
+    {
+        tfrParams.freqEnd = newRange.getEnd();
 
-		tfrParams.freqStep = 1.0 / float(tfrParams.winLen * tfrParams.interpRatio);
-		tfrParams.nFreqs = int((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
+        if (tfrParams.freqEnd == 100)
+            tfrParams.winLen = 2;
+        else if (tfrParams.freqEnd == 500)
+            tfrParams.winLen = 0.5;
+        else if (tfrParams.freqEnd == 1000)
+            tfrParams.winLen = 0.25;
+        else
+            tfrParams.winLen = 0.1;
 
-		int bufferSize = int(tfrParams.Fs * tfrParams.winLen);
+        tfrParams.freqStep = 1.0 / float (tfrParams.winLen * tfrParams.interpRatio);
+        tfrParams.nFreqs = int ((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
-		for (int i = 0; i < MAX_CHANS; i++)
-		{
-			powerBuffers[i].setBufferSize(bufferSize, tfrParams.stepLen * tfrParams.Fs);
-			powerBuffers[i].setNumFreqs(tfrParams.nFreqs);
-		}
+        int bufferSize = int (tfrParams.Fs * tfrParams.winLen);
 
-		bufferResizer->resize();
-		resetTFR();
+        for (int i = 0; i < MAX_CHANS; i++)
+        {
+            powerBuffers[i].setBufferSize (bufferSize, tfrParams.stepLen * tfrParams.Fs);
+            powerBuffers[i].setNumFreqs (tfrParams.nFreqs);
+        }
 
-		getEditor()->updateVisualizer();
-	}
+        bufferResizer->resize();
+        resetTFR();
+
+        getEditor()->updateVisualizer();
+    }
 }
 
-void SpectrumViewer::process(AudioBuffer<float>& continuousBuffer)
+void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
 {
-	// Nothing to do when no channels selected
-	if(channels.isEmpty())
-		return;
+    // Nothing to do when no channels selected
+    if (channels.isEmpty())
+        return;
 
-	// same number of samples for all channels in stream
-	int incomingSampleCount = getNumSamplesInBlock(activeStream);
+    // same number of samples for all channels in stream
+    int incomingSampleCount = getNumSamplesInBlock (activeStream);
 
-	//bool updateBuffer = false;
+    //bool updateBuffer = false;
 
-	// loop over active channels
-	for (int i = 0; i < channels.size(); i++)
-	{
+    // loop over active channels
+    for (int i = 0; i < channels.size(); i++)
+    {
+        int globalChanIdx = getGlobalChannelIndex (activeStream, channels[i]);
+        const float* incomingDataPointer = continuousBuffer.getReadPointer (globalChanIdx);
 
-		int globalChanIdx = getGlobalChannelIndex(activeStream, channels[i]);
-		const float* incomingDataPointer = continuousBuffer.getReadPointer(globalChanIdx);
+        if (globalChanIdx < 0)
+            continue;
 
-		if (globalChanIdx < 0)
-			continue;
+        PowerBuffer* buffer = &powerBuffers[i];
 
-		PowerBuffer* buffer = &powerBuffers[i];
+        // loop over buffers
+        for (int j = 0; j < buffer->incomingSamples.size(); j++)
+        {
+            AtomicScopedWritePtr<FFTWArrayType> dataWriter (*buffer->incomingSamples[j]);
+            int writeIndex = buffer->writeIndex[j];
 
-		// loop over buffers
-		for (int j = 0; j < buffer->incomingSamples.size(); j++)
-		{
+            //LOGD("Buffer ", j, " write index: ", writeIndex);
 
-			AtomicScopedWritePtr<FFTWArrayType> dataWriter(*buffer->incomingSamples[j]);
-			int writeIndex = buffer->writeIndex[j];
+            // Check writer
+            if (! dataWriter.isValid())
+            {
+                jassertfalse; // atomic sync data writer broken
+            }
 
-			//LOGD("Buffer ", j, " write index: ", writeIndex);
+            // loop over samples
+            for (int n = 0; n < incomingSampleCount; n++)
+            {
+                writeIndex++;
 
-			// Check writer
-			if (!dataWriter.isValid())
-			{
-				jassertfalse; // atomic sync data writer broken
-			}
+                if (writeIndex > 0) // make sure we have enough samples
+                {
+                    dataWriter->set (writeIndex - 1, incomingDataPointer[n]);
+                }
 
-			// loop over samples
-			for (int n = 0; n < incomingSampleCount; n++)
-			{
+                if (writeIndex == buffer->bufferSize)
+                {
+                    // apply window
 
-				writeIndex++;
+                    for (int m = 0; m < buffer->bufferSize; m++)
+                    {
+                        dataWriter->set (m, dataWriter->getAsReal (m) * buffer->window[m]);
+                    }
+                    dataWriter.pushUpdate();
+                    //LOGD("Buffer ", j, " is full.");
+                    writeIndex = -5 * buffer->stepSize; // loop around to the beginning
+                    break;
+                }
+            }
 
-				if (writeIndex > 0) // make sure we have enough samples
-				{
-					dataWriter->set(writeIndex - 1, incomingDataPointer[n]);
-				}
-
-				if (writeIndex == buffer->bufferSize)
-				{
-
-					// apply window
-
-					for (int m = 0; m < buffer->bufferSize; m++)
-					{
-						dataWriter->set(m, dataWriter->getAsReal(m) * buffer->window[m]);
-					}
-					dataWriter.pushUpdate();
-					//LOGD("Buffer ", j, " is full.");
-					writeIndex = -5 * buffer->stepSize; // loop around to the beginning
-					break;
-				}
-			}
-
-			buffer->writeIndex.set(j, writeIndex);
-
-		}
-	}
+            buffer->writeIndex.set (j, writeIndex);
+        }
+    }
 }
 
 void SpectrumViewer::run()
 {
-	
+    while (! threadShouldExit())
+    {
+        // loop over active channels
+        for (int i = 0; i < channels.size(); i++)
+        {
+            PowerBuffer* buffer = &powerBuffers[i];
 
-	while (!threadShouldExit())
-	{
+            // loop over buffers
+            for (int j = 0; j < buffer->incomingSamples.size(); j++)
+            {
+                if (buffer->incomingSamples[j]->hasUpdate())
+                {
+                    //LOGD("Buffer ", j, " has update.");
 
-		// loop over active channels
-		for (int i = 0; i < channels.size(); i++)
-		{
+                    AtomicScopedReadPtr<FFTWArrayType> fftReader (*buffer->incomingSamples[j]);
+                    AtomicScopedWritePtr<FFTWArrayType> fftWriter (*buffer->incomingSamples[j]);
+                    AtomicScopedWritePtr<std::vector<float>> powerWriter (*buffer->power[j]);
 
-			PowerBuffer* buffer = &powerBuffers[i];
+                    if (fftReader.isValid() && fftWriter.isValid() && powerWriter.isValid())
+                    {
+                        fftReader.pullUpdate();
 
-			// loop over buffers
-			for (int j = 0; j < buffer->incomingSamples.size(); j++)
-			{
+                        TFR->computeFFT (fftWriter.operator*(), i);
+                        TFR->getPower (powerWriter.operator*(), i);
 
-				if (buffer->incomingSamples[j]->hasUpdate())
-				{
+                        powerWriter.pushUpdate();
 
-					//LOGD("Buffer ", j, " has update.");
-
-					AtomicScopedReadPtr<FFTWArrayType> fftReader(*buffer->incomingSamples[j]);
-					AtomicScopedWritePtr<FFTWArrayType> fftWriter(*buffer->incomingSamples[j]);
-					AtomicScopedWritePtr<std::vector<float>> powerWriter(*buffer->power[j]);
-
-					if (fftReader.isValid() && fftWriter.isValid() && powerWriter.isValid())
-					{
-						fftReader.pullUpdate();
-
-						TFR->computeFFT(fftWriter.operator*(), i);
-						TFR->getPower(powerWriter.operator*(), i);
-						
-						powerWriter.pushUpdate();
-
-						//LOGD("Buffer ", j, " computed FFT.");
-					}
-
-					
-				}
-
-			}
-
-		}
-
-		
-	}
+                        //LOGD("Buffer ", j, " computed FFT.");
+                    }
+                }
+            }
+        }
+    }
 }
 
 void SpectrumViewer::updateSettings()
 {
-	if (dataStreams.size() > 0)
-	{
-		parameterValueChanged(getDataStream(activeStream)->getParameter("Channels"));
-	}
+    if (dataStreams.size() > 0)
+    {
+        parameterValueChanged (getDataStream (activeStream)->getParameter ("Channels"));
+    }
 }
-
 
 void SpectrumViewer::resetTFR()
 {
-
-	TFR.reset(new CumulativeTFR(MAX_CHANS, // channel count
-		tfrParams.nFreqs, 
-		tfrParams.nTimes, 
-		tfrParams.Fs, // sample rate
-		tfrParams.winLen, 
-		tfrParams.stepLen,
-		tfrParams.freqStep, 
-		tfrParams.freqStart, 
-		tfrParams.segLen, //fftSec
-		tfrParams.alpha));
-
+    TFR.reset (new CumulativeTFR (MAX_CHANS, // channel count
+                                  tfrParams.nFreqs,
+                                  tfrParams.nTimes,
+                                  tfrParams.Fs, // sample rate
+                                  tfrParams.winLen,
+                                  tfrParams.stepLen,
+                                  tfrParams.freqStep,
+                                  tfrParams.freqStart,
+                                  tfrParams.segLen, //fftSec
+                                  tfrParams.alpha));
 }
 
-bool SpectrumViewer::streamExists(uint16 streamId)
+bool SpectrumViewer::streamExists (uint16 streamId)
 {
-	for (auto stream : getDataStreams())
-	{
-		if (stream->getStreamId() == streamId)
-			return true;
-	}
+    for (auto stream : getDataStreams())
+    {
+        if (stream->getStreamId() == streamId)
+            return true;
+    }
 
-	return false;
+    return false;
 }
 
 Array<int> SpectrumViewer::getActiveChans()
 {
-	return channels;
+    return channels;
 }
 
-const String SpectrumViewer::getChanName(int localIdx)
+const String SpectrumViewer::getChanName (int localIdx)
 {
-	return getDataStream(activeStream)->getContinuousChannels()[localIdx]->getName();
+    return getDataStream (activeStream)->getContinuousChannels()[localIdx]->getName();
 };
 
 bool SpectrumViewer::startAcquisition()
 {
-	if (isEnabled)
-	{
+    if (isEnabled)
+    {
+        bufferResizer->waitForThreadToExit (5000);
 
-		bufferResizer->waitForThreadToExit(5000);
+        for (int i = 0; i < MAX_CHANS; i++)
+        {
+            powerBuffers[i].reset();
+        }
 
-		for (int i = 0; i < MAX_CHANS; i++)
-		{
-			powerBuffers[i].reset();
-		}
-
-		startThread();
-
-	}
-	return isEnabled;
+        startThread();
+    }
+    return isEnabled;
 }
 
 bool SpectrumViewer::stopAcquisition()
 {
-	stopThread(1000);
-	return true;
+    stopThread (1000);
+    return true;
 }
 
-
-BufferResizer::BufferResizer(SpectrumViewer* p)
-	: Thread("Spectrum Viewer buffer resizer")
-	, processor(p)
+BufferResizer::BufferResizer (SpectrumViewer* p)
+    : Thread ("Spectrum Viewer buffer resizer"), processor (p)
 {
-	//setStatusMessage("Resizing buffers...");
+    //setStatusMessage("Resizing buffers...");
 }
 
 void BufferResizer::resize()
 {
-	waitForThreadToExit(5000);
+    waitForThreadToExit (5000);
 
-	run();
+    run();
 }
 
 void BufferResizer::run()
 {
-	//setStatusMessage("Resizing data buffer for all channels");
-	
-	for (int i = 0; i < MAX_CHANS; i++)
-	{
-		processor->powerBuffers[i].resize();
-	}
+    //setStatusMessage("Resizing data buffer for all channels");
+
+    for (int i = 0; i < MAX_CHANS; i++)
+    {
+        processor->powerBuffers[i].resize();
+    }
 }

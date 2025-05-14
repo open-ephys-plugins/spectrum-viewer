@@ -34,86 +34,83 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 class SpectrumCanvas;
 
 // Component for housing power spectrum & spectrograph plots
-class CanvasPlot : public Component
-				 , public Button::Listener
+class CanvasPlot : public Component, public Button::Listener
 {
 public:
+    /** Constructor */
+    CanvasPlot (SpectrumViewer* p);
 
-	/** Constructor */
-	CanvasPlot(SpectrumViewer* p);
+    /** Destructor */
+    ~CanvasPlot() {}
 
-	/** Destructor */
-	~CanvasPlot() { }
+    /** Draws the canvas */
+    void paint (Graphics& g) override;
 
-	/** Draws the canvas */
-	void paint(Graphics& g) override;
+    /** Updates component boundaries */
+    void resized() override;
 
-	/** Updates component boundaries */
-	void resized() override;
+    /** Called when the look and feel changes */
+    void lookAndFeelChanged() override;
 
-	/** Called when the look and feel changes */
-	void lookAndFeelChanged() override;
+    void updateActiveChans();
 
-	void updateActiveChans();
+    void setFrequencyRange (int freqStart, int freqEnd, float freqStep);
 
-	void setFrequencyRange(int freqStart, int freqEnd, float freqStep);
+    void updatePowerSpectrum (std::vector<float> powerData, int channelIndex);
 
-	void updatePowerSpectrum(std::vector<float> powerData, int channelIndex);
+    void plotPowerSpectrum();
 
-	void plotPowerSpectrum();
+    void drawSpectrogram (std::vector<float> powerData);
 
-	void drawSpectrogram(std::vector<float> powerData);
+    /** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
+    void setDisplayType (DisplayType type);
 
-	/** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
-	void setDisplayType(DisplayType type);
+    /** Called when a button is clicked */
+    void buttonClicked (Button* button) override;
 
-	/** Called when a button is clicked */
-	void buttonClicked(Button* button) override;
+    /** Clears the plot */
+    void clear();
 
-	/** Clears the plot */
-	void clear();
+    int legendWidth = 150;
 
-	int legendWidth = 150;
-
-	DisplayType displayType;
+    DisplayType displayType;
 
 private:
+    std::vector<Colour> chanColors = { Colour (200, 200, 200),
+                                       Colour (230, 159, 0),
+                                       Colour (86, 180, 233),
+                                       Colour (0, 158, 115),
+                                       Colour (240, 228, 66),
+                                       Colour (0, 114, 178),
+                                       Colour (242, 66, 53),
+                                       Colour (204, 121, 167) };
 
-	std::vector<Colour> chanColors = { Colour(200, 200, 200)
-										, Colour(230, 159, 0)
-										, Colour(86, 180, 233)
-										, Colour(0, 158, 115)
-										, Colour(240, 228, 66)
-										, Colour(0, 114, 178)
-										, Colour(242, 66, 53)
-										, Colour(204, 121, 167) };
-	
-	std::unique_ptr<UtilityButton> clearButton;
+    std::unique_ptr<UtilityButton> clearButton;
 
-	SpectrumViewer* processor;
-	
-	int rowHeight = 50;
+    SpectrumViewer* processor;
 
-	float maxPower = 0.0f;
+    int rowHeight = 50;
 
-	std::vector<std::vector<float>> currPower; // channels x freqs
+    float maxPower = 0.0f;
 
-	std::vector<float> xvalues;
+    std::vector<std::vector<float>> currPower; // channels x freqs
 
-	InteractivePlot plt;
+    std::vector<float> xvalues;
 
-	float freqStep;
-	int nFreqs;
-	int freqEnd;
+    InteractivePlot plt;
 
-	Array<int> activeChannels;
+    float freqStep;
+    int nFreqs;
+    int freqEnd;
 
-	/** Image to draw*/
-	std::unique_ptr<Image> spectrogramImg;
+    Array<int> activeChannels;
 
-	OwnedArray<OwnedArray<Dsp::Filter>> lowPassFilters;
+    /** Image to draw*/
+    std::unique_ptr<Image> spectrogramImg;
 
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CanvasPlot);
+    OwnedArray<OwnedArray<Dsp::Filter>> lowPassFilters;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CanvasPlot);
 };
 
 /** 
@@ -124,50 +121,48 @@ private:
 class SpectrumCanvas : public Visualizer
 {
 public:
+    /** Constructor */
+    SpectrumCanvas (SpectrumViewer* n);
 
-	/** Constructor */
-	SpectrumCanvas(SpectrumViewer* n);
+    /** Destructor */
+    ~SpectrumCanvas() {}
 
-	/** Destructor */
-	~SpectrumCanvas() { }
+    /** Called when tab becomes visible again */
+    void refreshState();
 
-	/** Called when tab becomes visible again */
-	void refreshState();
+    /** Updates settings */
+    void updateSettings() override;
 
-	/** Updates settings */
-	void updateSettings() override;
-
-	/** Called when data acquisition begins */
+    /** Called when data acquisition begins */
     void beginAnimation() override;
 
     /** Called when data acquisition ends */
     void endAnimation() override;
 
-	/** Called instead of repaint to avoid re-painting sub-components*/
-	void refresh() override;
+    /** Called instead of repaint to avoid re-painting sub-components*/
+    void refresh() override;
 
-	/** Draws the canvas */
-	void paint(Graphics& g) override;
+    /** Draws the canvas */
+    void paint (Graphics& g) override;
 
-	/** Updates component boundaries */
-	void resized() override;
+    /** Updates component boundaries */
+    void resized() override;
 
-	/** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
-	void setDisplayType(DisplayType type);
+    /** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
+    void setDisplayType (DisplayType type);
 
-	CanvasPlot* getPlotPtr() { return canvasPlot.get(); };
+    CanvasPlot* getPlotPtr() { return canvasPlot.get(); };
 
 private:
+    SpectrumViewer* processor;
 
-	SpectrumViewer* processor;
+    std::unique_ptr<Viewport> viewport;
+    std::unique_ptr<CanvasPlot> canvasPlot;
+    juce::Rectangle<int> canvasBounds;
 
-	std::unique_ptr<Viewport>  viewport;
-	std::unique_ptr<CanvasPlot> canvasPlot;
-	juce::Rectangle<int> canvasBounds;
+    DisplayType displayType;
 
-	DisplayType displayType;
-
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumCanvas);
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumCanvas);
 };
 
 #endif // SPECTRUMCANVAS_H_INCLUDED

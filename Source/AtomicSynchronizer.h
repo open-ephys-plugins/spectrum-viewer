@@ -25,11 +25,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define ATOMIC_SYNCHRONIZER_H_INCLUDED
 
 #include <atomic>
-#include <vector>
-#include <utility>
 #include <cassert>
 #include <cstdlib>
 #include <functional>
+#include <utility>
+#include <vector>
 
 /*
 * The purpose of AtomicSynchronizer is to allow one "writer" thread to continally
@@ -104,25 +104,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *
 */
 
-class AtomicSynchronizer {
-
+class AtomicSynchronizer
+{
 public:
     class ScopedWriteIndex
     {
     public:
-        explicit ScopedWriteIndex(AtomicSynchronizer& o)
-            : owner(&o)
-            , valid(o.checkoutWriter())
+        explicit ScopedWriteIndex (AtomicSynchronizer& o)
+            : owner (&o), valid (o.checkoutWriter())
         {
-            if (!valid)
+            if (! valid)
             {
                 // just to be sure - if not valid, shouldn't be able to access the synchronizer
                 owner = nullptr;
             }
         }
 
-        ScopedWriteIndex(const ScopedWriteIndex&) = delete;
-        ScopedWriteIndex& operator=(const ScopedWriteIndex&) = delete;
+        ScopedWriteIndex (const ScopedWriteIndex&) = delete;
+        ScopedWriteIndex& operator= (const ScopedWriteIndex&) = delete;
 
         ~ScopedWriteIndex()
         {
@@ -160,13 +159,11 @@ public:
         const bool valid;
     };
 
-
     class ScopedReadIndex
     {
     public:
-        explicit ScopedReadIndex(AtomicSynchronizer& o)
-            : owner(&o)
-            , valid(o.checkoutReader())
+        explicit ScopedReadIndex (AtomicSynchronizer& o)
+            : owner (&o), valid (o.checkoutReader())
         {
             if (valid)
             {
@@ -179,8 +176,8 @@ public:
             }
         }
 
-        ScopedReadIndex(const ScopedReadIndex&) = delete;
-        ScopedReadIndex& operator=(const ScopedReadIndex&) = delete;
+        ScopedReadIndex (const ScopedReadIndex&) = delete;
+        ScopedReadIndex& operator= (const ScopedReadIndex&) = delete;
 
         ~ScopedReadIndex()
         {
@@ -218,19 +215,16 @@ public:
         const bool valid;
     };
 
-
     // Registers as both a reader and a writer, so no other reader or writer
     // can exist while it's held. Use to access all the underlying data without
     // conern for who has access to what, e.g. for updating settings, resizing, etc.
     class ScopedLockout
     {
     public:
-        explicit ScopedLockout(AtomicSynchronizer& o)
-            : owner(&o)
-            , hasReadLock(o.checkoutReader())
-            , hasWriteLock(o.checkoutWriter())
-            , valid(hasReadLock && hasWriteLock)
-        {}
+        explicit ScopedLockout (AtomicSynchronizer& o)
+            : owner (&o), hasReadLock (o.checkoutReader()), hasWriteLock (o.checkoutWriter()), valid (hasReadLock && hasWriteLock)
+        {
+        }
 
         ~ScopedLockout()
         {
@@ -257,24 +251,22 @@ public:
         const bool valid;
     };
 
-
     AtomicSynchronizer()
-        : nReaders(0)
-        , nWriters(0)
+        : nReaders (0), nWriters (0)
     {
         reset();
     }
 
-    AtomicSynchronizer(const AtomicSynchronizer&) = delete;
-    AtomicSynchronizer& operator=(const AtomicSynchronizer&) = delete;
+    AtomicSynchronizer (const AtomicSynchronizer&) = delete;
+    AtomicSynchronizer& operator= (const AtomicSynchronizer&) = delete;
 
     // Reset to state with no valid object
     // No readers or writers should be active when this is called!
     // If it does fail due to existing readers or writers, returns false
     bool reset()
     {
-        ScopedLockout lock(*this);
-        if (!lock.isValid())
+        ScopedLockout lock (*this);
+        if (! lock.isValid())
         {
             return false;
         }
@@ -294,14 +286,13 @@ public:
     }
 
 private:
-
     // Registers a writer and updates the writer index. If a writer already exists,
     // returns false, else returns true. returnWriter should be called to release.
     bool checkoutWriter()
     {
         // ensure there is not already a writer
         int currWriters = 0;
-        if (!nWriters.compare_exchange_strong(currWriters, 1, std::memory_order_relaxed))
+        if (! nWriters.compare_exchange_strong (currWriters, 1, std::memory_order_relaxed))
         {
             return false;
         }
@@ -320,7 +311,7 @@ private:
     {
         // ensure there is not already a reader
         int currReaders = 0;
-        if (!nReaders.compare_exchange_strong(currReaders, 1, std::memory_order_relaxed))
+        if (! nReaders.compare_exchange_strong (currReaders, 1, std::memory_order_relaxed))
         {
             return false;
         }
@@ -338,18 +329,18 @@ private:
     {
         // It's an invariant that writerIndex != -1
         // except within this method, and this method is not reentrant.
-        assert(writerIndex != -1);
+        assert (writerIndex != -1);
 
-        writerIndex = readyToReadIndex.exchange(writerIndex, std::memory_order_relaxed);
+        writerIndex = readyToReadIndex.exchange (writerIndex, std::memory_order_relaxed);
 
         if (writerIndex == -1)
         {
             // attempt to pull an index from readyToWriteIndex
-            writerIndex = readyToWriteIndex.exchange(-1, std::memory_order_relaxed);
+            writerIndex = readyToWriteIndex.exchange (-1, std::memory_order_relaxed);
 
             if (writerIndex == -1)
             {
-                writerIndex = readyToWriteIndex2.exchange(-1, std::memory_order_relaxed);
+                writerIndex = readyToWriteIndex2.exchange (-1, std::memory_order_relaxed);
             }
         }
 
@@ -357,14 +348,14 @@ private:
         // readyToWriteIndex2 cannot all be empty. There can't be a race condition
         // where one of these slots is now nonempty, because only the writer can
         // set any of them to -1 (and there's only one writer).
-        assert(writerIndex != -1);
+        assert (writerIndex != -1);
     }
 
     // should only be called by a reader
     void updateReaderIndex()
     {
         // Check readyToReadIndex for newly pushed update
-        // It can still be updated after checking, but it cannot be emptied because the 
+        // It can still be updated after checking, but it cannot be emptied because the
         // writer cannot push -1 to readyToReadIndex.
         if (readyToReadIndex != -1)
         {
@@ -375,21 +366,20 @@ private:
 
                 // Attempt to put index into readyToWriteIndex
                 int expected = -1;
-                if (!readyToWriteIndex.compare_exchange_strong(expected, readerIndex,
-                    std::memory_order_relaxed))
+                if (! readyToWriteIndex.compare_exchange_strong (expected, readerIndex, std::memory_order_relaxed))
                 {
                     // readyToWriteIndex is already occupied
                     // readyToWriteIndex2 must be free at this point. newIndex, readerIndex, and
                     // readyToWriteIndex all contain something.
-                    readyToWriteIndex2.exchange(readerIndex, std::memory_order_relaxed);
+                    readyToWriteIndex2.exchange (readerIndex, std::memory_order_relaxed);
                 }
             }
-            readerIndex = readyToReadIndex.exchange(-1, std::memory_order_relaxed);
+            readerIndex = readyToReadIndex.exchange (-1, std::memory_order_relaxed);
         }
     }
 
     // shared indices
-    std::atomic<int> readyToReadIndex;  // assigned by the writer; can be read by the reader
+    std::atomic<int> readyToReadIndex; // assigned by the writer; can be read by the reader
     std::atomic<int> readyToWriteIndex; // assigned by the reader; can by modified by the writer
     std::atomic<int> readyToWriteIndex2; // another slot similar to readyToWriteIndex
 
@@ -400,22 +390,21 @@ private:
     std::atomic<int> nReaders;
 };
 
-
 // class to actually hold data controlled by an AtomicSynchronizer
-template<typename T>
+template <typename T>
 class AtomicallyShared
 {
 public:
-    template<typename... Args>
-    AtomicallyShared(Args&&... args)
+    template <typename... Args>
+    AtomicallyShared (Args&&... args)
     {
         for (int i = 0; i < 2; ++i)
         {
-            data.emplace_back(args...);
+            data.emplace_back (args...);
         }
 
         // move into the last entry, if possible
-        data.emplace_back(std::forward<Args>(args)...);
+        data.emplace_back (std::forward<Args> (args)...);
     }
 
     bool reset()
@@ -426,17 +415,17 @@ public:
     // Call a function on each underlying data member.
     // Requires that no readers or writers exist. Returns false if
     // this condition is unmet, true otherwise.
-    bool map(std::function<void(T&)> f)
+    bool map (std::function<void (T&)> f)
     {
-        AtomicSynchronizer::ScopedLockout lock(sync);
-        if (!lock.isValid())
+        AtomicSynchronizer::ScopedLockout lock (sync);
+        if (! lock.isValid())
         {
             return false;
         }
 
         for (T& obj : data)
         {
-            f(obj);
+            f (obj);
         }
 
         return true;
@@ -447,15 +436,13 @@ public:
         return sync.hasUpdate();
     }
 
-
     class ScopedWritePtr
     {
     public:
-        ScopedWritePtr(AtomicallyShared<T>& o)
-            : owner(&o)
-            , ind(o.sync)
-            , valid(ind.isValid())
-        {}
+        ScopedWritePtr (AtomicallyShared<T>& o)
+            : owner (&o), ind (o.sync), valid (ind.isValid())
+        {
+        }
 
         void pushUpdate()
         {
@@ -466,10 +453,10 @@ public:
 
         T& operator*()
         {
-            if (!valid)
+            if (! valid)
             {
                 // abort! abort!
-                assert(false);
+                assert (false);
                 std::abort();
             }
             return owner->data[ind];
@@ -494,12 +481,13 @@ public:
     class ScopedReadPtr
     {
     public:
-        ScopedReadPtr(AtomicallyShared<T>& o)
-            : owner(&o)
-            , ind(o.sync)
-            // if the ind is valid, but is equal to -1, this pointer is still invalid (for now)
-            , valid(ind != -1)
-        {}
+        ScopedReadPtr (AtomicallyShared<T>& o)
+            : owner (&o), ind (o.sync)
+              // if the ind is valid, but is equal to -1, this pointer is still invalid (for now)
+              ,
+              valid (ind != -1)
+        {
+        }
 
         void pullUpdate()
         {
@@ -512,10 +500,10 @@ public:
 
         const T& operator*()
         {
-            if (!valid)
+            if (! valid)
             {
                 // abort! abort!
-                assert(false);
+                assert (false);
                 std::abort();
             }
             return owner->data[ind];
@@ -542,10 +530,10 @@ private:
     AtomicSynchronizer sync;
 };
 
-template<typename T>
+template <typename T>
 using AtomicScopedWritePtr = typename AtomicallyShared<T>::ScopedWritePtr;
 
-template<typename T>
+template <typename T>
 using AtomicScopedReadPtr = typename AtomicallyShared<T>::ScopedReadPtr;
 
 #endif // ATOMIC_SYNCHRONIZER_H_INCLUDED

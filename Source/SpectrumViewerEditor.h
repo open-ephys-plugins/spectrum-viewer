@@ -27,48 +27,46 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <VisualizerEditorHeaders.h>
 
 class SpectrumViewerEditor : public VisualizerEditor,
-							 public ComboBox::Listener
+                             public ComboBox::Listener
 {
-	friend class SpectrumCanvas;
+    friend class SpectrumCanvas;
+
 public:
+    /** Constructor */
+    SpectrumViewerEditor (GenericProcessor* parentNode);
 
-	/** Constructor */
-	SpectrumViewerEditor(GenericProcessor* parentNode);
+    /** Destructor */
+    ~SpectrumViewerEditor() {}
 
-	/** Destructor */
-	~SpectrumViewerEditor() { }
+    /** Enables animation */
+    void startAcquisition() override;
 
-	/** Enables animation */
-	void startAcquisition() override;
+    /** Disables animation*/
+    void stopAcquisition() override;
 
-	/** Disables animation*/
-	void stopAcquisition() override;
+    /** Called when a ComboBox changes*/
+    void comboBoxChanged (ComboBox* comboBox);
 
-	/** Called when a ComboBox changes*/
-	void comboBoxChanged(ComboBox* comboBox);
+    /** Creates the canvas */
+    Visualizer* createNewCanvas();
 
-	/** Creates the canvas */
-	Visualizer* createNewCanvas();
+    /** Notifies editor that the selected stream has changed.*/
+    void selectedStreamHasChanged() override;
 
-	/** Notifies editor that the selected stream has changed.*/
-	 void selectedStreamHasChanged() override;
+    void saveVisualizerEditorParameters (XmlElement* xml) override;
 
-	void saveVisualizerEditorParameters(XmlElement* xml) override;
-
-	void loadVisualizerEditorParameters(XmlElement* xml) override;
+    void loadVisualizerEditorParameters (XmlElement* xml) override;
 
 private:
+    std::unique_ptr<Label> displayLabel;
+    std::unique_ptr<ComboBox> displayType;
 
-	std::unique_ptr<Label> displayLabel;
-	std::unique_ptr<ComboBox> displayType;
-	
-	std::unique_ptr<Label> frequencyLabel;
-	std::unique_ptr<ComboBox> frequencyRange;
+    std::unique_ptr<Label> frequencyLabel;
+    std::unique_ptr<ComboBox> frequencyRange;
 
-	Array<Range<int>> freqRanges;
+    Array<Range<int>> freqRanges;
 
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumViewerEditor);
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumViewerEditor);
 };
-
 
 #endif // SPECTRUM_VIEWER_EDITOR_H_INCLUDED

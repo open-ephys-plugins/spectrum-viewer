@@ -29,18 +29,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "AtomicSynchronizer.h"
 #include "CumulativeTFR.h"
 
+#include <chrono>
+#include <ctime>
+#include <fstream>
+#include <iostream>
 #include <time.h>
 #include <vector>
-#include <chrono>
-#include <ctime> 
-#include <iostream>
-#include <fstream>
 
 #define MAX_CHANS 8
 
-enum DisplayType {
-	POWER_SPECTRUM = 1,
-	SPECTROGRAM = 2
+enum DisplayType
+{
+    POWER_SPECTRUM = 1,
+    SPECTROGRAM = 2
 };
 
 class SpectrumViewer;
@@ -51,22 +52,20 @@ class SpectrumViewer;
 class BufferResizer : public Thread
 {
 public:
+    /** Constructor */
+    BufferResizer (SpectrumViewer* processor);
 
-	/** Constructor */
-	BufferResizer(SpectrumViewer* processor);
-
-	/** Resizes buffer */
-	void resize();
+    /** Resizes buffer */
+    void resize();
 
 private:
+    /** Resizes buffer in the background */
+    void run() override;
 
-	/** Resizes buffer in the background */
-	void run() override;
+    /** Pointer to processor */
+    SpectrumViewer* processor;
 
-	/** Pointer to processor */
-	SpectrumViewer* processor;
-
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BufferResizer);
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BufferResizer);
 };
 
 /*
@@ -75,241 +74,234 @@ private:
 	continuous channels.
 
 */
-class SpectrumViewer : 
-	public GenericProcessor, 
-	public Thread
+class SpectrumViewer : public GenericProcessor,
+                       public Thread
 {
 public:
+    /** Constructor */
+    SpectrumViewer();
 
-	/** Constructor */
-	SpectrumViewer();
+    /** Destructor */
+    ~SpectrumViewer() {}
 
-	/** Destructor */
-    ~SpectrumViewer() { }
+    /** Register parameters for this processor */
+    void registerParameters() override;
 
-	/** Register parameters for this processor */
-	void registerParameters() override;
+    /** Create SpectrumViewerEditor */
+    AudioProcessorEditor* createEditor() override;
 
-	/** Create SpectrumViewerEditor */
-	AudioProcessorEditor* createEditor() override;
+    /** Called when upstream settings are updated */
+    void updateSettings() override;
 
-	/** Called when upstream settings are updated */
-	void updateSettings() override;
+    /** Update buffers for FFT calculation*/
+    void process (AudioBuffer<float>& continuousBuffer) override;
 
-	/** Update buffers for FFT calculation*/
-	void process(AudioBuffer<float>& continuousBuffer) override;
+    /** Launch FFT calculation thread */
+    bool startAcquisition() override;
 
-	/** Launch FFT calculation thread */
-	bool startAcquisition() override;
+    /** Stop FFT calculation thread*/
+    bool stopAcquisition() override;
 
-	/** Stop FFT calculation thread*/
-	bool stopAcquisition() override;
+    /** Run FFT calculation in a separate thread */
+    void run() override;
 
-	/** Run FFT calculation in a separate thread */
-	void run() override;
-    
     /** Called when parameter value is updated*/
-    void parameterValueChanged(Parameter* param) override;
+    void parameterValueChanged (Parameter* param) override;
 
-	/** Called by the canvas to get the number of active chans*/
-	Array<int> getActiveChans();
+    /** Called by the canvas to get the number of active chans*/
+    Array<int> getActiveChans();
 
-	/** Returns the name of the selected channel at a given index */
-	const String getChanName(int localIdx);
+    /** Returns the name of the selected channel at a given index */
+    const String getChanName (int localIdx);
 
-	/** Sets the min/max frequency range*/
-	void setFrequencyRange(Range<int>);
+    /** Sets the min/max frequency range*/
+    void setFrequencyRange (Range<int>);
 
-	/** Returns the frequency step for the currently selected range*/
-	float getFreqStep() { return tfrParams.freqStep; };
+    /** Returns the frequency step for the currently selected range*/
+    float getFreqStep() { return tfrParams.freqStep; };
 
-	/** Holds incoming samples and outgoing powers */
-	struct PowerBuffer
-	{
-		/** Incoming samples for each time step */
-		OwnedArray<AtomicallyShared<FFTWArrayType>> incomingSamples;
+    /** Holds incoming samples and outgoing powers */
+    struct PowerBuffer
+    {
+        /** Incoming samples for each time step */
+        OwnedArray<AtomicallyShared<FFTWArrayType>> incomingSamples;
 
-		/** Outgoing power for each time step */
-		OwnedArray<AtomicallyShared<std::vector<float>>> power;
+        /** Outgoing power for each time step */
+        OwnedArray<AtomicallyShared<std::vector<float>>> power;
 
-		/** Write index */
-		Array<int> writeIndex;
+        /** Write index */
+        Array<int> writeIndex;
 
-		/** Hamming window to apply to buffer */
-		Array<float> window;
+        /** Hamming window to apply to buffer */
+        Array<float> window;
 
-		/** Size of each buffer in samples */
-		int bufferSize = 0;
+        /** Size of each buffer in samples */
+        int bufferSize = 0;
 
-		/** Step size in samples */
-		int stepSize = 0;
+        /** Step size in samples */
+        int stepSize = 0;
 
-		/** Steps per buffer samples */
-		int stepsPerBuffer = 0;
+        /** Steps per buffer samples */
+        int stepsPerBuffer = 0;
 
-		/** Number of fft frequencies */
-		int nFreqs;
+        /** Number of fft frequencies */
+        int nFreqs;
 
-		/** Keep track of total samples written */
-		long int totalSamplesWritten = 0;
+        /** Keep track of total samples written */
+        long int totalSamplesWritten = 0;
 
-		/** true if buffer size was updated */
-		bool bufferSizeChanged = true;
+        /** true if buffer size was updated */
+        bool bufferSizeChanged = true;
 
-		/** true if number of freqs was updated */
-		bool numFreqsChanged = true;
+        /** true if number of freqs was updated */
+        bool numFreqsChanged = true;
 
-		/** Changes buffer size*/
-		void setBufferSize(int bufferSize_, int stepSize_)
-		{
-			if (bufferSize != bufferSize_)
-			{
-				bufferSize = bufferSize_;
-				stepSize = stepSize_;
-				stepsPerBuffer = bufferSize / stepSize;
-				bufferSizeChanged = true;
-			}
-		}
+        /** Changes buffer size*/
+        void setBufferSize (int bufferSize_, int stepSize_)
+        {
+            if (bufferSize != bufferSize_)
+            {
+                bufferSize = bufferSize_;
+                stepSize = stepSize_;
+                stepsPerBuffer = bufferSize / stepSize;
+                bufferSizeChanged = true;
+            }
+        }
 
-		/** Changes num freqs */
-		void setNumFreqs(int nFreqs_)
-		{
-			if (nFreqs != nFreqs_)
-			{
-				nFreqs = nFreqs_;
-				numFreqsChanged = true;
-			}
-		}
+        /** Changes num freqs */
+        void setNumFreqs (int nFreqs_)
+        {
+            if (nFreqs != nFreqs_)
+            {
+                nFreqs = nFreqs_;
+                numFreqsChanged = true;
+            }
+        }
 
-		/** Resets all shared objects and indices */
-		void reset()
-		{
-			for (int i = 0; i < stepsPerBuffer + 5; i++)
-			{
-				incomingSamples[i]->reset();
-				power[i]->reset();
-				writeIndex.set(i, -1 * i * stepSize);
-				totalSamplesWritten = 0;
-			}
-		}
+        /** Resets all shared objects and indices */
+        void reset()
+        {
+            for (int i = 0; i < stepsPerBuffer + 5; i++)
+            {
+                incomingSamples[i]->reset();
+                power[i]->reset();
+                writeIndex.set (i, -1 * i * stepSize);
+                totalSamplesWritten = 0;
+            }
+        }
 
-		/** Resizes all buffers */
-		void resize()
-		{
-			if (bufferSizeChanged)
-			{
-				incomingSamples.clear();
+        /** Resizes all buffers */
+        void resize()
+        {
+            if (bufferSizeChanged)
+            {
+                incomingSamples.clear();
 
-				LOGD("Creating ", stepsPerBuffer + 5, " sample buffers of length ", bufferSize);
+                LOGD ("Creating ", stepsPerBuffer + 5, " sample buffers of length ", bufferSize);
 
-				for (int i = 0; i < stepsPerBuffer + 5; i++)
-				{
-					incomingSamples.add(new AtomicallyShared<FFTWArrayType>());
-					incomingSamples.getLast()->map([=](FFTWArrayType& arr)
-					{
-						arr.resize(bufferSize);
-					});
-				}
+                for (int i = 0; i < stepsPerBuffer + 5; i++)
+                {
+                    incomingSamples.add (new AtomicallyShared<FFTWArrayType>());
+                    incomingSamples.getLast()->map ([=] (FFTWArrayType& arr)
+                                                    { arr.resize (bufferSize); });
+                }
 
-				bufferSizeChanged = false;
+                bufferSizeChanged = false;
 
-				window.clear();
+                window.clear();
 
-				const float N = float(bufferSize);
-				const float PI = 3.1415926535;
+                const float N = float (bufferSize);
+                const float PI = 3.1415926535;
 
-				for (int n = 0; n < bufferSize; n++)
-				{
-					window.add(0.54 - 0.46 * cos(2 * PI * n / N));
-				}
-			}
-			
-			power.clear();
+                for (int n = 0; n < bufferSize; n++)
+                {
+                    window.add (0.54 - 0.46 * cos (2 * PI * n / N));
+                }
+            }
 
-			LOGD("Creating ", stepsPerBuffer + 5, " power buffers of length ", nFreqs);
+            power.clear();
 
-			for (int i = 0; i < stepsPerBuffer + 5; i++)
-			{
-				power.add(new AtomicallyShared<std::vector<float>>());
-				power.getLast()->map([=](std::vector<float>& arr)
-				{
-					arr.resize(nFreqs);
-				});
-			}
+            LOGD ("Creating ", stepsPerBuffer + 5, " power buffers of length ", nFreqs);
 
-			numFreqsChanged = false;
-		}
-	};
+            for (int i = 0; i < stepsPerBuffer + 5; i++)
+            {
+                power.add (new AtomicallyShared<std::vector<float>>());
+                power.getLast()->map ([=] (std::vector<float>& arr)
+                                      { arr.resize (nFreqs); });
+            }
 
-	/** Array of buffers */
-	PowerBuffer powerBuffers[MAX_CHANS];
+            numFreqsChanged = false;
+        }
+    };
 
-	/** Type of visualization */
-	DisplayType displayType;
+    /** Array of buffers */
+    PowerBuffer powerBuffers[MAX_CHANS];
+
+    /** Type of visualization */
+    DisplayType displayType;
 
 private:
+    /** Append FFTWArrays to data buffer */
+    void updateDataBufferSize (int size);
 
-	/** Append FFTWArrays to data buffer */
-	void updateDataBufferSize(int size);
+    /** Change the size of the data buffer*/
+    void updateDisplayBufferSize (int newSize);
 
-	/** Change the size of the data buffer*/
-	void updateDisplayBufferSize(int newSize);
+    /** Returns true if a given stream ID is available*/
+    bool streamExists (uint16 streamId);
 
-	/** Returns true if a given stream ID is available*/
-	bool streamExists(uint16 streamId);
+    ScopedPointer<CumulativeTFR> TFR;
 
-	ScopedPointer<CumulativeTFR> TFR;
+    /** Priority from 0 to 10 */
+    static const int THREAD_PRIORITY = 5;
 
-	/** Priority from 0 to 10 */
-	static const int THREAD_PRIORITY = 5;
+    /** Resets buffers*/
+    void resetTFR();
 
-	/** Resets buffers*/
-	void resetTFR();
+    Array<int> channels;
+    Array<Array<int>> bufferIdx; // channels x stepsPerBuffer
 
-	Array<int> channels;
-	Array<Array<int>> bufferIdx; // channels x stepsPerBuffer
+    //int bufferSize;
+    //int stepSize;
+    //int stepsPerBuffer;
 
-	//int bufferSize;
-	//int stepSize;
-	//int stepsPerBuffer;
-    
     uint16 activeStream = 0;
 
-	int numTrials;
+    int numTrials;
 
-	// This is to store data in case of switch and we wish to retrive old data
-	//AtomicallyShared<Array<FFTWArrayType>> dataBufferII;
-	//Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
+    // This is to store data in case of switch and we wish to retrive old data
+    //AtomicallyShared<Array<FFTWArrayType>> dataBufferII;
+    //Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
 
-	struct TFRParameters
-	{
-		float segLen; // Segment Length
-		float winLen; // Window Length
-		float stepLen; // Interval between times of interest
-		int interpRatio; //
+    struct TFRParameters
+    {
+        float segLen; // Segment Length
+        float winLen; // Window Length
+        float stepLen; // Interval between times of interest
+        int interpRatio; //
 
-		// Number of freq of interest
-		int nFreqs;
-		float freqStep;
-		int freqStart;
-		int freqEnd;
+        // Number of freq of interest
+        int nFreqs;
+        float freqStep;
+        int freqStart;
+        int freqEnd;
 
-		// Number of times of interest
-		int nTimes;
+        // Number of times of interest
+        int nTimes;
 
-		// Fs (sampling rate?)
-		float Fs;
+        // Fs (sampling rate?)
+        float Fs;
 
-		// frequency of interest
-		Array<float> foi;
+        // frequency of interest
+        Array<float> foi;
 
-		float alpha;
-	};
+        float alpha;
+    };
 
-	TFRParameters tfrParams;
-	std::unique_ptr<BufferResizer> bufferResizer;
+    TFRParameters tfrParams;
+    std::unique_ptr<BufferResizer> bufferResizer;
 
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumViewer);
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumViewer);
 };
 
 #endif // SPECTRUM_VIEWER_H_INCLUDED
