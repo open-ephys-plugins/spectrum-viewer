@@ -293,7 +293,7 @@ void CanvasPlot::updatePowerSpectrum (std::vector<float> powerData, int channelI
 
     for (int n = 0; n < powerData.size(); n++)
     {
-        if (std::isgreater (fabs (powerData[n]), 0.0f))
+        if (std::isfinite (powerData[n]))
         {
             // Apply low pass filter for that frequency
             float* pData = &powerData[n];
