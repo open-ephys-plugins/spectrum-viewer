@@ -260,6 +260,10 @@ void SpectrumViewer::updateSettings()
     {
         parameterValueChanged (getDataStream (activeStream)->getParameter ("Channels"));
     }
+    else
+    {
+        channels.clear();
+    }
 }
 
 void SpectrumViewer::resetTFR()
