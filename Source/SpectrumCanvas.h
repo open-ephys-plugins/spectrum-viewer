@@ -97,7 +97,7 @@ private:
 
     std::vector<float> xvalues;
 
-    InteractivePlot plt;
+    std::unique_ptr<InteractivePlot> plt;
 
     float freqStep;
     int nFreqs;

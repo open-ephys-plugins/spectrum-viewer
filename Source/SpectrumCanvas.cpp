@@ -151,15 +151,16 @@ void SpectrumCanvas::setDisplayType (DisplayType type)
 CanvasPlot::CanvasPlot (SpectrumViewer* p)
     : processor (p), displayType (POWER_SPECTRUM), freqStep (4), nFreqs (250), freqEnd (1000)
 {
-    plt.title ("POWER SPECTRUM");
+    plt = std::make_unique<InteractivePlot>();
+    plt->title ("POWER SPECTRUM");
     XYRange range { 0, 1000, 0, 5 };
-    plt.setRange (range);
-    plt.xlabel ("Frequency (Hz)");
-    plt.ylabel ("Power");
-    plt.setBackgroundColour (Colour (45, 45, 45));
-    plt.setGridColour (Colour (100, 100, 100));
-    plt.setInteractive (InteractivePlotMode::OFF);
-    addAndMakeVisible (plt);
+    plt->setRange (range);
+    plt->xlabel ("Frequency (Hz)");
+    plt->ylabel ("Power");
+    plt->setBackgroundColour (Colour (45, 45, 45));
+    plt->setGridColour (Colour (100, 100, 100));
+    plt->setInteractive (InteractivePlotMode::OFF);
+    addAndMakeVisible (plt.get());
 
     clearButton = std::make_unique<UtilityButton> ("Clear");
     clearButton->addListener (this);
@@ -186,18 +187,18 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
 
 void CanvasPlot::resized()
 {
-    plt.setBounds (20, 30, getWidth() - legendWidth - 40, getHeight() - 50);
-    clearButton->setBounds (plt.getRight() - 80, plt.getBottom() - 90, 60, 20);
+    plt->setBounds (20, 30, getWidth() - legendWidth - 40, getHeight() - 50);
+    clearButton->setBounds (plt->getRight() - 80, plt->getBottom() - 90, 60, 20);
 }
 
 void CanvasPlot::lookAndFeelChanged()
 {
-    plt.setBackgroundColour (findColour (ThemeColours::componentBackground));
-    plt.setGridColour (findColour (ThemeColours::controlPanelText).withAlpha (0.5f));
-    plt.setAxisColour (findColour (ThemeColours::controlPanelText));
+    plt->setBackgroundColour (findColour (ThemeColours::componentBackground));
+    plt->setGridColour (findColour (ThemeColours::controlPanelText).withAlpha (0.5f));
+    plt->setAxisColour (findColour (ThemeColours::controlPanelText));
 
     chanColors[0] = findColour (ThemeColours::defaultText);
-    plt.plot (xvalues, currPower[0], chanColors[0], 1.0f);
+    plt->plot (xvalues, currPower[0], chanColors[0], 1.0f);
 }
 
 void CanvasPlot::updateActiveChans()
@@ -220,7 +221,7 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
     }
 
     XYRange range { (float) freqStart_, (float) freqEnd_, 0, 5 };
-    plt.setRange (range);
+    plt->setRange (range);
 
     // Create a low pass filter for each frequency within each channel
     for (int ch = 0; ch < MAX_CHANS; ch++)
@@ -251,12 +252,12 @@ void CanvasPlot::setDisplayType (DisplayType type)
 
     if (displayType == SPECTROGRAM)
     {
-        plt.setVisible (false);
+        plt->setVisible (false);
         clearButton->setVisible (false);
     }
     else
     {
-        plt.setVisible (true);
+        plt->setVisible (true);
         clearButton->setVisible (true);
     }
 
@@ -266,23 +267,23 @@ void CanvasPlot::setDisplayType (DisplayType type)
 
 void CanvasPlot::plotPowerSpectrum()
 {
-    plt.clear();
+    plt->clear();
 
     for (int i = 0; i < activeChannels.size(); i++)
     {
         if (std::isgreater (maxPower, 0.0f))
         {
             XYRange pltRange;
-            plt.getRange (pltRange);
+            plt->getRange (pltRange);
 
             if (pltRange.ymax < maxPower || (pltRange.ymax - maxPower) > 5)
             {
                 pltRange.ymax = maxPower;
-                plt.setRange (pltRange);
+                plt->setRange (pltRange);
             }
         }
 
-        plt.plot (xvalues, currPower[i], chanColors[i], 1.0f);
+        plt->plot (xvalues, currPower[i], chanColors[i], 1.0f);
     }
 }
 
@@ -360,6 +361,9 @@ void CanvasPlot::drawSpectrogram (std::vector<float> chanData)
     // find the range of values produced, so we can scale our rendering to
     // show up the detail clearly
     auto powerRange = juce::FloatVectorOperations::findMinAndMax (chanData.data(), chanData.size());
+
+    if (std::isfinite (powerRange.getStart()) == false || std::isfinite (powerRange.getEnd()) == false)
+        return;
 
     for (auto y = 0; y < imageHeight - 1; ++y)
     {
@@ -480,5 +484,5 @@ void CanvasPlot::clear()
     maxPower = 0.0f;
 
     spectrogramImg->clear (spectrogramImg->getBounds());
-    plt.clear();
+    plt->clear();
 }
