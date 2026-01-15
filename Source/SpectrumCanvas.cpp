@@ -167,7 +167,7 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
 
     activeChannels = processor->getActiveChans();
 
-    spectrogramImg = std::make_unique<Image> (Image::RGB, 1000, 1000, true);
+    spectrogramImg = std::make_unique<Image> (Image::RGB, 1000, 1000, true, SoftwareImageType());
     setOpaque (true);
 
     currPower.resize (MAX_CHANS);
