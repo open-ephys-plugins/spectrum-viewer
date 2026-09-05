@@ -11,8 +11,7 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(
 	spectrum_viewer_tests
-	AtomicSynchronizerTests.cpp
-	SampleTransportTests.cpp)
+	SampleWindowAssemblerTests.cpp)
 
 target_compile_features(spectrum_viewer_tests PRIVATE cxx_std_17)
 if(MSVC)
@@ -23,7 +22,6 @@ endif()
 target_include_directories(
 	spectrum_viewer_tests
 	PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Source)
-target_link_libraries(spectrum_viewer_tests PRIVATE GTest::gtest_main)
+target_link_libraries(spectrum_viewer_tests PRIVATE gtest_main)
 
-include(GoogleTest)
-gtest_discover_tests(spectrum_viewer_tests)
+add_test(NAME spectrum_viewer_tests COMMAND spectrum_viewer_tests)
