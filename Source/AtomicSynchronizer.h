@@ -32,7 +32,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <vector>
 
 /*
-* The purpose of AtomicSynchronizer is to allow one "writer" thread to continally
+* The purpose of AtomicSynchronizer is to allow one "writer" thread to continually
 * update some arbitrary piece of information and one "reader" thread to retrieve
 * the latest version of that information that has been "pushed" by the writer,
 * without either thread having to wait to acquire a mutex or allocate memory
@@ -217,7 +217,7 @@ public:
 
     // Registers as both a reader and a writer, so no other reader or writer
     // can exist while it's held. Use to access all the underlying data without
-    // conern for who has access to what, e.g. for updating settings, resizing, etc.
+    // concern for who has access to what, e.g. for updating settings, resizing, etc.
     class ScopedLockout
     {
     public:
@@ -282,7 +282,7 @@ public:
 
     bool hasUpdate() const
     {
-        return readyToReadIndex != -1;
+        return readyToReadIndex.load (std::memory_order_acquire) != -1;
     }
 
 private:
@@ -292,7 +292,7 @@ private:
     {
         // ensure there is not already a writer
         int currWriters = 0;
-        if (! nWriters.compare_exchange_strong (currWriters, 1, std::memory_order_relaxed))
+        if (! nWriters.compare_exchange_strong (currWriters, 1, std::memory_order_acquire))
         {
             return false;
         }
@@ -302,7 +302,7 @@ private:
 
     void returnWriter()
     {
-        nWriters = 0;
+        nWriters.store (0, std::memory_order_release);
     }
 
     // Registers a reader and updates the reader index. If a reader already exists,
@@ -311,7 +311,7 @@ private:
     {
         // ensure there is not already a reader
         int currReaders = 0;
-        if (! nReaders.compare_exchange_strong (currReaders, 1, std::memory_order_relaxed))
+        if (! nReaders.compare_exchange_strong (currReaders, 1, std::memory_order_acquire))
         {
             return false;
         }
@@ -321,7 +321,7 @@ private:
 
     void returnReader()
     {
-        nReaders = 0;
+        nReaders.store (0, std::memory_order_release);
     }
 
     // should only be called by a writer
@@ -331,16 +331,18 @@ private:
         // except within this method, and this method is not reentrant.
         assert (writerIndex != -1);
 
-        writerIndex = readyToReadIndex.exchange (writerIndex, std::memory_order_relaxed);
+        // Release publishes all writes to the selected data slot. Acquire pairs
+        // with a reader returning a previously consumed slot for safe reuse.
+        writerIndex = readyToReadIndex.exchange (writerIndex, std::memory_order_acq_rel);
 
         if (writerIndex == -1)
         {
             // attempt to pull an index from readyToWriteIndex
-            writerIndex = readyToWriteIndex.exchange (-1, std::memory_order_relaxed);
+            writerIndex = readyToWriteIndex.exchange (-1, std::memory_order_acquire);
 
             if (writerIndex == -1)
             {
-                writerIndex = readyToWriteIndex2.exchange (-1, std::memory_order_relaxed);
+                writerIndex = readyToWriteIndex2.exchange (-1, std::memory_order_acquire);
             }
         }
 
@@ -357,7 +359,7 @@ private:
         // Check readyToReadIndex for newly pushed update
         // It can still be updated after checking, but it cannot be emptied because the
         // writer cannot push -1 to readyToReadIndex.
-        if (readyToReadIndex != -1)
+        if (readyToReadIndex.load (std::memory_order_acquire) != -1)
         {
             if (readerIndex != -1)
             {
@@ -366,15 +368,18 @@ private:
 
                 // Attempt to put index into readyToWriteIndex
                 int expected = -1;
-                if (! readyToWriteIndex.compare_exchange_strong (expected, readerIndex, std::memory_order_relaxed))
+                if (! readyToWriteIndex.compare_exchange_strong (expected,
+                                                                  readerIndex,
+                                                                  std::memory_order_release,
+                                                                  std::memory_order_relaxed))
                 {
                     // readyToWriteIndex is already occupied
                     // readyToWriteIndex2 must be free at this point. newIndex, readerIndex, and
                     // readyToWriteIndex all contain something.
-                    readyToWriteIndex2.exchange (readerIndex, std::memory_order_relaxed);
+                    readyToWriteIndex2.exchange (readerIndex, std::memory_order_release);
                 }
             }
-            readerIndex = readyToReadIndex.exchange (-1, std::memory_order_relaxed);
+            readerIndex = readyToReadIndex.exchange (-1, std::memory_order_acquire);
         }
     }
 
