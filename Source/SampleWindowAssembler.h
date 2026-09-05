@@ -23,6 +23,7 @@
 #ifndef SAMPLE_WINDOW_ASSEMBLER_H_INCLUDED
 #define SAMPLE_WINDOW_ASSEMBLER_H_INCLUDED
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -44,9 +45,28 @@ public:
     class WindowView
     {
     public:
-        const float* getChannelData (std::size_t channel) const noexcept
+        struct ChannelView
         {
-            return data + channel * numSamples;
+            const float* firstData = nullptr;
+            std::size_t firstSize = 0;
+            const float* secondData = nullptr;
+            std::size_t secondSize = 0;
+        };
+
+        /**
+            Returns one channel in chronological order as at most two contiguous regions.
+
+            The regions refer to the assembler's circular history and are valid only while
+            the consumer passed to append() is running. The second region is empty when the
+            window does not wrap around the end of the history allocation.
+        */
+        ChannelView getChannel (std::size_t channel) const noexcept
+        {
+            const auto* channelData = data + channel * numSamples;
+            return { channelData + firstOffset,
+                     numSamples - firstOffset,
+                     channelData,
+                     firstOffset };
         }
 
         std::uint64_t firstSample = 0;
@@ -56,6 +76,7 @@ public:
     private:
         friend class SampleWindowAssembler;
         const float* data = nullptr;
+        std::size_t firstOffset = 0;
     };
 
     struct AppendResult
@@ -72,7 +93,6 @@ public:
           windowSampleCount (windowSize),
           hopSampleCount (hopSize),
           history (numChannels * windowSize),
-          contiguousWindow (numChannels * windowSize),
           samplesUntilWindow (windowSize)
     {
         if (numChannels == 0 || windowSize == 0 || hopSize == 0)
@@ -111,28 +131,41 @@ public:
             result.discontinuity = true;
         }
 
-        for (std::size_t sample = 0; sample < numSamples; ++sample)
-        {
-            for (std::size_t channel = 0; channel < channelCount; ++channel)
-                history[channel * windowSampleCount + writePosition] = source[channel][sample];
+        std::size_t sourceOffset = 0;
 
-            writePosition = increment (writePosition);
-            ++nextExpectedSample;
-            --samplesUntilWindow;
+        while (sourceOffset < numSamples)
+        {
+            const auto samplesToCopy = std::min ({ numSamples - sourceOffset,
+                                                   windowSampleCount - writePosition,
+                                                   samplesUntilWindow });
+
+            for (std::size_t channel = 0; channel < channelCount; ++channel)
+            {
+                std::memcpy (history.data() + channel * windowSampleCount + writePosition,
+                             source[channel] + sourceOffset,
+                             samplesToCopy * sizeof (float));
+            }
+
+            sourceOffset += samplesToCopy;
+            writePosition += samplesToCopy;
+            if (writePosition == windowSampleCount)
+                writePosition = 0;
+
+            nextExpectedSample += samplesToCopy;
+            samplesUntilWindow -= samplesToCopy;
 
             if (samplesUntilWindow == 0)
             {
-                makeContiguousWindow();
-
                 WindowView view;
-                view.data = contiguousWindow.data();
+                view.data = history.data();
+                view.firstOffset = writePosition;
                 view.firstSample = nextExpectedSample - windowSampleCount;
                 view.numChannels = channelCount;
                 view.numSamples = windowSampleCount;
-                consumer (view);
 
                 ++result.windowsEmitted;
                 samplesUntilWindow = hopSampleCount;
+                consumer (view);
             }
         }
 
@@ -153,12 +186,6 @@ public:
     std::uint64_t getDiscontinuityCount() const noexcept { return discontinuityCount; }
 
 private:
-    std::size_t increment (std::size_t index) const noexcept
-    {
-        ++index;
-        return index == windowSampleCount ? 0 : index;
-    }
-
     void resetHistory (std::uint64_t firstSample) noexcept
     {
         writePosition = 0;
@@ -166,29 +193,10 @@ private:
         nextExpectedSample = firstSample;
     }
 
-    void makeContiguousWindow() noexcept
-    {
-        const auto firstPart = windowSampleCount - writePosition;
-
-        for (std::size_t channel = 0; channel < channelCount; ++channel)
-        {
-            const auto* source = history.data() + channel * windowSampleCount;
-            auto* destination = contiguousWindow.data() + channel * windowSampleCount;
-
-            std::memcpy (destination,
-                         source + writePosition,
-                         firstPart * sizeof (float));
-            std::memcpy (destination + firstPart,
-                         source,
-                         writePosition * sizeof (float));
-        }
-    }
-
     const std::size_t channelCount;
     const std::size_t windowSampleCount;
     const std::size_t hopSampleCount;
     std::vector<float> history;
-    std::vector<float> contiguousWindow;
 
     std::size_t writePosition = 0;
     std::size_t samplesUntilWindow;
