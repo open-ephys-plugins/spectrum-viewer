@@ -14,6 +14,9 @@ set(CMAKE_XCODE_GENERATE_SCHEME YES)
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architecture for Mac OS X" FORCE)
 
 project(OE_PLUGIN_${PLUGIN_NAME})
+
+option(BUILD_TESTS "Build Spectrum Viewer tests" OFF)
+
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 	set(LINUX 1)
@@ -101,3 +104,8 @@ endforeach()
 # Open Ephys common libraries
 include(link_open_ephys_lib.cmake)
 link_open_ephys_lib(${PLUGIN_NAME} OpenEphysFFTW)
+
+if(BUILD_TESTS)
+	enable_testing()
+	add_subdirectory(Tests)
+endif()

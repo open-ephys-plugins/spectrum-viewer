@@ -33,10 +33,10 @@ jobs:
     - name: build
       run: |
         cd Build
-        cmake -G "Xcode" ..
+        cmake -G "Xcode" -DBUILD_TESTS=ON ..
         xcodebuild -configuration Release
-#    - name: test
-#      run: cd build && ctest
+    - name: test
+      run: ctest --test-dir Build -C Release --output-on-failure
     - name: codesign_deploy
       if: github.ref == 'refs/heads/main'
       env:
