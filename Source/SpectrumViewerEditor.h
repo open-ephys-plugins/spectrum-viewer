@@ -36,7 +36,7 @@ public:
     SpectrumViewerEditor (GenericProcessor* parentNode);
 
     /** Destructor */
-    ~SpectrumViewerEditor() {}
+    ~SpectrumViewerEditor() override = default;
 
     /** Enables animation */
     void startAcquisition() override;
@@ -45,10 +45,10 @@ public:
     void stopAcquisition() override;
 
     /** Called when a ComboBox changes*/
-    void comboBoxChanged (ComboBox* comboBox);
+    void comboBoxChanged (ComboBox* comboBox) override;
 
     /** Creates the canvas */
-    Visualizer* createNewCanvas();
+    Visualizer* createNewCanvas() override;
 
     /** Notifies editor that the selected stream has changed.*/
     void selectedStreamHasChanged() override;

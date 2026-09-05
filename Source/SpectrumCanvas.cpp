@@ -22,7 +22,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "SpectrumCanvas.h"
-#include <math.h>
+#include <algorithm>
+#include <cmath>
 
 SpectrumCanvas::SpectrumCanvas (SpectrumViewer* n)
     : Visualizer ((GenericProcessor*) n), processor (n), displayType (POWER_SPECTRUM)
@@ -32,7 +33,8 @@ SpectrumCanvas::SpectrumCanvas (SpectrumViewer* n)
     canvasPlot = std::make_unique<CanvasPlot> (processor);
 
     viewport = std::make_unique<Viewport>();
-    viewport->setViewedComponent (canvasPlot.get(), true);
+    // canvasPlot remains owned by its unique_ptr; the viewport only displays it.
+    viewport->setViewedComponent (canvasPlot.get(), false);
     viewport->setScrollBarsShown (true, true);
     viewport->setScrollBarThickness (12);
     addAndMakeVisible (viewport.get());
@@ -51,8 +53,9 @@ void SpectrumCanvas::resized()
         else
             plotWidth = viewport->getMaximumVisibleWidth() - canvasPlot->legendWidth - 40;
 
-        if (viewport->getMaximumVisibleHeight() < 650)
-            plotHeight = 600;
+        const int minimumPlotHeight = canvasPlot->getMinimumHeight();
+        if (viewport->getMaximumVisibleHeight() < minimumPlotHeight + 50)
+            plotHeight = minimumPlotHeight;
         else
             plotHeight = viewport->getMaximumVisibleHeight() - 50;
 
@@ -74,6 +77,9 @@ void SpectrumCanvas::paint (Graphics& g)
 void SpectrumCanvas::updateSettings()
 {
     canvasPlot->updateActiveChans();
+    const auto frequencyRange = processor->getFrequencyRange();
+    canvasPlot->setFrequencyRange (frequencyRange.getStart(), frequencyRange.getEnd(), processor->getFreqStep());
+    resized();
 }
 
 void SpectrumCanvas::beginAnimation()
@@ -89,37 +95,30 @@ void SpectrumCanvas::endAnimation()
 
 void SpectrumCanvas::refresh()
 {
-    //std::cout << "Refresh." << std::endl;
-
     bool needsRedraw = false;
 
-    for (int i = 0; i < MAX_CHANS; i++)
+    // Pull at most the newest spectrum from each channel. Intermediate worker
+    // updates may be skipped intentionally when rendering cannot keep up.
+    const int channelCount = jmin (processor->getNumActiveChannels(), MAX_SPECTRUM_CHANNELS);
+    for (int i = 0; i < channelCount; i++)
     {
         SpectrumViewer::PowerBuffer* buffer = &processor->powerBuffers[i];
 
-        for (int j = 0; j < buffer->power.size(); j++)
+        if (buffer->power.hasUpdate())
         {
-            if (buffer->power[j]->hasUpdate())
+            AtomicScopedReadPtr<std::vector<float>> powerReader (buffer->power);
+
+            powerReader.pullUpdate();
+
+            if (powerReader.isValid())
             {
-                AtomicScopedReadPtr<std::vector<float>> powerReader (*buffer->power[j]);
-
-                powerReader.pullUpdate();
-
-                if (powerReader.isValid())
+                if (displayType == POWER_SPECTRUM)
                 {
-                    //LOGD("Buffer ", j, " drawing spectrum");
-                    if (displayType == POWER_SPECTRUM)
-                    {
-                        needsRedraw = true;
-
-                        canvasPlot->updatePowerSpectrum (powerReader.operator*(), i);
-                    }
-                    else //Spectrogram
-                    {
-                        if (i == 0)
-                            canvasPlot->drawSpectrogram (powerReader.operator*());
-                    }
+                    needsRedraw = true;
+                    canvasPlot->updatePowerSpectrum (powerReader.operator*(), i);
                 }
+                else if (i == 0)
+                    canvasPlot->drawSpectrogram (powerReader.operator*());
             }
         }
     }
@@ -149,7 +148,7 @@ void SpectrumCanvas::setDisplayType (DisplayType type)
 /** CANVAS PLOT - Stores the plot along with it's legend*/
 
 CanvasPlot::CanvasPlot (SpectrumViewer* p)
-    : processor (p), displayType (POWER_SPECTRUM), freqStep (4), nFreqs (250), freqEnd (1000)
+    : processor (p), displayType (POWER_SPECTRUM), freqStep (4), nFreqs (250), freqStart (0), freqEnd (1000)
 {
     plt = std::make_unique<InteractivePlot>();
     plt->title ("POWER SPECTRUM");
@@ -167,17 +166,18 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
     addAndMakeVisible (clearButton.get());
 
     activeChannels = processor->getActiveChans();
+    ensureChannelColours();
 
     spectrogramImg = std::make_unique<Image> (Image::RGB, 1000, 1000, true, SoftwareImageType());
     setOpaque (true);
 
-    currPower.resize (MAX_CHANS);
+    currPower.resize (MAX_SPECTRUM_CHANNELS);
+    temporalFilters.resize (MAX_SPECTRUM_CHANNELS);
+    powerScratch.resize (MAX_SPECTRUM_CHANNELS);
+    renderPower.resize (MAX_SPECTRUM_CHANNELS);
 
-    for (int ch = 0; ch < MAX_CHANS; ch++)
-    {
+    for (int ch = 0; ch < MAX_SPECTRUM_CHANNELS; ch++)
         currPower[ch].clear();
-        lowPassFilters.add (new OwnedArray<Dsp::Filter>());
-    }
 
     for (int i = 0; i < nFreqs; i++)
     {
@@ -198,52 +198,60 @@ void CanvasPlot::lookAndFeelChanged()
     plt->setAxisColour (findColour (ThemeColours::controlPanelText));
 
     chanColors[0] = findColour (ThemeColours::defaultText);
-    plt->plot (xvalues, currPower[0], chanColors[0], 1.0f);
+    repaint();
 }
 
 void CanvasPlot::updateActiveChans()
 {
     activeChannels = processor->getActiveChans();
+    ensureChannelColours();
     clear();
     repaint();
 }
 
 void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep_)
 {
-    freqStep = freqStep_;
-    freqEnd = freqEnd_;
-    nFreqs = (int) (freqEnd_ - freqStart_) / freqStep_;
+    // Sanitize externally supplied values before they determine vector sizes.
+    freqStart = jmax (0, freqStart_);
+    freqEnd = jmax (freqStart + 1, freqEnd_);
+    freqStep = std::isfinite (freqStep_) && freqStep_ > 0.0f ? freqStep_ : 1.0f;
+    nFreqs = jmax (1, (int) ((freqEnd - freqStart) / freqStep));
 
-    xvalues.clear();
+    xvalues.resize ((size_t) nFreqs);
     for (int i = 0; i < nFreqs; i++)
-    {
-        xvalues.push_back (i * freqStep);
-    }
+        xvalues[(size_t) i] = freqStart + i * freqStep;
 
-    XYRange range { (float) freqStart_, (float) freqEnd_, 0, 5 };
+    XYRange range { (float) freqStart, (float) freqEnd, 0, 5 };
     plt->setRange (range);
 
-    // Create a low pass filter for each frequency within each channel
-    for (int ch = 0; ch < MAX_CHANS; ch++)
+    constexpr int transitionSamples = 10;
+    Dsp::Params filterParams {};
+    filterParams[0] = 50.0; // Spectrum update rate in Hz.
+    filterParams[1] = 2.0; // Butterworth order.
+    filterParams[2] = 1.0; // Low-pass cutoff in Hz.
+
+    const int channelCount = jmin (activeChannels.size(), MAX_SPECTRUM_CHANNELS);
+    for (int ch = 0; ch < MAX_SPECTRUM_CHANNELS; ch++)
     {
-        lowPassFilters[ch]->clear();
-        currPower[ch].clear();
-        for (int i = 0; i < nFreqs; i++)
+        currPower[ch].assign ((size_t) nFreqs, 0.0f);
+        powerScratch[ch].assign ((size_t) nFreqs, 0.0f);
+        renderPower[ch].resize ((size_t) nFreqs);
+
+        auto& channelFilters = temporalFilters[ch];
+        channelFilters.clear();
+        if (ch < channelCount)
         {
-            lowPassFilters[ch]->add (new Dsp::SmoothedFilterDesign<Dsp::Butterworth::Design::LowPass // design type
-                                                                   <2>, // order
-                                                                   1, // number of channels (must be const)
-                                                                   Dsp::DirectFormII> (1));
-
-            Dsp::Params params;
-            params[0] = 50; // sample rate (Hz)
-            params[1] = 2; // order
-            params[2] = 1; // cut-off frequency
-            lowPassFilters[ch]->getLast()->setParams (params);
-
-            currPower[ch].push_back (0.0f);
+            channelFilters.reserve ((size_t) nFreqs);
+            for (int frequency = 0; frequency < nFreqs; ++frequency)
+            {
+                auto filter = std::make_unique<TemporalSmoothingFilter> (transitionSamples);
+                filter->setParams (filterParams);
+                channelFilters.push_back (std::move (filter));
+            }
         }
     }
+
+    renderXvalues.resize ((size_t) nFreqs);
 }
 
 void CanvasPlot::setDisplayType (DisplayType type)
@@ -269,112 +277,145 @@ void CanvasPlot::plotPowerSpectrum()
 {
     plt->clear();
 
-    for (int i = 0; i < activeChannels.size(); i++)
-    {
-        if (std::isgreater (maxPower, 0.0f))
-        {
-            XYRange pltRange;
-            plt->getRange (pltRange);
+    const int channelCount = jmin (activeChannels.size(), (int) currPower.size());
 
-            if (pltRange.ymax < maxPower || (pltRange.ymax - maxPower) > 5)
-            {
-                pltRange.ymax = maxPower;
-                plt->setRange (pltRange);
-            }
+    float currentMaxPower = 0.0f;
+    for (int channel = 0; channel < channelCount; ++channel)
+    {
+        const auto& channelPower = currPower[(size_t) channel];
+        if (! channelPower.empty())
+            currentMaxPower = jmax (currentMaxPower, FloatVectorOperations::findMinAndMax (channelPower.data(), channelPower.size()).getEnd());
+    }
+
+    // Expand immediately, but contract only when the held range is more than
+    // twice what the current data needs. The extra headroom after contraction
+    // provides hysteresis so small power changes do not make the axis jitter.
+    constexpr float minimumMaxPower = 5.0f;
+    constexpr float contractionThreshold = 2.0f;
+    constexpr float contractionHeadroom = 1.25f;
+    const float currentTarget = jmax (minimumMaxPower, currentMaxPower * 1.05f);
+
+    maxPower = jmax (maxPower, currentTarget);
+    if (maxPower > currentTarget * contractionThreshold)
+        maxPower = currentTarget * contractionHeadroom;
+
+    const float targetMaxPower = maxPower;
+
+    XYRange plotRange;
+    plt->getRange (plotRange);
+    if (targetMaxPower != plotRange.ymax)
+    {
+        plotRange.ymax = targetMaxPower;
+        plt->setRange (plotRange);
+    }
+
+    // Plot no more than roughly one point per horizontal pixel. Taking each
+    // bucket's peak preserves narrow spectral features during decimation.
+    const int pointCount = (int) xvalues.size();
+    const int maxVisiblePoints = jmax (2, plt->getWidth());
+    const int bucketSize = jmax (1, (pointCount + maxVisiblePoints - 1) / maxVisiblePoints);
+
+    if (bucketSize == 1)
+    {
+        for (int channel = 0; channel < channelCount; ++channel)
+            plt->plot (xvalues, currPower[(size_t) channel], chanColors[(size_t) channel], 1.0f);
+        return;
+    }
+
+    const int renderedPointCount = (pointCount + bucketSize - 1) / bucketSize;
+    renderXvalues.resize ((size_t) renderedPointCount);
+
+    for (int point = 0; point < renderedPointCount; ++point)
+    {
+        const int firstBin = point * bucketSize;
+        const int lastBin = jmin (pointCount, firstBin + bucketSize);
+        renderXvalues[(size_t) point] = xvalues[(size_t) ((firstBin + lastBin - 1) / 2)];
+    }
+
+    for (int channel = 0; channel < channelCount; ++channel)
+    {
+        auto& reducedPower = renderPower[(size_t) channel];
+        reducedPower.resize ((size_t) renderedPointCount);
+
+        for (int point = 0; point < renderedPointCount; ++point)
+        {
+            const int firstBin = point * bucketSize;
+            const int lastBin = jmin (pointCount, firstBin + bucketSize);
+            reducedPower[(size_t) point] = *std::max_element (currPower[(size_t) channel].begin() + firstBin,
+                                                              currPower[(size_t) channel].begin() + lastBin);
         }
 
-        plt->plot (xvalues, currPower[i], chanColors[i], 1.0f);
+        plt->plot (renderXvalues, reducedPower, chanColors[(size_t) channel], 1.0f);
     }
 }
 
-void CanvasPlot::updatePowerSpectrum (std::vector<float> powerData, int channelIndex)
+void CanvasPlot::updatePowerSpectrum (const std::vector<float>& powerData, int channelIndex)
 {
-    // currPower[channelIndex].clear();
-    std::vector<float> powerBuffer;
+    if (channelIndex < 0 || channelIndex >= (int) currPower.size())
+        return;
 
-    for (int n = 0; n < powerData.size(); n++)
+    auto& smoothedPower = currPower[(size_t) channelIndex];
+    auto& channelFilters = temporalFilters[(size_t) channelIndex];
+    auto& powerBuffer = powerScratch[(size_t) channelIndex];
+    const auto valueCount = jmin (powerData.size(), smoothedPower.size(), channelFilters.size());
+
+    for (size_t n = 0; n < valueCount; ++n)
     {
         if (std::isfinite (powerData[n]))
         {
-            // Apply low pass filter for that frequency
-            float* pData = &powerData[n];
-            lowPassFilters[channelIndex]->getUnchecked (n)->process (1, &pData);
+            float filteredPower = powerData[n];
+            float* filterChannel = &filteredPower;
+            channelFilters[n]->process (1, &filterChannel);
 
-            if (std::isgreaterequal (*pData, 1.0f))
-            {
-                float logP = log (*pData);
-
-                if (logP > maxPower)
-                    maxPower = logP;
-
-                powerBuffer.push_back (logP);
-            }
-            else
-            {
-                powerBuffer.push_back (currPower[channelIndex][n]);
-            }
+            powerBuffer[n] = filteredPower >= 1.0f ? std::log (filteredPower) : smoothedPower[n];
         }
         else
-        {
-            powerBuffer.push_back (currPower[channelIndex][n]);
-        }
+            powerBuffer[n] = smoothedPower[n];
     }
 
-    if (true)
+    // A short moving average reduces bin-to-bin noise without hiding broad peaks.
+    constexpr float frequencySmoothing = 1.0f / 9.0f;
+    for (size_t n = 0; n < valueCount; ++n)
     {
-        float window[] = { 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111 };
-
-        // apply smoothing
-        for (int n = 0; n < powerBuffer.size(); n++)
+        float value = 0.0f;
+        for (int offset = -4; offset <= 4; ++offset)
         {
-            float value = 0;
-
-            for (int offset = -4; offset < 5; offset++)
-            {
-                int i = n + offset;
-
-                if (i < 0)
-                {
-                    i = 0;
-                }
-                else if (i >= powerBuffer.size())
-                {
-                    i = powerBuffer.size() - 1;
-                }
-
-                value += (powerBuffer[i] * window[offset + 4]);
-            }
-
-            currPower.at (channelIndex).at (n) = value;
+            const auto index = (size_t) jlimit (0, (int) valueCount - 1, (int) n + offset);
+            value += powerBuffer[index] * frequencySmoothing;
         }
+
+        smoothedPower[n] = value;
     }
 }
 
-void CanvasPlot::drawSpectrogram (std::vector<float> chanData)
+void CanvasPlot::drawSpectrogram (const std::vector<float>& chanData)
 {
+    if (chanData.empty())
+        return;
+
     auto imageWidth = spectrogramImg->getWidth() - 1;
     auto imageHeight = spectrogramImg->getHeight();
 
-    // first, shuffle our image rightwards by 1 pixel..
+    // Shift history right and draw the newest spectrum into the left column.
     spectrogramImg->moveImageSection (1, 0, 0, 0, imageWidth, imageHeight);
 
-    // find the range of values produced, so we can scale our rendering to
-    // show up the detail clearly
+    // Normalize each frame in log space so low-amplitude structure remains visible.
     auto powerRange = juce::FloatVectorOperations::findMinAndMax (chanData.data(), chanData.size());
 
     if (std::isfinite (powerRange.getStart()) == false || std::isfinite (powerRange.getEnd()) == false)
         return;
 
-    for (auto y = 0; y < imageHeight - 1; ++y)
+    const float logMin = powerRange.getStart() > 0.0f ? std::log10 (1.0f + powerRange.getStart()) : 0.0f;
+    const float logMax = powerRange.getEnd() > 0.0f ? std::log10 (1.0f + powerRange.getEnd()) : 0.0f;
+    const float logRange = jmax (1.0e-5f, logMax - logMin);
+
+    for (auto y = 0; y < imageHeight; ++y)
     {
-        auto skewedProportionY = 1.0f - (float) y / (float) imageHeight;
+        const auto skewedProportionY = 1.0f - (float) y / (float) jmax (1, imageHeight - 1);
         auto dataIndex = (size_t) jlimit (0, (int) (chanData.size() - 1), (int) (skewedProportionY * (chanData.size() - 1)));
 
-        float logPower = chanData[dataIndex] > 0.0f ? std::log10 (1.0f + chanData[dataIndex]) : 0.0f;
-        float logMax = powerRange.getEnd() > 0.0f ? std::log10 (1.0f + powerRange.getEnd()) : 0.0f;
-        float logMin = powerRange.getStart() > 0.0f ? std::log10 (1.0f + powerRange.getStart()) : 0.0f;
-
-        auto level = juce::jmap (logPower, logMin, juce::jmax (logMax, 1e-5f), 0.0f, 1.0f);
+        const float logPower = chanData[dataIndex] > 0.0f ? std::log10 (1.0f + chanData[dataIndex]) : 0.0f;
+        const float level = jlimit (0.0f, 1.0f, (logPower - logMin) / logRange);
 
         spectrogramImg->setPixelAt (0, y, juce::Colour::fromHSV (level, 1.0f, level, 1.0f));
     }
@@ -396,7 +437,8 @@ void CanvasPlot::paint (Graphics& g)
 
         g.setFont (FontOptions ("Inter", "Semi Bold", 16.0f));
 
-        for (int i = 0; i < activeChannels.size(); i++)
+        const int channelCount = jmin (activeChannels.size(), (int) chanColors.size());
+        for (int i = 0; i < channelCount; ++i)
         {
             top = (i + 1) * rowHeight + 10;
 
@@ -422,7 +464,6 @@ void CanvasPlot::paint (Graphics& g)
 
         g.drawLine (w - 3, padding, w - 3, h - padding, 2.0);
 
-        int ticklabelWidth = 60;
         int tickLabelHeight = 20;
 
         g.setFont (FontOptions ("Inter", "Regular", 12.0f));
@@ -437,10 +478,7 @@ void CanvasPlot::paint (Graphics& g)
 
             String yTick;
 
-            if (k != 0)
-                yTick = String ((freqEnd * k) / 10);
-            else
-                yTick = String (0);
+            yTick = String (freqStart + ((freqEnd - freqStart) * k) / 10);
 
             g.drawText (yTick,
                         0,
@@ -470,19 +508,32 @@ void CanvasPlot::buttonClicked (Button* button)
 
 void CanvasPlot::clear()
 {
-    for (int ch = 0; ch < MAX_CHANS; ch++)
+    for (int ch = 0; ch < MAX_SPECTRUM_CHANNELS; ch++)
     {
-        currPower[ch].clear();
+        std::fill (currPower[ch].begin(), currPower[ch].end(), 0.0f);
+        std::fill (powerScratch[ch].begin(), powerScratch[ch].end(), 0.0f);
 
-        for (int i = 0; i < nFreqs; i++)
-        {
-            lowPassFilters[ch]->getUnchecked (i)->reset();
-            currPower[ch].push_back (0.0f);
-        }
+        for (auto& filter : temporalFilters[ch])
+            filter->reset();
     }
 
     maxPower = 0.0f;
 
     spectrogramImg->clear (spectrogramImg->getBounds());
     plt->clear();
+}
+
+int CanvasPlot::getMinimumHeight() const
+{
+    return jmax (600, activeChannels.size() * rowHeight + 60);
+}
+
+void CanvasPlot::ensureChannelColours()
+{
+    // Golden-ratio hue spacing keeps adjacent dynamically added channels distinct.
+    while (chanColors.size() < (size_t) activeChannels.size())
+    {
+        const float hue = std::fmod (0.61803398875f * (float) chanColors.size(), 1.0f);
+        chanColors.push_back (Colour::fromHSV (hue, 0.65f, 0.95f, 1.0f));
+    }
 }

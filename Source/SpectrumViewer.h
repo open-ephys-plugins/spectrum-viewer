@@ -29,14 +29,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "AtomicSynchronizer.h"
 #include "CumulativeTFR.h"
 
-#include <chrono>
-#include <ctime>
-#include <fstream>
-#include <iostream>
-#include <time.h>
+#include <array>
+#include <atomic>
 #include <vector>
 
-#define MAX_CHANS 8
+static constexpr int MAX_SPECTRUM_CHANNELS = 16;
 
 enum DisplayType
 {
@@ -45,28 +42,6 @@ enum DisplayType
 };
 
 class SpectrumViewer;
-
-/*
-	Resize data and power buffers, and show a progress window
-*/
-class BufferResizer : public Thread
-{
-public:
-    /** Constructor */
-    BufferResizer (SpectrumViewer* processor);
-
-    /** Resizes buffer */
-    void resize();
-
-private:
-    /** Resizes buffer in the background */
-    void run() override;
-
-    /** Pointer to processor */
-    SpectrumViewer* processor;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BufferResizer);
-};
 
 /*
 
@@ -81,8 +56,8 @@ public:
     /** Constructor */
     SpectrumViewer();
 
-    /** Destructor */
-    ~SpectrumViewer() {}
+    /** Stops the FFT worker before its processing state is destroyed. */
+    ~SpectrumViewer() override;
 
     /** Register parameters for this processor */
     void registerParameters() override;
@@ -108,32 +83,38 @@ public:
     /** Called when parameter value is updated*/
     void parameterValueChanged (Parameter* param) override;
 
-    /** Called by the canvas to get the number of active chans*/
-    Array<int> getActiveChans();
+    /** Returns a snapshot of the selected local channel indices. */
+    Array<int> getActiveChans() const;
+
+    /** Returns the callback-safe number of channels currently being processed. */
+    int getNumActiveChannels() const noexcept { return activeChannelCount.load (std::memory_order_acquire); }
 
     /** Returns the name of the selected channel at a given index */
-    const String getChanName (int localIdx);
+    String getChanName (int localIdx);
 
-    /** Sets the min/max frequency range*/
-    void setFrequencyRange (Range<int>);
+    /** Updates the requested frequency range and rebuilds worker-owned state. */
+    void setFrequencyRange (Range<int> newRange);
 
-    /** Returns the frequency step for the currently selected range*/
-    float getFreqStep() { return tfrParams.freqStep; };
+    /** Returns the effective FFT-bin spacing in Hz. */
+    float getFreqStep() const noexcept { return tfrParams.frequencyStep; }
+
+    /** Returns the effective range after clamping to the stream's Nyquist frequency. */
+    Range<int> getFrequencyRange() const noexcept { return { tfrParams.frequencyStart, tfrParams.frequencyEnd }; }
 
     /** Holds incoming samples and outgoing powers */
     struct PowerBuffer
     {
-        /** Incoming samples for each time step */
-        OwnedArray<AtomicallyShared<FFTWArrayType>> incomingSamples;
+        /** Lock-free audio-thread to FFT-thread sample queue */
+        std::vector<float> sampleQueue;
 
-        /** Outgoing power for each time step */
-        OwnedArray<AtomicallyShared<std::vector<float>>> power;
+        AbstractFifo sampleFifo { 1 };
+        std::atomic<size_t> droppedSampleCount { 0 };
 
-        /** Write index */
-        Array<int> writeIndex;
+        /** Latest outgoing power spectrum */
+        AtomicallyShared<std::vector<float>> power;
 
-        /** Hamming window to apply to buffer */
-        Array<float> window;
+        /** FFT-thread-owned rolling sample history */
+        std::vector<float> sampleHistory;
 
         /** Size of each buffer in samples */
         int bufferSize = 0;
@@ -141,165 +122,81 @@ public:
         /** Step size in samples */
         int stepSize = 0;
 
-        /** Steps per buffer samples */
-        int stepsPerBuffer = 0;
-
         /** Number of fft frequencies */
-        int nFreqs;
+        int nFreqs = 0;
 
-        /** Keep track of total samples written */
-        long int totalSamplesWritten = 0;
+        int historyWriteIndex = 0;
+        int validHistorySamples = 0;
+        int samplesSinceLastFrame = 0;
 
-        /** true if buffer size was updated */
-        bool bufferSizeChanged = true;
+        /** Copies incoming samples into the SPSC queue without waiting. */
+        bool enqueue (const float* samples, int numSamples) noexcept;
 
-        /** true if number of freqs was updated */
-        bool numFreqsChanged = true;
+        /** Drains queued samples and computes complete FFT frames. */
+        bool processPendingSamples (CumulativeTFR& tfr,
+                        FFTWArrayType& fftBuffer,
+                        const std::vector<float>& window,
+                        int channelIndex);
 
-        /** Changes buffer size*/
-        void setBufferSize (int bufferSize_, int stepSize_)
-        {
-            if (bufferSize != bufferSize_)
-            {
-                bufferSize = bufferSize_;
-                stepSize = stepSize_;
-                stepsPerBuffer = bufferSize / stepSize;
-                bufferSizeChanged = true;
-            }
-        }
+        /** Allocates all storage while acquisition processing is gated. */
+        void configure (int bufferSize_, int stepSize_, int nFreqs_);
 
-        /** Changes num freqs */
-        void setNumFreqs (int nFreqs_)
-        {
-            if (nFreqs != nFreqs_)
-            {
-                nFreqs = nFreqs_;
-                numFreqsChanged = true;
-            }
-        }
-
-        /** Resets all shared objects and indices */
+        /** Resets queue and processing indices while no producer or worker is active. */
         void reset()
         {
-            for (int i = 0; i < stepsPerBuffer + 5; i++)
-            {
-                incomingSamples[i]->reset();
-                power[i]->reset();
-                writeIndex.set (i, -1 * i * stepSize);
-                totalSamplesWritten = 0;
-            }
-        }
+            sampleFifo.reset();
+            droppedSampleCount.store (0, std::memory_order_relaxed);
+            historyWriteIndex = 0;
+            validHistorySamples = 0;
+            samplesSinceLastFrame = 0;
 
-        /** Resizes all buffers */
-        void resize()
-        {
-            if (bufferSizeChanged)
-            {
-                incomingSamples.clear();
-
-                LOGD ("Creating ", stepsPerBuffer + 5, " sample buffers of length ", bufferSize);
-
-                for (int i = 0; i < stepsPerBuffer + 5; i++)
-                {
-                    incomingSamples.add (new AtomicallyShared<FFTWArrayType>());
-                    incomingSamples.getLast()->map ([=] (FFTWArrayType& arr)
-                                                    { arr.resize (bufferSize); });
-                }
-
-                bufferSizeChanged = false;
-
-                window.clear();
-
-                const float N = float (bufferSize);
-                const float PI = 3.1415926535;
-
-                for (int n = 0; n < bufferSize; n++)
-                {
-                    window.add (0.54 - 0.46 * cos (2 * PI * n / N));
-                }
-            }
-
-            power.clear();
-
-            LOGD ("Creating ", stepsPerBuffer + 5, " power buffers of length ", nFreqs);
-
-            for (int i = 0; i < stepsPerBuffer + 5; i++)
-            {
-                power.add (new AtomicallyShared<std::vector<float>>());
-                power.getLast()->map ([=] (std::vector<float>& arr)
-                                      { arr.resize (nFreqs); });
-            }
-
-            numFreqsChanged = false;
+            // The canvas holds read access only for the duration of one refresh.
+            // Wait here, off the audio thread, rather than resizing an in-use slot.
+            while (! power.reset())
+                Thread::yield();
         }
     };
 
-    /** Array of buffers */
-    PowerBuffer powerBuffers[MAX_CHANS];
-
-    /** Type of visualization */
-    DisplayType displayType;
+    /** Preallocated channel buffers shared with the canvas. */
+    PowerBuffer powerBuffers[MAX_SPECTRUM_CHANNELS];
 
 private:
-    /** Append FFTWArrays to data buffer */
-    void updateDataBufferSize (int size);
-
-    /** Change the size of the data buffer*/
-    void updateDisplayBufferSize (int newSize);
-
-    /** Returns true if a given stream ID is available*/
-    bool streamExists (uint16 streamId);
-
     ScopedPointer<CumulativeTFR> TFR;
+    FFTWArrayType fftBuffer;
+    std::vector<float> fftWindow;
 
-    /** Priority from 0 to 10 */
-    static const int THREAD_PRIORITY = 5;
+    static constexpr Thread::Priority THREAD_PRIORITY = Thread::Priority::normal;
 
     /** Resets buffers*/
     void resetTFR();
 
-    Array<int> channels;
-    Array<Array<int>> bufferIdx; // channels x stepsPerBuffer
+    /** Rebuilds processing storage while keeping the audio callback wait-free. */
+    void reconfigureProcessing();
 
-    //int bufferSize;
-    //int stepSize;
-    //int stepsPerBuffer;
+    /** Publishes a callback-safe snapshot of the selected channels. */
+    void updateChannelSnapshot();
+
+    Array<int> channels;
+    std::array<std::atomic<int>, MAX_SPECTRUM_CHANNELS> activeGlobalChannelIndices;
+    std::atomic<int> activeChannelCount { 0 };
+    std::atomic<bool> reconfigurationInProgress { false };
+    std::atomic<int> activeAudioCallbacks { 0 };
 
     uint16 activeStream = 0;
 
-    int numTrials;
-
-    // This is to store data in case of switch and we wish to retrive old data
-    //AtomicallyShared<Array<FFTWArrayType>> dataBufferII;
-    //Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
-
     struct TFRParameters
     {
-        float segLen; // Segment Length
-        float winLen; // Window Length
-        float stepLen; // Interval between times of interest
-        int interpRatio; //
-
-        // Number of freq of interest
-        int nFreqs;
-        float freqStep;
-        int freqStart;
-        int freqEnd;
-
-        // Number of times of interest
-        int nTimes;
-
-        // Fs (sampling rate?)
-        float Fs;
-
-        // frequency of interest
-        Array<float> foi;
-
-        float alpha;
+        float windowLengthSeconds = 0.25f;
+        float stepLengthSeconds = 0.020f;
+        int numFrequencies = 250;
+        float frequencyStep = 4.0f;
+        int frequencyStart = 0;
+        int frequencyEnd = 1000;
+        float sampleRate = 2000.0f;
     };
 
     TFRParameters tfrParams;
-    std::unique_ptr<BufferResizer> bufferResizer;
+    Range<int> requestedFrequencyRange { 0, 1000 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumViewer);
 };

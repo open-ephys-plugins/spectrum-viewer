@@ -24,12 +24,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef SPECTRUMCANVAS_H_INCLUDED
 #define SPECTRUMCANVAS_H_INCLUDED
 
+#include <DspLib.h>
 #include <VisualizerWindowHeaders.h>
 
 #include "AtomicSynchronizer.h"
 #include "SpectrumViewer.h"
-
-#include <DspLib.h>
 
 class SpectrumCanvas;
 
@@ -41,7 +40,7 @@ public:
     CanvasPlot (SpectrumViewer* p);
 
     /** Destructor */
-    ~CanvasPlot() {}
+    ~CanvasPlot() override = default;
 
     /** Draws the canvas */
     void paint (Graphics& g) override;
@@ -56,11 +55,14 @@ public:
 
     void setFrequencyRange (int freqStart, int freqEnd, float freqStep);
 
-    void updatePowerSpectrum (std::vector<float> powerData, int channelIndex);
+    void updatePowerSpectrum (const std::vector<float>& powerData, int channelIndex);
 
     void plotPowerSpectrum();
 
-    void drawSpectrogram (std::vector<float> powerData);
+    void drawSpectrogram (const std::vector<float>& powerData);
+
+    /** Returns the height needed to show all selected channels in the legend. */
+    int getMinimumHeight() const;
 
     /** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
     void setDisplayType (DisplayType type);
@@ -76,6 +78,10 @@ public:
     DisplayType displayType;
 
 private:
+    using TemporalSmoothingFilter = Dsp::SmoothedFilterDesign<Dsp::Butterworth::Design::LowPass<2>, 1>;
+
+    void ensureChannelColours();
+
     std::vector<Colour> chanColors = { Colour (200, 200, 200),
                                        Colour (230, 159, 0),
                                        Colour (86, 180, 233),
@@ -94,21 +100,24 @@ private:
     float maxPower = 0.0f;
 
     std::vector<std::vector<float>> currPower; // channels x freqs
+    std::vector<std::vector<std::unique_ptr<TemporalSmoothingFilter>>> temporalFilters;
+    std::vector<std::vector<float>> powerScratch;
+    std::vector<std::vector<float>> renderPower;
 
     std::vector<float> xvalues;
+    std::vector<float> renderXvalues;
 
     std::unique_ptr<InteractivePlot> plt;
 
     float freqStep;
     int nFreqs;
+    int freqStart;
     int freqEnd;
 
     Array<int> activeChannels;
 
     /** Image to draw*/
     std::unique_ptr<Image> spectrogramImg;
-
-    OwnedArray<OwnedArray<Dsp::Filter>> lowPassFilters;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CanvasPlot);
 };
@@ -125,7 +134,7 @@ public:
     SpectrumCanvas (SpectrumViewer* n);
 
     /** Destructor */
-    ~SpectrumCanvas() {}
+    ~SpectrumCanvas() override = default;
 
     /** Called when tab becomes visible again */
     void refreshState();
@@ -151,15 +160,13 @@ public:
     /** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
     void setDisplayType (DisplayType type);
 
-    CanvasPlot* getPlotPtr() { return canvasPlot.get(); };
+    CanvasPlot* getPlotPtr() const noexcept { return canvasPlot.get(); }
 
 private:
     SpectrumViewer* processor;
 
     std::unique_ptr<Viewport> viewport;
     std::unique_ptr<CanvasPlot> canvasPlot;
-    juce::Rectangle<int> canvasBounds;
-
     DisplayType displayType;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumCanvas);

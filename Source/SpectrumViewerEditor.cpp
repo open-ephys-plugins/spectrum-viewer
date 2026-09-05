@@ -66,11 +66,11 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
 Visualizer* SpectrumViewerEditor::createNewCanvas()
 {
     // Create a new canvas and pass the processor ptr
-    auto sp = (SpectrumViewer*) getProcessor();
+    auto* sp = static_cast<SpectrumViewer*> (getProcessor());
     auto spectrumCanvas = new SpectrumCanvas (sp);
 
     // Set frequency range for canvas
-    Range<int> range = freqRanges[frequencyRange->getSelectedItemIndex()];
+    const auto range = sp->getFrequencyRange();
     spectrumCanvas->getPlotPtr()->setFrequencyRange (range.getStart(), range.getEnd(), sp->getFreqStep());
 
     // Set display type for canvas
@@ -82,13 +82,11 @@ Visualizer* SpectrumViewerEditor::createNewCanvas()
 
 void SpectrumViewerEditor::startAcquisition()
 {
-    frequencyRange->setEnabled (false);
     enable();
 }
 
 void SpectrumViewerEditor::stopAcquisition()
 {
-    frequencyRange->setEnabled (true);
     disable();
 }
 
@@ -107,19 +105,15 @@ void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
     }
     else if (cb == frequencyRange.get())
     {
-        Range<int> range = freqRanges[cb->getSelectedItemIndex()];
+        const int selectedIndex = cb->getSelectedItemIndex();
+        if (! isPositiveAndBelow (selectedIndex, freqRanges.size()))
+            return;
+
+        Range<int> range = freqRanges[selectedIndex];
 
         // Send frequency range update to processor
         auto processor = static_cast<SpectrumViewer*> (getProcessor());
         processor->setFrequencyRange (range);
-
-        // Send frequency range update to canvas plot
-        if (sc != nullptr)
-        {
-            sc->getPlotPtr()->setFrequencyRange (range.getStart(),
-                                                 range.getEnd(),
-                                                 processor->getFreqStep());
-        }
     }
 }
 
@@ -127,8 +121,11 @@ void SpectrumViewerEditor::selectedStreamHasChanged()
 {
     if (getProcessor()->getDataStreams().size() > 0)
     {
-        auto stream = getProcessor()->getDataStream (getCurrentStream());
-        // Add or change the currently selected stream's max frequency
+        auto* stream = getProcessor()->getDataStream (getCurrentStream());
+        if (stream == nullptr)
+            return;
+
+        // Keep a fourth range synchronized with this stream's Nyquist frequency.
         float maxFreq = stream->getSampleRate() / 2;
 
         freqRanges.set (3, Range (0, (int) maxFreq));
