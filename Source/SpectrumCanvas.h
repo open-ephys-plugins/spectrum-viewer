@@ -24,7 +24,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef SPECTRUMCANVAS_H_INCLUDED
 #define SPECTRUMCANVAS_H_INCLUDED
 
-#include <DspLib.h>
 #include <VisualizerWindowHeaders.h>
 
 #include "AtomicSynchronizer.h"
@@ -78,8 +77,6 @@ public:
     DisplayType displayType;
 
 private:
-    using TemporalSmoothingFilter = Dsp::SmoothedFilterDesign<Dsp::Butterworth::Design::LowPass<2>, 1>;
-
     void ensureChannelColours();
 
     std::vector<Colour> chanColors = { Colour (200, 200, 200),
@@ -100,9 +97,16 @@ private:
     float maxPower = 0.0f;
 
     std::vector<std::vector<float>> currPower; // channels x freqs
-    std::vector<std::vector<std::unique_ptr<TemporalSmoothingFilter>>> temporalFilters;
+    std::vector<std::vector<float>> temporalFilterState1;
+    std::vector<std::vector<float>> temporalFilterState2;
     std::vector<std::vector<float>> powerScratch;
     std::vector<std::vector<float>> renderPower;
+
+    float temporalB0 = 0.0f;
+    float temporalB1 = 0.0f;
+    float temporalB2 = 0.0f;
+    float temporalA1 = 0.0f;
+    float temporalA2 = 0.0f;
 
     std::vector<float> xvalues;
     std::vector<float> renderXvalues;

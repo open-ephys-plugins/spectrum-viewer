@@ -172,9 +172,22 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
     setOpaque (true);
 
     currPower.resize (MAX_SPECTRUM_CHANNELS);
-    temporalFilters.resize (MAX_SPECTRUM_CHANNELS);
+    temporalFilterState1.resize (MAX_SPECTRUM_CHANNELS);
+    temporalFilterState2.resize (MAX_SPECTRUM_CHANNELS);
     powerScratch.resize (MAX_SPECTRUM_CHANNELS);
     renderPower.resize (MAX_SPECTRUM_CHANNELS);
+
+    // One shared coefficient set replaces a heap-allocated filter object for
+    // every bin while preserving the 1 Hz, second-order Butterworth response.
+    constexpr float updateRateHz = 50.0f;
+    constexpr float cutoffHz = 1.0f;
+    const float k = std::tan (MathConstants<float>::pi * cutoffHz / updateRateHz);
+    const float norm = 1.0f / (1.0f + std::sqrt (2.0f) * k + k * k);
+    temporalB0 = k * k * norm;
+    temporalB1 = 2.0f * temporalB0;
+    temporalB2 = temporalB0;
+    temporalA1 = 2.0f * (k * k - 1.0f) * norm;
+    temporalA2 = (1.0f - std::sqrt (2.0f) * k + k * k) * norm;
 
     for (int ch = 0; ch < MAX_SPECTRUM_CHANNELS; ch++)
         currPower[ch].clear();
@@ -224,31 +237,13 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
     XYRange range { (float) freqStart, (float) freqEnd, 0, 5 };
     plt->setRange (range);
 
-    constexpr int transitionSamples = 10;
-    Dsp::Params filterParams {};
-    filterParams[0] = 50.0; // Spectrum update rate in Hz.
-    filterParams[1] = 2.0; // Butterworth order.
-    filterParams[2] = 1.0; // Low-pass cutoff in Hz.
-
-    const int channelCount = jmin (activeChannels.size(), MAX_SPECTRUM_CHANNELS);
     for (int ch = 0; ch < MAX_SPECTRUM_CHANNELS; ch++)
     {
         currPower[ch].assign ((size_t) nFreqs, 0.0f);
+        temporalFilterState1[ch].assign ((size_t) nFreqs, 0.0f);
+        temporalFilterState2[ch].assign ((size_t) nFreqs, 0.0f);
         powerScratch[ch].assign ((size_t) nFreqs, 0.0f);
         renderPower[ch].resize ((size_t) nFreqs);
-
-        auto& channelFilters = temporalFilters[ch];
-        channelFilters.clear();
-        if (ch < channelCount)
-        {
-            channelFilters.reserve ((size_t) nFreqs);
-            for (int frequency = 0; frequency < nFreqs; ++frequency)
-            {
-                auto filter = std::make_unique<TemporalSmoothingFilter> (transitionSamples);
-                filter->setParams (filterParams);
-                channelFilters.push_back (std::move (filter));
-            }
-        }
     }
 
     renderXvalues.resize ((size_t) nFreqs);
@@ -355,17 +350,20 @@ void CanvasPlot::updatePowerSpectrum (const std::vector<float>& powerData, int c
         return;
 
     auto& smoothedPower = currPower[(size_t) channelIndex];
-    auto& channelFilters = temporalFilters[(size_t) channelIndex];
+    auto& filterState1 = temporalFilterState1[(size_t) channelIndex];
+    auto& filterState2 = temporalFilterState2[(size_t) channelIndex];
     auto& powerBuffer = powerScratch[(size_t) channelIndex];
-    const auto valueCount = jmin (powerData.size(), smoothedPower.size(), channelFilters.size());
+    const auto valueCount = jmin (powerData.size(), smoothedPower.size());
 
     for (size_t n = 0; n < valueCount; ++n)
     {
         if (std::isfinite (powerData[n]))
         {
-            float filteredPower = powerData[n];
-            float* filterChannel = &filteredPower;
-            channelFilters[n]->process (1, &filterChannel);
+            // Transposed direct-form II uses two contiguous state values per
+            // bin and is algebraically equivalent to the previous DSP filter.
+            const float filteredPower = temporalB0 * powerData[n] + filterState1[n];
+            filterState1[n] = temporalB1 * powerData[n] - temporalA1 * filteredPower + filterState2[n];
+            filterState2[n] = temporalB2 * powerData[n] - temporalA2 * filteredPower;
 
             powerBuffer[n] = filteredPower >= 1.0f ? std::log (filteredPower) : smoothedPower[n];
         }
@@ -511,10 +509,9 @@ void CanvasPlot::clear()
     for (int ch = 0; ch < MAX_SPECTRUM_CHANNELS; ch++)
     {
         std::fill (currPower[ch].begin(), currPower[ch].end(), 0.0f);
+        std::fill (temporalFilterState1[ch].begin(), temporalFilterState1[ch].end(), 0.0f);
+        std::fill (temporalFilterState2[ch].begin(), temporalFilterState2[ch].end(), 0.0f);
         std::fill (powerScratch[ch].begin(), powerScratch[ch].end(), 0.0f);
-
-        for (auto& filter : temporalFilters[ch])
-            filter->reset();
     }
 
     maxPower = 0.0f;
