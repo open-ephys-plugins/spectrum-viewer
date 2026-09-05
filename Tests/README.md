@@ -12,3 +12,5 @@ ctest --test-dir spectrum-viewer/Build --output-on-failure
 ```
 
 GoogleTest is fetched at configure time and pinned to the version used by `plugin-GUI`. Keep test inputs deterministic. Transport tests should partition identical sample sequences into different callback sizes and compare the resulting sample-indexed windows exactly.
+
+`SpscSampleQueue` is the bounded audio-to-worker handoff. It preserves FIFO blocks and rejects a complete block when full rather than overwriting unread data. `SampleWindowAssembler` is worker-owned history that converts those arbitrary blocks into exact overlapping windows and resets on a sample-index discontinuity. Neither component is connected to the plugin processor yet.

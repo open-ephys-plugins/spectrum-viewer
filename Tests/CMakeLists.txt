@@ -11,9 +11,15 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(
 	spectrum_viewer_tests
-	AtomicSynchronizerTests.cpp)
+	AtomicSynchronizerTests.cpp
+	SampleTransportTests.cpp)
 
 target_compile_features(spectrum_viewer_tests PRIVATE cxx_std_17)
+if(MSVC)
+	target_compile_options(spectrum_viewer_tests PRIVATE /W4)
+else()
+	target_compile_options(spectrum_viewer_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion)
+endif()
 target_include_directories(
 	spectrum_viewer_tests
 	PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Source)
