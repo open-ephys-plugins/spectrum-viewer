@@ -318,15 +318,19 @@ bool SpectrumViewer::startAcquisition()
         bufferResizer->waitForThreadToExit (5000);
 
         acquisitionChannelCount = static_cast<std::size_t> (std::min (channels.size(), MAX_CHANS));
+        const auto maximumInputBlockSamples = getBlockSize();
         if (acquisitionChannelCount == 0 || powerBuffers[0].bufferSize <= 0
-            || powerBuffers[0].stepSize <= 0 || tfrParams.nFreqs <= 0)
+            || powerBuffers[0].stepSize <= 0 || tfrParams.nFreqs <= 0
+            || maximumInputBlockSamples <= 0)
             return isEnabled;
 
         for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
             acquisitionChannels[channel] = channels[static_cast<int> (channel)];
 
         inputFifo = std::make_unique<spectrumviewer::SampleBlockFifo> (
-            acquisitionChannelCount, MAX_INPUT_BLOCK_SAMPLES, INPUT_QUEUE_CAPACITY);
+            acquisitionChannelCount,
+            static_cast<std::size_t> (maximumInputBlockSamples),
+            INPUT_QUEUE_CAPACITY);
         spectrumFrameFifo = std::make_unique<spectrumviewer::SpectrumFrameFifo> (
             acquisitionChannelCount,
             static_cast<std::size_t> (tfrParams.nFreqs),

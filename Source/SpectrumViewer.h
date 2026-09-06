@@ -247,7 +247,6 @@ private:
     // Display frames are replaceable latest-state data: one may be read, one
     // ready, and one provides scheduling tolerance without retaining history.
     static constexpr std::size_t OUTPUT_QUEUE_CAPACITY = 3;
-    static constexpr std::size_t MAX_INPUT_BLOCK_SAMPLES = 8192;
     std::unique_ptr<spectrumviewer::SampleBlockFifo> inputFifo;
     std::unique_ptr<spectrumviewer::SpectrumFrameFifo> spectrumFrameFifo;
     std::unique_ptr<spectrumviewer::SampleWindowAssembler> windowAssembler;
