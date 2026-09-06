@@ -11,6 +11,8 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(
 	spectrum_viewer_tests
+	JuceAbstractFifo.cpp
+	SampleBlockFifoTests.cpp
 	SampleWindowAssemblerTests.cpp)
 
 target_compile_features(spectrum_viewer_tests PRIVATE cxx_std_17)
@@ -21,7 +23,14 @@ else()
 endif()
 target_include_directories(
 	spectrum_viewer_tests
-	PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Source)
-target_link_libraries(spectrum_viewer_tests PRIVATE gtest_main)
+	PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/../Source
+		${GUI_BASE_DIR}/JuceLibraryCode
+		${GUI_BASE_DIR}/JuceLibraryCode/modules)
+target_link_libraries(spectrum_viewer_tests PRIVATE gtest_main ${CMAKE_DL_LIBS})
+
+if(LINUX)
+	target_link_libraries(spectrum_viewer_tests PRIVATE pthread rt)
+endif()
 
 add_test(NAME spectrum_viewer_tests COMMAND spectrum_viewer_tests)

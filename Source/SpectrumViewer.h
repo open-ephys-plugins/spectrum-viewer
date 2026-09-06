@@ -28,7 +28,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "AtomicSynchronizer.h"
 #include "CumulativeTFR.h"
+#include "SampleBlockFifo.h"
+#include "SampleWindowAssembler.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -82,7 +86,7 @@ public:
     SpectrumViewer();
 
     /** Destructor */
-    ~SpectrumViewer() {}
+    ~SpectrumViewer() override;
 
     /** Register parameters for this processor */
     void registerParameters() override;
@@ -120,17 +124,23 @@ public:
     /** Returns the frequency step for the currently selected range*/
     float getFreqStep() { return tfrParams.freqStep; };
 
-    /** Holds incoming samples and outgoing powers */
+    /** Returns whole input blocks dropped because the worker queue was full. */
+    std::uint64_t getDroppedInputBlockCount() const noexcept { return droppedInputBlocks.load (std::memory_order_relaxed); }
+
+    /** Returns input samples discarded as part of full-queue block drops. */
+    std::uint64_t getDroppedInputSampleCount() const noexcept { return droppedInputSamples.load (std::memory_order_relaxed); }
+
+    /** Returns input blocks rejected because their shape exceeded the fixed configuration. */
+    std::uint64_t getRejectedInputBlockCount() const noexcept { return rejectedInputBlocks.load (std::memory_order_relaxed); }
+
+    /** Returns sample-index gaps or overlaps observed by the worker. */
+    std::uint64_t getInputDiscontinuityCount() const noexcept { return inputDiscontinuities.load (std::memory_order_relaxed); }
+
+    /** Holds analysis dimensions and outgoing powers */
     struct PowerBuffer
     {
-        /** Incoming samples for each time step */
-        OwnedArray<AtomicallyShared<FFTWArrayType>> incomingSamples;
-
         /** Outgoing power for each time step */
         OwnedArray<AtomicallyShared<std::vector<float>>> power;
-
-        /** Write index */
-        Array<int> writeIndex;
 
         /** Hamming window to apply to buffer */
         Array<float> window;
@@ -145,10 +155,7 @@ public:
         int stepsPerBuffer = 0;
 
         /** Number of fft frequencies */
-        int nFreqs;
-
-        /** Keep track of total samples written */
-        long int totalSamplesWritten = 0;
+        int nFreqs = 0;
 
         /** true if buffer size was updated */
         bool bufferSizeChanged = true;
@@ -159,10 +166,11 @@ public:
         /** Changes buffer size*/
         void setBufferSize (int bufferSize_, int stepSize_)
         {
-            if (bufferSize != bufferSize_)
+            const auto validStepSize = std::max (1, stepSize_);
+            if (bufferSize != bufferSize_ || stepSize != validStepSize)
             {
                 bufferSize = bufferSize_;
-                stepSize = stepSize_;
+                stepSize = validStepSize;
                 stepsPerBuffer = bufferSize / stepSize;
                 bufferSizeChanged = true;
             }
@@ -178,16 +186,11 @@ public:
             }
         }
 
-        /** Resets all shared objects and indices */
+        /** Resets output publication slots */
         void reset()
         {
-            for (int i = 0; i < stepsPerBuffer + 5; i++)
-            {
-                incomingSamples[i]->reset();
+            for (int i = 0; i < power.size(); ++i)
                 power[i]->reset();
-                writeIndex.set (i, -1 * i * stepSize);
-                totalSamplesWritten = 0;
-            }
         }
 
         /** Resizes all buffers */
@@ -195,17 +198,6 @@ public:
         {
             if (bufferSizeChanged)
             {
-                incomingSamples.clear();
-
-                LOGD ("Creating ", stepsPerBuffer + 5, " sample buffers of length ", bufferSize);
-
-                for (int i = 0; i < stepsPerBuffer + 5; i++)
-                {
-                    incomingSamples.add (new AtomicallyShared<FFTWArrayType>());
-                    incomingSamples.getLast()->map ([=] (FFTWArrayType& arr)
-                                                    { arr.resize (bufferSize); });
-                }
-
                 bufferSizeChanged = false;
 
                 window.clear();
@@ -226,7 +218,7 @@ public:
             for (int i = 0; i < stepsPerBuffer + 5; i++)
             {
                 power.add (new AtomicallyShared<std::vector<float>>());
-                power.getLast()->map ([=] (std::vector<float>& arr)
+                power.getLast()->map ([this] (std::vector<float>& arr)
                                       { arr.resize (nFreqs); });
             }
 
@@ -241,33 +233,37 @@ public:
     DisplayType displayType;
 
 private:
-    /** Append FFTWArrays to data buffer */
-    void updateDataBufferSize (int size);
-
-    /** Change the size of the data buffer*/
-    void updateDisplayBufferSize (int newSize);
-
-    /** Returns true if a given stream ID is available*/
-    bool streamExists (uint16 streamId);
+    /** Processes one complete chronological window on the analysis thread. */
+    void processWindow (const spectrumviewer::SampleWindowAssembler::WindowView& window);
 
     ScopedPointer<CumulativeTFR> TFR;
-
-    /** Priority from 0 to 10 */
-    static const int THREAD_PRIORITY = 5;
 
     /** Resets buffers*/
     void resetTFR();
 
     Array<int> channels;
-    Array<Array<int>> bufferIdx; // channels x stepsPerBuffer
+
+    static constexpr std::size_t INPUT_QUEUE_CAPACITY = 8;
+    static constexpr std::size_t MAX_INPUT_BLOCK_SAMPLES = 8192;
+    std::unique_ptr<spectrumviewer::SampleBlockFifo> inputFifo;
+    std::unique_ptr<spectrumviewer::SampleWindowAssembler> windowAssembler;
+    OwnedArray<FFTWArrayType> fftBuffers;
+    std::array<int, MAX_CHANS> acquisitionChannels {};
+    std::size_t acquisitionChannelCount = 0;
+    std::size_t nextPowerSlot = 0;
+    std::uint64_t acquisitionGeneration = 0;
+    std::uint64_t workerConfigurationGeneration = 0;
+    bool workerHasConfiguration = false;
+    std::atomic<std::uint64_t> droppedInputBlocks { 0 };
+    std::atomic<std::uint64_t> droppedInputSamples { 0 };
+    std::atomic<std::uint64_t> rejectedInputBlocks { 0 };
+    std::atomic<std::uint64_t> inputDiscontinuities { 0 };
 
     //int bufferSize;
     //int stepSize;
     //int stepsPerBuffer;
 
     uint16 activeStream = 0;
-
-    int numTrials;
 
     // This is to store data in case of switch and we wish to retrive old data
     //AtomicallyShared<Array<FFTWArrayType>> dataBufferII;

@@ -37,7 +37,7 @@ using spectrumviewer::SampleWindowAssembler;
 
 struct CapturedWindow
 {
-    std::uint64_t firstSample;
+    std::int64_t firstSample;
     std::vector<std::vector<float>> channels;
 };
 
@@ -79,7 +79,7 @@ TEST (SampleWindowAssemblerTests, ProducesExactOverlappingWindowsAcrossCallbacks
     for (const auto callbackSize : callbackSizes)
     {
         const float* channels[] { samples.data() + offset };
-        const auto result = assembler.append (channels, 1, callbackSize, offset, [&] (const auto& window)
+        const auto result = assembler.append (channels, 1, callbackSize, static_cast<std::int64_t> (offset), [&] (const auto& window)
         {
             windows.push_back ({ window.firstSample, copyChannels (window) });
         });
@@ -148,7 +148,11 @@ TEST (SampleWindowAssemblerTests, CallbackPartitioningDoesNotChangeWindows)
             for (std::size_t channel = 0; channel < numChannels; ++channel)
                 channels[channel] = samples[channel].data() + offset;
 
-            const auto result = assembler.append (channels.data(), numChannels, callbackSize, 5000 + offset, [&] (const auto& window)
+            const auto result = assembler.append (channels.data(),
+                                                  numChannels,
+                                                  callbackSize,
+                                                  5000 + static_cast<std::int64_t> (offset),
+                                                  [&] (const auto& window)
             {
                 windows.push_back ({ window.firstSample, copyChannels (window) });
             });

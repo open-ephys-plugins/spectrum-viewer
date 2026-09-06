@@ -45,6 +45,11 @@ SpectrumViewer::SpectrumViewer()
     bufferResizer = std::make_unique<BufferResizer> (this);
 }
 
+SpectrumViewer::~SpectrumViewer()
+{
+    stopThread (1000);
+}
+
 void SpectrumViewer::registerParameters()
 {
     addSelectedStreamParameter (Parameter::PROCESSOR_SCOPE,
@@ -153,67 +158,34 @@ void SpectrumViewer::setFrequencyRange (Range<int> newRange)
 
 void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
 {
-    // Nothing to do when no channels selected
-    if (channels.isEmpty())
+    auto* fifo = inputFifo.get();
+    if (fifo == nullptr || acquisitionChannelCount == 0)
         return;
 
-    // same number of samples for all channels in stream
-    int incomingSampleCount = getNumSamplesInBlock (activeStream);
+    const auto incomingSampleCount = static_cast<std::size_t> (getNumSamplesInBlock (activeStream));
+    if (incomingSampleCount == 0)
+        return;
 
-    //bool updateBuffer = false;
+    std::array<const float*, MAX_CHANS> channelData {};
 
-    // loop over active channels
-    for (int i = 0; i < channels.size(); i++)
+    for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
     {
-        int globalChanIdx = getGlobalChannelIndex (activeStream, channels[i]);
-        const float* incomingDataPointer = continuousBuffer.getReadPointer (globalChanIdx);
+        const auto globalChannel = getGlobalChannelIndex (activeStream, acquisitionChannels[channel]);
+        if (globalChannel < 0)
+            return;
 
-        if (globalChanIdx < 0)
-            continue;
+        channelData[channel] = continuousBuffer.getReadPointer (globalChannel);
+    }
 
-        PowerBuffer* buffer = &powerBuffers[i];
-
-        // loop over buffers
-        for (int j = 0; j < buffer->incomingSamples.size(); j++)
-        {
-            AtomicScopedWritePtr<FFTWArrayType> dataWriter (*buffer->incomingSamples[j]);
-            int writeIndex = buffer->writeIndex[j];
-
-            //LOGD("Buffer ", j, " write index: ", writeIndex);
-
-            // Check writer
-            if (! dataWriter.isValid())
-            {
-                jassertfalse; // atomic sync data writer broken
-            }
-
-            // loop over samples
-            for (int n = 0; n < incomingSampleCount; n++)
-            {
-                writeIndex++;
-
-                if (writeIndex > 0) // make sure we have enough samples
-                {
-                    dataWriter->set (writeIndex - 1, incomingDataPointer[n]);
-                }
-
-                if (writeIndex == buffer->bufferSize)
-                {
-                    // apply window
-
-                    for (int m = 0; m < buffer->bufferSize; m++)
-                    {
-                        dataWriter->set (m, dataWriter->getAsReal (m) * buffer->window[m]);
-                    }
-                    dataWriter.pushUpdate();
-                    //LOGD("Buffer ", j, " is full.");
-                    writeIndex = -5 * buffer->stepSize; // loop around to the beginning
-                    break;
-                }
-            }
-
-            buffer->writeIndex.set (j, writeIndex);
-        }
+    if (! fifo->tryPush (channelData.data(),
+                         acquisitionChannelCount,
+                         incomingSampleCount,
+                         getFirstSampleNumberForBlock (activeStream),
+                         acquisitionGeneration))
+    {
+        droppedInputBlocks.store (fifo->getDroppedBlockCount(), std::memory_order_relaxed);
+        droppedInputSamples.store (fifo->getDroppedSampleCount(), std::memory_order_relaxed);
+        rejectedInputBlocks.store (fifo->getRejectedBlockCount(), std::memory_order_relaxed);
     }
 }
 
@@ -221,37 +193,86 @@ void SpectrumViewer::run()
 {
     while (! threadShouldExit())
     {
-        // loop over active channels
-        for (int i = 0; i < channels.size(); i++)
+        bool consumedBlock = false;
+        auto* fifo = inputFifo.get();
+        auto* assembler = windowAssembler.get();
+
+        if (fifo != nullptr && assembler != nullptr)
         {
-            PowerBuffer* buffer = &powerBuffers[i];
-
-            // loop over buffers
-            for (int j = 0; j < buffer->incomingSamples.size(); j++)
+            while (! threadShouldExit() && fifo->tryPop ([&] (const auto& block)
             {
-                if (buffer->incomingSamples[j]->hasUpdate())
+                consumedBlock = true;
+                std::array<const float*, MAX_CHANS> channelData {};
+                for (std::size_t channel = 0; channel < block.numChannels; ++channel)
+                    channelData[channel] = block.getChannelData (channel);
+
+                if (! workerHasConfiguration
+                    || block.configurationGeneration != workerConfigurationGeneration)
                 {
-                    //LOGD("Buffer ", j, " has update.");
-
-                    AtomicScopedReadPtr<FFTWArrayType> fftReader (*buffer->incomingSamples[j]);
-                    AtomicScopedWritePtr<FFTWArrayType> fftWriter (*buffer->incomingSamples[j]);
-                    AtomicScopedWritePtr<std::vector<float>> powerWriter (*buffer->power[j]);
-
-                    if (fftReader.isValid() && fftWriter.isValid() && powerWriter.isValid())
-                    {
-                        fftReader.pullUpdate();
-
-                        TFR->computeFFT (fftWriter.operator*(), i);
-                        TFR->getPower (powerWriter.operator*(), i);
-
-                        powerWriter.pushUpdate();
-
-                        //LOGD("Buffer ", j, " computed FFT.");
-                    }
+                    assembler->reset();
+                    workerConfigurationGeneration = block.configurationGeneration;
+                    workerHasConfiguration = true;
                 }
+
+                const auto result = assembler->append (channelData.data(),
+                                                       block.numChannels,
+                                                       block.numSamples,
+                                                       block.firstSample,
+                                                       [this] (const auto& window)
+                {
+                    processWindow (window);
+                });
+
+                if (result.discontinuity)
+                    inputDiscontinuities.store (assembler->getDiscontinuityCount(), std::memory_order_relaxed);
+            }))
+            {
             }
         }
+
+        // Thread::notify() takes a mutex in JUCE 8, so the audio callback must not
+        // use it. A short worker-only timed wait avoids both callback locks and spin.
+        if (! consumedBlock)
+            wait (2.0);
     }
+}
+
+void SpectrumViewer::processWindow (const spectrumviewer::SampleWindowAssembler::WindowView& window)
+{
+    if (TFR == nullptr || window.numChannels != static_cast<std::size_t> (fftBuffers.size()))
+        return;
+
+    for (std::size_t channel = 0; channel < window.numChannels; ++channel)
+    {
+        auto& fftBuffer = *fftBuffers[static_cast<int> (channel)];
+        const auto channelView = window.getChannel (channel);
+        std::size_t destination = 0;
+
+        const auto copyRegion = [&] (const float* source, std::size_t count)
+        {
+            for (std::size_t sample = 0; sample < count; ++sample, ++destination)
+                fftBuffer.set (static_cast<int> (destination),
+                               source[sample] * powerBuffers[channel].window[static_cast<int> (destination)]);
+        };
+
+        copyRegion (channelView.firstData, channelView.firstSize);
+        copyRegion (channelView.secondData, channelView.secondSize);
+        TFR->computeFFT (fftBuffer, static_cast<int> (channel));
+
+        auto& outputs = powerBuffers[channel].power;
+        if (outputs.isEmpty())
+            continue;
+
+        auto& output = *outputs[static_cast<int> (nextPowerSlot % static_cast<std::size_t> (outputs.size()))];
+        AtomicScopedWritePtr<std::vector<float>> powerWriter (output);
+        if (powerWriter.isValid())
+        {
+            TFR->getPower (powerWriter.operator*(), static_cast<int> (channel));
+            powerWriter.pushUpdate();
+        }
+    }
+
+    ++nextPowerSlot;
 }
 
 void SpectrumViewer::updateSettings()
@@ -280,17 +301,6 @@ void SpectrumViewer::resetTFR()
                                   tfrParams.alpha));
 }
 
-bool SpectrumViewer::streamExists (uint16 streamId)
-{
-    for (auto stream : getDataStreams())
-    {
-        if (stream->getStreamId() == streamId)
-            return true;
-    }
-
-    return false;
-}
-
 Array<int> SpectrumViewer::getActiveChans()
 {
     return channels;
@@ -312,7 +322,33 @@ bool SpectrumViewer::startAcquisition()
             powerBuffers[i].reset();
         }
 
-        startThread();
+        acquisitionChannelCount = static_cast<std::size_t> (std::min (channels.size(), MAX_CHANS));
+        if (acquisitionChannelCount == 0 || powerBuffers[0].bufferSize <= 0 || powerBuffers[0].stepSize <= 0)
+            return isEnabled;
+
+        for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
+            acquisitionChannels[channel] = channels[static_cast<int> (channel)];
+
+        inputFifo = std::make_unique<spectrumviewer::SampleBlockFifo> (
+            acquisitionChannelCount, MAX_INPUT_BLOCK_SAMPLES, INPUT_QUEUE_CAPACITY);
+        windowAssembler = std::make_unique<spectrumviewer::SampleWindowAssembler> (
+            acquisitionChannelCount,
+            static_cast<std::size_t> (powerBuffers[0].bufferSize),
+            static_cast<std::size_t> (powerBuffers[0].stepSize));
+
+        fftBuffers.clear();
+        for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
+            fftBuffers.add (new FFTWArrayType (powerBuffers[0].bufferSize));
+
+        nextPowerSlot = 0;
+        ++acquisitionGeneration;
+        workerConfigurationGeneration = 0;
+        workerHasConfiguration = false;
+        droppedInputBlocks.store (0, std::memory_order_relaxed);
+        droppedInputSamples.store (0, std::memory_order_relaxed);
+        rejectedInputBlocks.store (0, std::memory_order_relaxed);
+        inputDiscontinuities.store (0, std::memory_order_relaxed);
+        startThread (Thread::Priority::normal);
     }
     return isEnabled;
 }
@@ -320,6 +356,10 @@ bool SpectrumViewer::startAcquisition()
 bool SpectrumViewer::stopAcquisition()
 {
     stopThread (1000);
+    fftBuffers.clear();
+    windowAssembler.reset();
+    inputFifo.reset();
+    acquisitionChannelCount = 0;
     return true;
 }
 

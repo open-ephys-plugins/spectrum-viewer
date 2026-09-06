@@ -69,7 +69,7 @@ public:
                      firstOffset };
         }
 
-        std::uint64_t firstSample = 0;
+        std::int64_t firstSample = 0;
         std::size_t numChannels = 0;
         std::size_t numSamples = 0;
 
@@ -103,7 +103,7 @@ public:
     AppendResult append (const float* const* source,
                          std::size_t numChannels,
                          std::size_t numSamples,
-                         std::uint64_t firstSample,
+                         std::int64_t firstSample,
                          Consumer&& consumer)
     {
         AppendResult result;
@@ -151,7 +151,7 @@ public:
             if (writePosition == windowSampleCount)
                 writePosition = 0;
 
-            nextExpectedSample += samplesToCopy;
+            nextExpectedSample += static_cast<std::int64_t> (samplesToCopy);
             samplesUntilWindow -= samplesToCopy;
 
             if (samplesUntilWindow == 0)
@@ -159,7 +159,7 @@ public:
                 WindowView view;
                 view.data = history.data();
                 view.firstOffset = writePosition;
-                view.firstSample = nextExpectedSample - windowSampleCount;
+                view.firstSample = nextExpectedSample - static_cast<std::int64_t> (windowSampleCount);
                 view.numChannels = channelCount;
                 view.numSamples = windowSampleCount;
 
@@ -186,7 +186,7 @@ public:
     std::uint64_t getDiscontinuityCount() const noexcept { return discontinuityCount; }
 
 private:
-    void resetHistory (std::uint64_t firstSample) noexcept
+    void resetHistory (std::int64_t firstSample) noexcept
     {
         writePosition = 0;
         samplesUntilWindow = windowSampleCount;
@@ -200,7 +200,7 @@ private:
 
     std::size_t writePosition = 0;
     std::size_t samplesUntilWindow;
-    std::uint64_t nextExpectedSample = 0;
+    std::int64_t nextExpectedSample = 0;
     std::uint64_t discontinuityCount = 0;
     bool hasExpectedSample = false;
 };
