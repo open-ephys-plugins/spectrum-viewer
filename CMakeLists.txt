@@ -16,6 +16,8 @@ set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architecture for 
 project(OE_PLUGIN_${PLUGIN_NAME})
 
 option(BUILD_TESTS "Build Spectrum Viewer tests" OFF)
+option(BUILD_BENCHMARKS "Build Spectrum Viewer performance benchmarks" OFF)
+option(BENCHMARK_NATIVE_ARCH "Compile benchmarks for the build machine's CPU" OFF)
 
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
@@ -108,4 +110,8 @@ link_open_ephys_lib(${PLUGIN_NAME} OpenEphysFFTW)
 if(BUILD_TESTS)
 	enable_testing()
 	add_subdirectory(Tests)
+endif()
+
+if(BUILD_BENCHMARKS)
+	add_subdirectory(Benchmarks)
 endif()
