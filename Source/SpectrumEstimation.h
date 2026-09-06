@@ -24,6 +24,7 @@
 #define SPECTRUM_ESTIMATION_H_INCLUDED
 
 #include <cstddef>
+#include <cstdint>
 
 namespace spectrumviewer
 {
@@ -32,6 +33,25 @@ enum class DetrendMode
     none,
     mean,
     linear
+};
+
+enum class SpectrumValueKind
+{
+    powerSpectralDensity
+};
+
+/** Immutable DSP metadata shared by every frame from one analysis configuration. */
+struct SpectrumFrameDescriptor
+{
+    double sampleRateHz = 0.0;
+    double binWidthHz = 0.0;
+    double timeHalfBandwidth = 0.0;
+    std::size_t windowSampleCount = 0;
+    std::size_t hopSampleCount = 0;
+    std::size_t taperCount = 0;
+    std::uint64_t configurationGeneration = 0;
+    DetrendMode detrendMode = DetrendMode::mean;
+    SpectrumValueKind valueKind = SpectrumValueKind::powerSpectralDensity;
 };
 
 /** One chronological channel represented by one or two contiguous regions. */

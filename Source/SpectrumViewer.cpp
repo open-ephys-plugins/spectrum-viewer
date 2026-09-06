@@ -25,6 +25,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "SpectrumViewerEditor.h"
 
+#include <cmath>
+#include <limits>
+
 #define MS_FROM_START Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - start) * 1000
 
 SpectrumViewer::SpectrumViewer()
@@ -33,7 +36,7 @@ SpectrumViewer::SpectrumViewer()
     tfrParams.segLen = 1;
     tfrParams.freqStart = 0;
     tfrParams.freqEnd = 1000;
-    tfrParams.stepLen = 0.020; // update every 20 ms (50 Hz)
+    tfrParams.stepLen = 0.125; // Fast profile: 50% overlap
     tfrParams.winLen = 0.25;
     tfrParams.interpRatio = 1;
     tfrParams.freqStep = 1.0 / float (tfrParams.winLen * tfrParams.interpRatio);
@@ -41,8 +44,6 @@ SpectrumViewer::SpectrumViewer()
     tfrParams.Fs = 2000;
     tfrParams.alpha = 0;
     tfrParams.nTimes = 1;
-
-    bufferResizer = std::make_unique<BufferResizer> (this);
 }
 
 SpectrumViewer::~SpectrumViewer()
@@ -92,18 +93,6 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
         tfrParams.freqStep = 1.0 / float (tfrParams.winLen * tfrParams.interpRatio);
         tfrParams.nFreqs = int ((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
-        int bufferSize = int (tfrParams.Fs * tfrParams.winLen);
-
-        for (int i = 0; i < MAX_CHANS; i++)
-        {
-            powerBuffers[i].setBufferSize (bufferSize, tfrParams.stepLen * tfrParams.Fs);
-            powerBuffers[i].setNumFreqs (tfrParams.nFreqs);
-        }
-
-        bufferResizer->resize();
-
-        resetTFR();
-
         SelectedChannelsParameter* p = (SelectedChannelsParameter*) getDataStream (activeStream)->getParameter ("Channels");
         if (p != nullptr)
         {
@@ -129,28 +118,8 @@ void SpectrumViewer::setFrequencyRange (Range<int> newRange)
     {
         tfrParams.freqEnd = newRange.getEnd();
 
-        if (tfrParams.freqEnd == 100)
-            tfrParams.winLen = 2;
-        else if (tfrParams.freqEnd == 500)
-            tfrParams.winLen = 0.5;
-        else if (tfrParams.freqEnd == 1000)
-            tfrParams.winLen = 0.25;
-        else
-            tfrParams.winLen = 0.1;
-
         tfrParams.freqStep = 1.0 / float (tfrParams.winLen * tfrParams.interpRatio);
         tfrParams.nFreqs = int ((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
-
-        int bufferSize = int (tfrParams.Fs * tfrParams.winLen);
-
-        for (int i = 0; i < MAX_CHANS; i++)
-        {
-            powerBuffers[i].setBufferSize (bufferSize, tfrParams.stepLen * tfrParams.Fs);
-            powerBuffers[i].setNumFreqs (tfrParams.nFreqs);
-        }
-
-        bufferResizer->resize();
-        resetTFR();
 
         getEditor()->updateVisualizer();
     }
@@ -195,54 +164,56 @@ void SpectrumViewer::run()
     {
         bool consumedBlock = false;
         auto* fifo = inputFifo.get();
-        auto* assembler = windowAssembler.get();
+        auto* pipeline = analysisPipeline.get();
 
-        if (fifo != nullptr && assembler != nullptr)
+        if (fifo != nullptr && pipeline != nullptr)
         {
             while (! threadShouldExit())
             {
-                spectrumviewer::SampleWindowAssembler::AppendResult appendResult;
-                const auto popped = fifo->tryPop ([&] (const auto& block)
+                spectrumviewer::SpectrumAnalysisPipeline::AppendResult appendResult;
+                const auto appendBlock = [&] (const auto& block)
                 {
                     std::array<const float*, MAX_CHANS> channelData {};
                     for (std::size_t channel = 0; channel < block.numChannels; ++channel)
                         channelData[channel] = block.getChannelData (channel);
 
-                    if (! workerHasConfiguration
-                        || block.configurationGeneration != workerConfigurationGeneration)
-                    {
-                        assembler->reset();
-                        workerConfigurationGeneration = block.configurationGeneration;
-                        workerHasConfiguration = true;
-                    }
-
                     // appendBlock copies the complete block. Returning from this
                     // callback releases the FIFO slot before any FFT work begins.
-                    appendResult = assembler->appendBlock (channelData.data(),
-                                                           block.numChannels,
-                                                           block.numSamples,
-                                                           block.firstSample);
-                });
+                    appendResult = pipeline->appendBlock (channelData.data(),
+                                                          block.numChannels,
+                                                          block.numSamples,
+                                                          block.firstSample,
+                                                          block.configurationGeneration);
+                };
+                const auto popped = fifo->tryPop (appendBlock);
 
                 if (! popped)
                     break;
 
                 consumedBlock = true;
-                if (! appendResult.accepted)
+                if (appendResult.status != spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::accepted)
                 {
                     jassertfalse;
                     LOGE ("Spectrum Viewer worker rejected a FIFO block");
-                    assembler->reset();
+                    pipeline->reset();
                     continue;
                 }
 
                 if (appendResult.discontinuity)
-                    inputDiscontinuities.store (assembler->getDiscontinuityCount(), std::memory_order_relaxed);
+                    inputDiscontinuities.store (pipeline->getDiscontinuityCount(), std::memory_order_relaxed);
 
-                assembler->consumeReadyWindows ([this] (const auto& window)
+                auto* outputFifo = spectrumFrameFifo.get();
+                const auto publishFrame = [outputFifo] (const auto& frame)
                 {
-                    processWindow (window);
-                });
+                    if (outputFifo != nullptr)
+                        outputFifo->tryPush (frame.getChannelData (0),
+                                             frame.numChannels,
+                                             frame.numBins,
+                                             frame.firstSample,
+                                             frame.sequence);
+                };
+                pipeline->consumeReadyFrames (publishFrame);
+                failedSpectrumWindows.store (pipeline->getFailedWindowCount(), std::memory_order_relaxed);
             }
         }
 
@@ -251,44 +222,6 @@ void SpectrumViewer::run()
         if (! consumedBlock)
             wait (2.0);
     }
-}
-
-void SpectrumViewer::processWindow (const spectrumviewer::SampleWindowAssembler::WindowView& window)
-{
-    auto* outputFifo = spectrumFrameFifo.get();
-    if (TFR == nullptr || outputFifo == nullptr
-        || window.numChannels != static_cast<std::size_t> (fftBuffers.size())
-        || powerScratch.size() != window.numChannels * outputFifo->getBinCount())
-        return;
-
-    for (std::size_t channel = 0; channel < window.numChannels; ++channel)
-    {
-        auto& fftBuffer = *fftBuffers[static_cast<int> (channel)];
-        const auto channelView = window.getChannel (channel);
-        std::size_t destination = 0;
-
-        const auto copyRegion = [&] (const float* source, std::size_t count)
-        {
-            for (std::size_t sample = 0; sample < count; ++sample, ++destination)
-                fftBuffer.set (static_cast<int> (destination),
-                               source[sample] * powerBuffers[channel].window[static_cast<int> (destination)]);
-        };
-
-        copyRegion (channelView.firstData, channelView.firstSize);
-        copyRegion (channelView.secondData, channelView.secondSize);
-        TFR->computeFFT (fftBuffer, static_cast<int> (channel));
-
-        TFR->getPower (powerScratch.data() + channel * outputFifo->getBinCount(),
-                       outputFifo->getBinCount(),
-                       static_cast<int> (channel));
-    }
-
-    outputFifo->tryPush (powerScratch.data(),
-                         window.numChannels,
-                         outputFifo->getBinCount(),
-                         window.firstSample,
-                         acquisitionGeneration,
-                         nextSpectrumFrameSequence++);
 }
 
 void SpectrumViewer::updateSettings()
@@ -301,20 +234,6 @@ void SpectrumViewer::updateSettings()
     {
         channels.clear();
     }
-}
-
-void SpectrumViewer::resetTFR()
-{
-    TFR.reset (new CumulativeTFR (MAX_CHANS, // channel count
-                                  tfrParams.nFreqs,
-                                  tfrParams.nTimes,
-                                  tfrParams.Fs, // sample rate
-                                  tfrParams.winLen,
-                                  tfrParams.stepLen,
-                                  tfrParams.freqStep,
-                                  tfrParams.freqStart,
-                                  tfrParams.segLen, //fftSec
-                                  tfrParams.alpha));
 }
 
 Array<int> SpectrumViewer::getActiveChans()
@@ -331,45 +250,77 @@ bool SpectrumViewer::startAcquisition()
 {
     if (isEnabled)
     {
-        bufferResizer->waitForThreadToExit (5000);
-
         acquisitionChannelCount = static_cast<std::size_t> (std::min (channels.size(), MAX_CHANS));
         const auto maximumInputBlockSamples = getBlockSize();
-        if (acquisitionChannelCount == 0 || powerBuffers[0].bufferSize <= 0
-            || powerBuffers[0].stepSize <= 0 || tfrParams.nFreqs <= 0
-            || maximumInputBlockSamples <= 0)
+        const auto sampleRate = static_cast<double> (tfrParams.Fs);
+        const auto windowDuration = static_cast<double> (tfrParams.winLen);
+        const auto hopDuration = static_cast<double> (tfrParams.stepLen);
+        if (acquisitionChannelCount == 0 || maximumInputBlockSamples <= 0
+            || ! std::isfinite (sampleRate) || sampleRate <= 0.0
+            || ! std::isfinite (windowDuration) || windowDuration <= 0.0
+            || ! std::isfinite (hopDuration) || hopDuration <= 0.0)
             return isEnabled;
+        const auto windowSamples = std::round (sampleRate * windowDuration);
+        const auto hopSamples = std::round (sampleRate * hopDuration);
+        if (! std::isfinite (windowSamples) || windowSamples < 1.0
+            || windowSamples >= static_cast<double> (std::numeric_limits<std::size_t>::max())
+            || ! std::isfinite (hopSamples) || hopSamples < 1.0
+            || hopSamples >= static_cast<double> (std::numeric_limits<std::size_t>::max()))
+            return isEnabled;
+        const auto windowSampleCount = static_cast<std::size_t> (windowSamples);
+        const auto hopSampleCount = static_cast<std::size_t> (hopSamples);
 
         for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
             acquisitionChannels[channel] = channels[static_cast<int> (channel)];
 
-        inputFifo = std::make_unique<spectrumviewer::SampleBlockFifo> (
-            acquisitionChannelCount,
-            static_cast<std::size_t> (maximumInputBlockSamples),
-            INPUT_QUEUE_CAPACITY);
-        spectrumFrameFifo = std::make_unique<spectrumviewer::SpectrumFrameFifo> (
-            acquisitionChannelCount,
-            static_cast<std::size_t> (tfrParams.nFreqs),
-            OUTPUT_QUEUE_CAPACITY);
-        windowAssembler = std::make_unique<spectrumviewer::SampleWindowAssembler> (
-            acquisitionChannelCount,
-            static_cast<std::size_t> (powerBuffers[0].bufferSize),
-            static_cast<std::size_t> (powerBuffers[0].stepSize),
-            static_cast<std::size_t> (maximumInputBlockSamples));
+        const auto nextGeneration = acquisitionGeneration + 1;
+        spectrumviewer::SpectrumAnalysisParameters parameters;
+        parameters.channelCount = acquisitionChannelCount;
+        parameters.windowSampleCount = windowSampleCount;
+        parameters.hopSampleCount = hopSampleCount;
+        parameters.maximumInputBlockSampleCount = static_cast<std::size_t> (maximumInputBlockSamples);
+        parameters.sampleRateHz = sampleRate;
+        // This is an explicit integration profile, not a claim that NW=2/K=3
+        // is the final diagnostic default. Profile controls follow in PR4/PR5.
+        parameters.timeHalfBandwidth = 2.0;
+        parameters.taperCount = 3;
+        parameters.detrendMode = spectrumviewer::DetrendMode::mean;
+        parameters.generation = nextGeneration;
 
-        fftBuffers.clear();
-        for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
-            fftBuffers.add (new FFTWArrayType (powerBuffers[0].bufferSize));
+        try
+        {
+            analysisConfiguration = std::make_shared<const spectrumviewer::SpectrumAnalysisConfiguration> (parameters);
+            analysisPipeline = std::make_unique<spectrumviewer::SpectrumAnalysisPipeline> (analysisConfiguration);
+            inputFifo = std::make_unique<spectrumviewer::SampleBlockFifo> (
+                acquisitionChannelCount,
+                static_cast<std::size_t> (maximumInputBlockSamples),
+                INPUT_QUEUE_CAPACITY);
+            spectrumFrameFifo = std::make_unique<spectrumviewer::SpectrumFrameFifo> (
+                acquisitionChannelCount,
+                analysisConfiguration->getBinCount(),
+                OUTPUT_QUEUE_CAPACITY,
+                analysisConfiguration->getFrameDescriptor(),
+                std::vector<int> (acquisitionChannels.begin(),
+                                  acquisitionChannels.begin()
+                                      + static_cast<std::ptrdiff_t> (acquisitionChannelCount)));
+        }
+        catch (const std::exception& error)
+        {
+            LOGE ("Unable to configure Spectrum Viewer analysis: ", error.what());
+            analysisPipeline.reset();
+            analysisConfiguration.reset();
+            inputFifo.reset();
+            spectrumFrameFifo.reset();
+            acquisitionChannelCount = 0;
+            return false;
+        }
 
-        powerScratch.resize (acquisitionChannelCount * static_cast<std::size_t> (tfrParams.nFreqs));
-        nextSpectrumFrameSequence = 0;
-        ++acquisitionGeneration;
-        workerConfigurationGeneration = 0;
-        workerHasConfiguration = false;
+        acquisitionGeneration = nextGeneration;
         droppedInputBlocks.store (0, std::memory_order_relaxed);
         droppedInputSamples.store (0, std::memory_order_relaxed);
         rejectedInputBlocks.store (0, std::memory_order_relaxed);
         inputDiscontinuities.store (0, std::memory_order_relaxed);
+        failedSpectrumWindows.store (0, std::memory_order_relaxed);
         startThread (Thread::Priority::normal);
     }
     return isEnabled;
@@ -378,34 +329,10 @@ bool SpectrumViewer::startAcquisition()
 bool SpectrumViewer::stopAcquisition()
 {
     stopThread (1000);
-    fftBuffers.clear();
-    powerScratch.clear();
-    windowAssembler.reset();
+    analysisPipeline.reset();
+    analysisConfiguration.reset();
     inputFifo.reset();
     spectrumFrameFifo.reset();
     acquisitionChannelCount = 0;
     return true;
-}
-
-BufferResizer::BufferResizer (SpectrumViewer* p)
-    : Thread ("Spectrum Viewer buffer resizer"), processor (p)
-{
-    //setStatusMessage("Resizing buffers...");
-}
-
-void BufferResizer::resize()
-{
-    waitForThreadToExit (5000);
-
-    run();
-}
-
-void BufferResizer::run()
-{
-    //setStatusMessage("Resizing data buffer for all channels");
-
-    for (int i = 0; i < MAX_CHANS; i++)
-    {
-        processor->powerBuffers[i].resize();
-    }
 }

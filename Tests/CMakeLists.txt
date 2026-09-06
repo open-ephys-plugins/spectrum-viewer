@@ -50,6 +50,7 @@ add_executable(
 	../Source/MultitaperPeriodogram.cpp
 	../Source/ReferencePeriodogram.cpp
 	../Source/SingleTaperPeriodogram.cpp
+	../Source/SpectrumAnalysis.cpp
 	JuceAbstractFifo.cpp
 	OpenEphysFFTWBatchTests.cpp
 	DpssTapersTests.cpp
@@ -58,6 +59,7 @@ add_executable(
 	SampleBlockFifoTests.cpp
 	SampleWindowAssemblerTests.cpp
 	SingleTaperPeriodogramTests.cpp
+	SpectrumAnalysisTests.cpp
 	SpectrumFrameFifoTests.cpp)
 
 target_compile_features(spectrum_viewer_tests PRIVATE cxx_std_17)

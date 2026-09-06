@@ -20,6 +20,10 @@ cmake --build BuildBenchmark --target spectrum_viewer_benchmarks --parallel
 The multitaper cases generate their DPSS bank and construct an
 `FFTW_ESTIMATE` plan before the timed loop. Timings cover preprocessing,
 channel-by-taper transforms, and calibrated equal-power aggregation.
+The pipeline cases additionally time steady-state planar history copying and
+two-span assembly using each proposed profile's hop: 50% overlap for Fast and
+Balanced, and a 0.5 s hop for Fine. Input and display FIFO copies remain outside
+this kernel benchmark.
 
 Omit `BENCHMARK_NATIVE_ARCH` for a portable build. Never distribute a native
 benchmark binary: it may contain instructions unsupported by other Open Ephys

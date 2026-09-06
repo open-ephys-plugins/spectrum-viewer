@@ -66,3 +66,14 @@ ten-repetition median wall times were 4.65 ms for no detrending, 5.01 ms for
 mean removal, and 5.12 ms for linear detrending. Standard deviations were 0.3%
 to 1.2% with CPU frequency scaling enabled. These are local throughput results,
 not target-rig p99 latency or evidence for a response-profile default.
+
+## Worker pipeline follow-up
+
+The worker-side pipeline benchmark adds the circular-history copy and window
+assembly needed for production. With the proposed Fine dimensions (N=60,000,
+K=5, NW=3, 15,000-sample/0.5 s hop), eight channels, and linear detrending, its
+ten-repetition median was 5.46 ms (0.37% coefficient of variation). DPSS
+generation and FFTW planning occurred before timing. The input-FIFO publication
+copy and display-frame copy remain outside this measurement; both are bounded
+planar copies covered by transport tests. This is still local throughput, not a
+target-rig p99 result.

@@ -92,7 +92,7 @@ void SpectrumCanvas::refresh()
     bool needsRedraw = false;
 
     processor->consumeLatestSpectrumFrame ([&] (const spectrumviewer::SpectrumFrameFifo::FrameView& frame)
-    {
+                                           {
         for (std::size_t channel = 0; channel < frame.numChannels; ++channel)
         {
             std::vector<float> power (frame.getChannelData (channel),
@@ -104,8 +104,7 @@ void SpectrumCanvas::refresh()
             }
             else if (channel == 0)
                 canvasPlot->drawSpectrogram (std::move (power));
-        }
-    });
+        } });
 
     if (needsRedraw)
         canvasPlot->plotPowerSpectrum();
@@ -272,6 +271,10 @@ void CanvasPlot::plotPowerSpectrum()
 
 void CanvasPlot::updatePowerSpectrum (std::vector<float> powerData, int channelIndex)
 {
+    if (channelIndex < 0 || channelIndex >= static_cast<int> (currPower.size()))
+        return;
+    powerData.resize (std::min (powerData.size(), currPower[static_cast<std::size_t> (channelIndex)].size()));
+
     // currPower[channelIndex].clear();
     std::vector<float> powerBuffer;
 
@@ -335,6 +338,10 @@ void CanvasPlot::updatePowerSpectrum (std::vector<float> powerData, int channelI
 
 void CanvasPlot::drawSpectrogram (std::vector<float> chanData)
 {
+    chanData.resize (std::min (chanData.size(), static_cast<std::size_t> (std::max (0, nFreqs))));
+    if (chanData.empty())
+        return;
+
     auto imageWidth = spectrogramImg->getWidth() - 1;
     auto imageHeight = spectrogramImg->getHeight();
 

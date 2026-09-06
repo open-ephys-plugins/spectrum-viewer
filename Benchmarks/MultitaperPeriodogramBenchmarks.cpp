@@ -16,6 +16,7 @@
 
 #include "DpssTapers.h"
 #include "MultitaperPeriodogram.h"
+#include "SpectrumAnalysis.h"
 
 #include <cmath>
 #include <cstddef>
@@ -29,6 +30,9 @@ namespace
 using spectrumviewer::ChannelSampleView;
 using spectrumviewer::DetrendMode;
 using spectrumviewer::MultitaperPeriodogram;
+using spectrumviewer::SpectrumAnalysisConfiguration;
+using spectrumviewer::SpectrumAnalysisParameters;
+using spectrumviewer::SpectrumAnalysisPipeline;
 
 constexpr double twoPi = 6.283185307179586476925286766559;
 constexpr unsigned int fftwEstimate = 1U << 6U;
@@ -107,7 +111,98 @@ void addMultitaperCases (benchmark::internal::Benchmark* benchmark)
         ->UseRealTime();
 }
 
+void runSpectrumAnalysisPipeline (benchmark::State& state)
+{
+    const auto sampleCount = static_cast<std::size_t> (state.range (0));
+    const auto taperCount = static_cast<std::size_t> (state.range (1));
+    const auto twiceNw = static_cast<double> (state.range (2));
+    const auto channelCount = static_cast<std::size_t> (state.range (3));
+    const auto mode = getMode (state.range (4));
+    const auto hopSampleCount = sampleCount == 60000 ? sampleCount / 4 : sampleCount / 2;
+
+    SpectrumAnalysisParameters parameters;
+    parameters.channelCount = channelCount;
+    parameters.windowSampleCount = sampleCount;
+    parameters.hopSampleCount = hopSampleCount;
+    parameters.maximumInputBlockSampleCount = hopSampleCount;
+    parameters.sampleRateHz = 30000.0;
+    parameters.timeHalfBandwidth = 0.5 * twiceNw;
+    parameters.taperCount = taperCount;
+    parameters.detrendMode = mode;
+    parameters.generation = 1;
+    auto configuration = std::make_shared<const SpectrumAnalysisConfiguration> (parameters);
+    SpectrumAnalysisPipeline pipeline (configuration);
+
+    std::vector<float> samples (hopSampleCount * channelCount);
+    std::vector<const float*> channels (channelCount);
+    for (std::size_t channel = 0; channel < channelCount; ++channel)
+    {
+        auto* output = samples.data() + channel * hopSampleCount;
+        channels[channel] = output;
+        for (std::size_t sample = 0; sample < hopSampleCount; ++sample)
+        {
+            output[sample] = static_cast<float> (
+                100.0 + std::sin (twoPi * 173.25 * static_cast<double> (sample) / 30000.0)
+                + 0.1 * static_cast<double> (channel));
+        }
+    }
+
+    std::size_t prefilledSamples = 0;
+    while (prefilledSamples < sampleCount - hopSampleCount)
+    {
+        const auto prefill = pipeline.appendBlock (
+            channels.data(),
+            channelCount,
+            hopSampleCount,
+            static_cast<std::int64_t> (prefilledSamples),
+            parameters.generation);
+        if (prefill.status != SpectrumAnalysisPipeline::AppendStatus::accepted)
+        {
+            state.SkipWithError ("Pipeline rejected prefill block");
+            return;
+        }
+        prefilledSamples += hopSampleCount;
+    }
+    auto nextSample = static_cast<std::int64_t> (prefilledSamples);
+
+    for (auto _ : state)
+    {
+        const auto append = pipeline.appendBlock (channels.data(),
+                                                  channelCount,
+                                                  hopSampleCount,
+                                                  nextSample,
+                                                  parameters.generation);
+        if (append.status != SpectrumAnalysisPipeline::AppendStatus::accepted)
+        {
+            state.SkipWithError ("Pipeline rejected benchmark block");
+            break;
+        }
+
+        std::size_t frameCount = 0;
+        pipeline.consumeReadyFrames ([&] (const auto& frame)
+                                     {
+            benchmark::DoNotOptimize (frame.getChannelData (0));
+            ++frameCount; });
+        if (frameCount != 1)
+        {
+            state.SkipWithError ("Pipeline did not produce exactly one frame");
+            break;
+        }
+        nextSample += static_cast<std::int64_t> (hopSampleCount);
+        benchmark::ClobberMemory();
+    }
+
+    state.SetItemsProcessed (
+        state.iterations() * static_cast<std::int64_t> (channelCount));
+    state.SetBytesProcessed (
+        state.iterations() * static_cast<std::int64_t> (sizeof (float) * hopSampleCount * channelCount));
+}
+
 BENCHMARK (runMultitaperPeriodogram)
     ->Name ("Estimator/FloatEqualMultitaper")
+    ->Apply (addMultitaperCases);
+
+BENCHMARK (runSpectrumAnalysisPipeline)
+    ->Name ("Pipeline/FloatEqualMultitaper")
     ->Apply (addMultitaperCases);
 } // namespace

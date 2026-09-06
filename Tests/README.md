@@ -52,4 +52,13 @@ wrapped windows, channel isolation, white-noise density, and rejected-frame
 output integrity. Line fitting, adaptive weighting, and temporal smoothing are
 deliberately outside this class.
 
+`SpectrumAnalysisPipeline` is the worker-side integration boundary. Its
+immutable configuration owns a generated DPSS bank, while the pipeline combines
+sample-indexed circular history with the persistent multitaper estimator. Tests
+pin arbitrary callback partitioning, exact hop/sample metadata, generation
+isolation, discontinuity resets, failed-window accounting, and agreement with
+the standalone estimator. Published frames contain the complete one-sided PSD,
+fixed source-channel mapping, and the configuration needed to interpret every
+bin.
+
 Pure transport and DSP components belong in this fast standalone suite. Processor-level behavior should use the GUI's `ProcessorTester` and fake-source conventions once the processor integration is ready, rather than mocking Open Ephys lifecycle and parameter behavior locally.

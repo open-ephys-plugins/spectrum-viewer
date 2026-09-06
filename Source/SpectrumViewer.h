@@ -26,18 +26,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <ProcessorHeaders.h>
 
-#include "CumulativeTFR.h"
 #include "SampleBlockFifo.h"
-#include "SampleWindowAssembler.h"
+#include "SpectrumAnalysis.h"
 #include "SpectrumFrameFifo.h"
 
 #include <algorithm>
 #include <array>
-#include <chrono>
-#include <ctime>
-#include <fstream>
-#include <iostream>
-#include <time.h>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -47,30 +45,6 @@ enum DisplayType
 {
     POWER_SPECTRUM = 1,
     SPECTROGRAM = 2
-};
-
-class SpectrumViewer;
-
-/*
-	Resize analysis buffers and show a progress window
-*/
-class BufferResizer : public Thread
-{
-public:
-    /** Constructor */
-    BufferResizer (SpectrumViewer* processor);
-
-    /** Resizes buffer */
-    void resize();
-
-private:
-    /** Resizes buffer in the background */
-    void run() override;
-
-    /** Pointer to processor */
-    SpectrumViewer* processor;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BufferResizer);
 };
 
 /*
@@ -137,6 +111,9 @@ public:
     /** Returns sample-index gaps or overlaps observed by the worker. */
     std::uint64_t getInputDiscontinuityCount() const noexcept { return inputDiscontinuities.load (std::memory_order_relaxed); }
 
+    /** Returns analysis windows rejected because samples were non-finite. */
+    std::uint64_t getFailedSpectrumWindowCount() const noexcept { return failedSpectrumWindows.load (std::memory_order_relaxed); }
+
     /** Consumes all pending display frames and passes only the newest complete frame to consumer. */
     template <typename Consumer>
     bool consumeLatestSpectrumFrame (Consumer&& consumer)
@@ -157,90 +134,10 @@ public:
         return fifo != nullptr ? fifo->getStaleFrameCount() : 0;
     }
 
-    /** Holds analysis dimensions and window coefficients. */
-    struct PowerBuffer
-    {
-        /** Hamming window to apply to buffer */
-        Array<float> window;
-
-        /** Size of each buffer in samples */
-        int bufferSize = 0;
-
-        /** Step size in samples */
-        int stepSize = 0;
-
-        /** Steps per buffer samples */
-        int stepsPerBuffer = 0;
-
-        /** Number of fft frequencies */
-        int nFreqs = 0;
-
-        /** true if buffer size was updated */
-        bool bufferSizeChanged = true;
-
-        /** true if number of freqs was updated */
-        bool numFreqsChanged = true;
-
-        /** Changes buffer size*/
-        void setBufferSize (int bufferSize_, int stepSize_)
-        {
-            const auto validStepSize = std::max (1, stepSize_);
-            if (bufferSize != bufferSize_ || stepSize != validStepSize)
-            {
-                bufferSize = bufferSize_;
-                stepSize = validStepSize;
-                stepsPerBuffer = bufferSize / stepSize;
-                bufferSizeChanged = true;
-            }
-        }
-
-        /** Changes num freqs */
-        void setNumFreqs (int nFreqs_)
-        {
-            if (nFreqs != nFreqs_)
-            {
-                nFreqs = nFreqs_;
-                numFreqsChanged = true;
-            }
-        }
-
-        /** Resizes all buffers */
-        void resize()
-        {
-            if (bufferSizeChanged)
-            {
-                bufferSizeChanged = false;
-
-                window.clear();
-
-                const float N = float (bufferSize);
-                const float PI = 3.1415926535;
-
-                for (int n = 0; n < bufferSize; n++)
-                {
-                    window.add (0.54 - 0.46 * cos (2 * PI * n / N));
-                }
-            }
-
-            numFreqsChanged = false;
-        }
-    };
-
-    /** Array of buffers */
-    PowerBuffer powerBuffers[MAX_CHANS];
-
     /** Type of visualization */
     DisplayType displayType;
 
 private:
-    /** Processes one complete chronological window on the analysis thread. */
-    void processWindow (const spectrumviewer::SampleWindowAssembler::WindowView& window);
-
-    ScopedPointer<CumulativeTFR> TFR;
-
-    /** Resets buffers*/
-    void resetTFR();
-
     Array<int> channels;
 
     static constexpr std::size_t INPUT_QUEUE_CAPACITY = 8;
@@ -249,19 +146,16 @@ private:
     static constexpr std::size_t OUTPUT_QUEUE_CAPACITY = 3;
     std::unique_ptr<spectrumviewer::SampleBlockFifo> inputFifo;
     std::unique_ptr<spectrumviewer::SpectrumFrameFifo> spectrumFrameFifo;
-    std::unique_ptr<spectrumviewer::SampleWindowAssembler> windowAssembler;
-    OwnedArray<FFTWArrayType> fftBuffers;
-    std::vector<float> powerScratch;
+    std::shared_ptr<const spectrumviewer::SpectrumAnalysisConfiguration> analysisConfiguration;
+    std::unique_ptr<spectrumviewer::SpectrumAnalysisPipeline> analysisPipeline;
     std::array<int, MAX_CHANS> acquisitionChannels {};
     std::size_t acquisitionChannelCount = 0;
-    std::uint64_t nextSpectrumFrameSequence = 0;
     std::uint64_t acquisitionGeneration = 0;
-    std::uint64_t workerConfigurationGeneration = 0;
-    bool workerHasConfiguration = false;
     std::atomic<std::uint64_t> droppedInputBlocks { 0 };
     std::atomic<std::uint64_t> droppedInputSamples { 0 };
     std::atomic<std::uint64_t> rejectedInputBlocks { 0 };
     std::atomic<std::uint64_t> inputDiscontinuities { 0 };
+    std::atomic<std::uint64_t> failedSpectrumWindows { 0 };
 
     //int bufferSize;
     //int stepSize;
@@ -299,7 +193,6 @@ private:
     };
 
     TFRParameters tfrParams;
-    std::unique_ptr<BufferResizer> bufferResizer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumViewer);
 };

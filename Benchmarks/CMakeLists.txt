@@ -84,6 +84,7 @@ if(FFTW_BENCH_INCLUDE_DIR AND FFTW_BENCH_DOUBLE_LIBRARY AND FFTW_BENCH_FLOAT_LIB
 		target_sources(spectrum_viewer_benchmarks PRIVATE
 			../Source/DpssTapers.cpp
 			../Source/MultitaperPeriodogram.cpp
+			../Source/SpectrumAnalysis.cpp
 			MultitaperPeriodogramBenchmarks.cpp)
 		target_include_directories(spectrum_viewer_benchmarks PRIVATE
 			${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source)
