@@ -24,6 +24,7 @@
 
 #include <OpenEphysFFTWBatch.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -38,6 +39,11 @@ template <typename Sample>
 using Batch = std::conditional_t<std::is_same_v<Sample, float>,
                                  FFTWRealToComplexBatchFloat,
                                  FFTWRealToComplexBatchDouble>;
+
+template <typename Sample>
+using InverseBatch = std::conditional_t<std::is_same_v<Sample, float>,
+                                        FFTWComplexToRealBatchFloat,
+                                        FFTWComplexToRealBatchDouble>;
 
 template <typename Sample>
 void verifyBatch()
@@ -70,6 +76,51 @@ void verifyBatch()
         EXPECT_NEAR (std::abs (batch.getOutputPointer (1)[bin]), 0.0, tolerance);
 }
 
+template <typename Sample>
+void verifyRoundTrip()
+{
+    constexpr int size = 9;
+    constexpr int count = 2;
+    Batch<Sample> forward (size, count);
+    InverseBatch<Sample> inverse (size, count);
+
+    EXPECT_EQ (inverse.getTransformLength(), size);
+    EXPECT_EQ (inverse.getTransformCount(), count);
+    EXPECT_EQ (inverse.getBinCount(), size / 2 + 1);
+    EXPECT_EQ (inverse.getInputPointer (1) - inverse.getInputPointer (0), size / 2 + 1);
+    EXPECT_EQ (inverse.getOutputPointer (1) - inverse.getOutputPointer (0), size);
+    EXPECT_EQ (inverse.getInputPointer (-1), nullptr);
+    EXPECT_EQ (inverse.getOutputPointer (count), nullptr);
+
+    for (int transform = 0; transform < count; ++transform)
+    {
+        for (int sample = 0; sample < size; ++sample)
+        {
+            forward.getInputPointer (transform)[sample] = static_cast<Sample> ((transform + 1) * (sample - 3));
+        }
+    }
+    forward.execute();
+
+    for (int transform = 0; transform < count; ++transform)
+    {
+        std::copy_n (forward.getOutputPointer (transform),
+                     forward.getBinCount(),
+                     inverse.getInputPointer (transform));
+    }
+    inverse.execute();
+
+    const auto tolerance = std::is_same_v<Sample, float> ? 2.0e-4 : 2.0e-12;
+    for (int transform = 0; transform < count; ++transform)
+    {
+        for (int sample = 0; sample < size; ++sample)
+        {
+            const auto expected = static_cast<double> (size)
+                                  * static_cast<double> (forward.getInputPointer (transform)[sample]);
+            EXPECT_NEAR (inverse.getOutputPointer (transform)[sample], expected, tolerance);
+        }
+    }
+}
+
 TEST (OpenEphysFFTWBatchTests, ExecutesIndependentFloatTransforms)
 {
     verifyBatch<float>();
@@ -80,11 +131,23 @@ TEST (OpenEphysFFTWBatchTests, ExecutesIndependentDoubleTransforms)
     verifyBatch<double>();
 }
 
+TEST (OpenEphysFFTWBatchTests, RoundTripsIndependentFloatTransforms)
+{
+    verifyRoundTrip<float>();
+}
+
+TEST (OpenEphysFFTWBatchTests, RoundTripsIndependentDoubleTransforms)
+{
+    verifyRoundTrip<double>();
+}
+
 TEST (OpenEphysFFTWBatchTests, RejectsInvalidDimensions)
 {
     EXPECT_THROW ((FFTWRealToComplexBatchFloat { 0, 1 }), std::invalid_argument);
     EXPECT_THROW ((FFTWRealToComplexBatchFloat { 8, 0 }), std::invalid_argument);
     EXPECT_THROW ((FFTWRealToComplexBatchDouble { -1, 1 }), std::invalid_argument);
+    EXPECT_THROW ((FFTWComplexToRealBatchFloat { 0, 1 }), std::invalid_argument);
+    EXPECT_THROW ((FFTWComplexToRealBatchDouble { 8, 0 }), std::invalid_argument);
 }
 
 TEST (OpenEphysFFTWBatchTests, SerializesConcurrentPlanConstruction)

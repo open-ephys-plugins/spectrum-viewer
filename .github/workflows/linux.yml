@@ -32,10 +32,15 @@ jobs:
         cd OpenEphysFFTW/Build
         cmake -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=Release ..
         make install
+        cd ../..
+        git clone https://github.com/open-ephys-plugins/OpenEphysNumerics.git --branch main
+        cmake -S OpenEphysNumerics -B OpenEphysNumerics/Build -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=Release -DGUI_BASE_DIR=${{ github.workspace }}/../../plugin-GUI
+        cmake --build OpenEphysNumerics/Build --parallel 2
+        cmake --install OpenEphysNumerics/Build
     - name: build
       run: |
         cd Build
-        cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON ..
+        cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=${{ github.workspace }}/../../OEPlugins/OpenEphysFFTW -DOPENEPHYS_NUMERICS_SOURCE_DIR=${{ github.workspace }}/../../OEPlugins/OpenEphysNumerics ..
         make
     - name: test
       run: ctest --test-dir Build --output-on-failure

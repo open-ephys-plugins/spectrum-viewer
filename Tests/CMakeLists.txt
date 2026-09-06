@@ -16,6 +16,21 @@ if(NOT EXISTS "${OPENEPHYS_FFTW_SOURCE_DIR}/Source/OpenEphysFFTWBatch.cpp")
 	message(FATAL_ERROR "Tests require the matching OpenEphysFFTW batch source checkout")
 endif()
 
+set(OPENEPHYS_NUMERICS_SOURCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysNumerics"
+    CACHE PATH "Path to the matching OpenEphysNumerics source checkout")
+if(NOT EXISTS "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source/OpenEphysNumerics.h")
+    message(FATAL_ERROR "Tests require the matching OpenEphysNumerics source checkout")
+endif()
+find_library(TEST_OPENEPHYS_NUMERICS_LIBRARY NAMES OpenEphysNumerics
+    HINTS "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build"
+          "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build/Release"
+          "${GUI_COMMONLIB_DIR}/Release/lib/x64")
+if(NOT TEST_OPENEPHYS_NUMERICS_LIBRARY)
+    message(FATAL_ERROR
+        "Tests require a built OpenEphysNumerics library; build that sibling repository first")
+endif()
+
 find_library(TEST_FFTW_DOUBLE_LIBRARY NAMES libfftw3-3 fftw3 fftw3-3
 	HINTS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/linux/lib
 	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/lib)
@@ -31,10 +46,12 @@ endif()
 add_executable(
 	spectrum_viewer_tests
 	${OPENEPHYS_FFTW_SOURCE_DIR}/Source/OpenEphysFFTWBatch.cpp
+	../Source/DpssTapers.cpp
 	../Source/ReferencePeriodogram.cpp
 	../Source/SingleTaperPeriodogram.cpp
 	JuceAbstractFifo.cpp
 	OpenEphysFFTWBatchTests.cpp
+	DpssTapersTests.cpp
 	ReferencePeriodogramTests.cpp
 	SampleBlockFifoTests.cpp
 	SampleWindowAssemblerTests.cpp
@@ -52,6 +69,7 @@ target_include_directories(
 	PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}/../Source
 		${OPENEPHYS_FFTW_SOURCE_DIR}/Source
+		${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source
 		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/linux/include
 		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/include
 		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/windows/include
@@ -63,6 +81,7 @@ target_link_libraries(spectrum_viewer_tests PRIVATE
 	gtest_main
 	${TEST_FFTW_DOUBLE_LIBRARY}
 	${TEST_FFTW_FLOAT_LIBRARY}
+	${TEST_OPENEPHYS_NUMERICS_LIBRARY}
 	${CMAKE_DL_LIBS})
 
 if(LINUX)

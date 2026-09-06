@@ -30,10 +30,15 @@ jobs:
         cd OpenEphysFFTW/Build
         cmake -G "Xcode" ..
         xcodebuild -target install -configuration Release
+        cd ../..
+        git clone https://github.com/open-ephys-plugins/OpenEphysNumerics.git --branch main
+        cmake -S OpenEphysNumerics -B OpenEphysNumerics/Build -G "Xcode" -DGUI_BASE_DIR=${{ github.workspace }}/../../plugin-GUI "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+        cmake --build OpenEphysNumerics/Build --config Release --parallel 2
+        cmake --install OpenEphysNumerics/Build --config Release
     - name: build
       run: |
         cd Build
-        cmake -G "Xcode" -DBUILD_TESTS=ON ..
+        cmake -G "Xcode" -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=${{ github.workspace }}/../../OEPlugins/OpenEphysFFTW -DOPENEPHYS_NUMERICS_SOURCE_DIR=${{ github.workspace }}/../../OEPlugins/OpenEphysNumerics ..
         xcodebuild -configuration Release
     - name: test
       run: ctest --test-dir Build -C Release --output-on-failure

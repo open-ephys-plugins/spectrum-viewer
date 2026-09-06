@@ -106,6 +106,7 @@ endforeach()
 # Open Ephys common libraries
 include(link_open_ephys_lib.cmake)
 link_open_ephys_lib(${PLUGIN_NAME} OpenEphysFFTW)
+link_open_ephys_lib(${PLUGIN_NAME} OpenEphysNumerics)
 
 if(BUILD_TESTS)
 	enable_testing()
