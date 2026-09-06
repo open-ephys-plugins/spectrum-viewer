@@ -15,8 +15,9 @@ GoogleTest is fetched at configure time and pinned to the version used by `plugi
 
 `SampleWindowAssembler` is worker-owned history that converts arbitrary callback
 blocks into exact overlapping windows and resets on a sample-index
-discontinuity. The processor feeds it through preallocated planar
-`SampleBlockFifo` slots managed by JUCE's `AbstractFifo`.
+discontinuity. It copies a complete block before exposing ready windows, allowing
+the processor to release its preallocated planar `SampleBlockFifo` slot before
+performing any FFT work.
 
 `SampleBlockFifo` wraps `juce::AbstractFifo` with preallocated planar block
 storage. Its tests cover Spectrum Viewer policy: complete-block overflow,

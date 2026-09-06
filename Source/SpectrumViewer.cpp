@@ -199,34 +199,50 @@ void SpectrumViewer::run()
 
         if (fifo != nullptr && assembler != nullptr)
         {
-            while (! threadShouldExit() && fifo->tryPop ([&] (const auto& block)
+            while (! threadShouldExit())
             {
-                consumedBlock = true;
-                std::array<const float*, MAX_CHANS> channelData {};
-                for (std::size_t channel = 0; channel < block.numChannels; ++channel)
-                    channelData[channel] = block.getChannelData (channel);
-
-                if (! workerHasConfiguration
-                    || block.configurationGeneration != workerConfigurationGeneration)
+                spectrumviewer::SampleWindowAssembler::AppendResult appendResult;
+                const auto popped = fifo->tryPop ([&] (const auto& block)
                 {
+                    std::array<const float*, MAX_CHANS> channelData {};
+                    for (std::size_t channel = 0; channel < block.numChannels; ++channel)
+                        channelData[channel] = block.getChannelData (channel);
+
+                    if (! workerHasConfiguration
+                        || block.configurationGeneration != workerConfigurationGeneration)
+                    {
+                        assembler->reset();
+                        workerConfigurationGeneration = block.configurationGeneration;
+                        workerHasConfiguration = true;
+                    }
+
+                    // appendBlock copies the complete block. Returning from this
+                    // callback releases the FIFO slot before any FFT work begins.
+                    appendResult = assembler->appendBlock (channelData.data(),
+                                                           block.numChannels,
+                                                           block.numSamples,
+                                                           block.firstSample);
+                });
+
+                if (! popped)
+                    break;
+
+                consumedBlock = true;
+                if (! appendResult.accepted)
+                {
+                    jassertfalse;
+                    LOGE ("Spectrum Viewer worker rejected a FIFO block");
                     assembler->reset();
-                    workerConfigurationGeneration = block.configurationGeneration;
-                    workerHasConfiguration = true;
+                    continue;
                 }
 
-                const auto result = assembler->append (channelData.data(),
-                                                       block.numChannels,
-                                                       block.numSamples,
-                                                       block.firstSample,
-                                                       [this] (const auto& window)
+                if (appendResult.discontinuity)
+                    inputDiscontinuities.store (assembler->getDiscontinuityCount(), std::memory_order_relaxed);
+
+                assembler->consumeReadyWindows ([this] (const auto& window)
                 {
                     processWindow (window);
                 });
-
-                if (result.discontinuity)
-                    inputDiscontinuities.store (assembler->getDiscontinuityCount(), std::memory_order_relaxed);
-            }))
-            {
             }
         }
 
@@ -338,7 +354,8 @@ bool SpectrumViewer::startAcquisition()
         windowAssembler = std::make_unique<spectrumviewer::SampleWindowAssembler> (
             acquisitionChannelCount,
             static_cast<std::size_t> (powerBuffers[0].bufferSize),
-            static_cast<std::size_t> (powerBuffers[0].stepSize));
+            static_cast<std::size_t> (powerBuffers[0].stepSize),
+            static_cast<std::size_t> (maximumInputBlockSamples));
 
         fftBuffers.clear();
         for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)

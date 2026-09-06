@@ -61,16 +61,33 @@ std::vector<std::vector<float>> copyChannels (const SampleWindowAssembler::Windo
     return result;
 }
 
+template <typename Consumer>
+SampleWindowAssembler::AppendResult appendAndConsume (SampleWindowAssembler& assembler,
+                                                       const float* const* source,
+                                                       std::size_t numChannels,
+                                                       std::size_t numSamples,
+                                                       std::int64_t firstSample,
+                                                       Consumer&& consumer)
+{
+    const auto result = assembler.appendBlock (source, numChannels, numSamples, firstSample);
+    if (result.accepted)
+    {
+        EXPECT_EQ (assembler.consumeReadyWindows (std::forward<Consumer> (consumer)), result.windowsReady);
+    }
+    return result;
+}
+
 TEST (SampleWindowAssemblerTests, RejectsZeroSizedConfiguration)
 {
-    EXPECT_THROW ((SampleWindowAssembler { 0, 4, 2 }), std::invalid_argument);
-    EXPECT_THROW ((SampleWindowAssembler { 1, 0, 2 }), std::invalid_argument);
-    EXPECT_THROW ((SampleWindowAssembler { 1, 4, 0 }), std::invalid_argument);
+    EXPECT_THROW ((SampleWindowAssembler { 0, 4, 2, 4 }), std::invalid_argument);
+    EXPECT_THROW ((SampleWindowAssembler { 1, 0, 2, 4 }), std::invalid_argument);
+    EXPECT_THROW ((SampleWindowAssembler { 1, 4, 0, 4 }), std::invalid_argument);
+    EXPECT_THROW ((SampleWindowAssembler { 1, 4, 2, 0 }), std::invalid_argument);
 }
 
 TEST (SampleWindowAssemblerTests, ProducesExactOverlappingWindowsAcrossCallbacks)
 {
-    SampleWindowAssembler assembler (1, 4, 2);
+    SampleWindowAssembler assembler (1, 4, 2, 4);
     const std::array<float, 10> samples { 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f };
     const std::array<std::size_t, 4> callbackSizes { 1, 3, 2, 4 };
     std::vector<CapturedWindow> windows;
@@ -79,7 +96,7 @@ TEST (SampleWindowAssemblerTests, ProducesExactOverlappingWindowsAcrossCallbacks
     for (const auto callbackSize : callbackSizes)
     {
         const float* channels[] { samples.data() + offset };
-        const auto result = assembler.append (channels, 1, callbackSize, static_cast<std::int64_t> (offset), [&] (const auto& window)
+        const auto result = appendAndConsume (assembler, channels, 1, callbackSize, static_cast<std::int64_t> (offset), [&] (const auto& window)
         {
             windows.push_back ({ window.firstSample, copyChannels (window) });
         });
@@ -100,25 +117,64 @@ TEST (SampleWindowAssemblerTests, ProducesExactOverlappingWindowsAcrossCallbacks
     EXPECT_EQ (windows[3].channels[0], (std::vector<float> { 6.0f, 7.0f, 8.0f, 9.0f }));
 }
 
+TEST (SampleWindowAssemblerTests, CopiesACompleteBlockBeforeWindowsAreConsumed)
+{
+    SampleWindowAssembler assembler (1, 4, 2, 6);
+    std::array<float, 6> samples { 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f };
+    const float* channels[] { samples.data() };
+
+    const auto result = assembler.appendBlock (channels, 1, samples.size(), 100);
+    ASSERT_TRUE (result.accepted);
+    ASSERT_EQ (result.windowsReady, 2u);
+
+    samples.fill (-1.0f); // Model the producer reusing a released FIFO slot.
+    std::vector<CapturedWindow> windows;
+    EXPECT_EQ (assembler.consumeReadyWindows ([&] (const auto& window)
+    {
+        windows.push_back ({ window.firstSample, copyChannels (window) });
+    }), 2u);
+
+    ASSERT_EQ (windows.size(), 2u);
+    EXPECT_EQ (windows[0].channels[0], (std::vector<float> { 0.0f, 1.0f, 2.0f, 3.0f }));
+    EXPECT_EQ (windows[1].channels[0], (std::vector<float> { 2.0f, 3.0f, 4.0f, 5.0f }));
+}
+
+TEST (SampleWindowAssemblerTests, RequiresReadyWindowsToBeConsumedBeforeAnotherAppend)
+{
+    SampleWindowAssembler assembler (1, 4, 2, 4);
+    const std::array<float, 4> first { 0.0f, 1.0f, 2.0f, 3.0f };
+    const std::array<float, 2> second { 4.0f, 5.0f };
+    const float* firstChannel[] { first.data() };
+    const float* secondChannel[] { second.data() };
+
+    ASSERT_TRUE (assembler.appendBlock (firstChannel, 1, first.size(), 0).accepted);
+    EXPECT_FALSE (assembler.appendBlock (secondChannel, 1, second.size(), 4).accepted);
+    EXPECT_EQ (assembler.consumeReadyWindows ([] (const auto&) {}), 1u);
+    EXPECT_TRUE (assembler.appendBlock (secondChannel, 1, second.size(), 4).accepted);
+}
+
 TEST (SampleWindowAssemblerTests, ExposesWrappedWindowsAsTwoChronologicalRegions)
 {
-    SampleWindowAssembler assembler (1, 4, 2);
-    const std::array<float, 6> samples { 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f };
-    const float* channels[] { samples.data() };
+    SampleWindowAssembler assembler (1, 4, 2, 4);
+    const std::array<float, 10> samples { 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f };
     std::vector<std::pair<std::size_t, std::size_t>> regionSizes;
     std::vector<CapturedWindow> windows;
 
-    const auto result = assembler.append (channels, 1, samples.size(), 0, [&] (const auto& window)
+    for (std::size_t offset = 0; offset < samples.size(); offset += 2)
     {
-        const auto channel = window.getChannel (0);
-        regionSizes.emplace_back (channel.firstSize, channel.secondSize);
-        windows.push_back ({ window.firstSample, copyChannels (window) });
-    });
+        const float* channels[] { samples.data() + offset };
+        appendAndConsume (assembler, channels, 1, 2, static_cast<std::int64_t> (offset), [&] (const auto& window)
+        {
+            const auto channel = window.getChannel (0);
+            regionSizes.emplace_back (channel.firstSize, channel.secondSize);
+            windows.push_back ({ window.firstSample, copyChannels (window) });
+        });
+    }
 
-    EXPECT_EQ (result.windowsEmitted, 2u);
-    EXPECT_EQ (regionSizes, (std::vector<std::pair<std::size_t, std::size_t>> { { 4, 0 }, { 2, 2 } }));
-    ASSERT_EQ (windows.size(), 2u);
-    EXPECT_EQ (windows[1].channels[0], (std::vector<float> { 2.0f, 3.0f, 4.0f, 5.0f }));
+    ASSERT_FALSE (regionSizes.empty());
+    EXPECT_EQ (regionSizes.back(), (std::pair<std::size_t, std::size_t> { 2, 2 }));
+    ASSERT_EQ (windows.size(), 4u);
+    EXPECT_EQ (windows.back().channels[0], (std::vector<float> { 6.0f, 7.0f, 8.0f, 9.0f }));
 }
 
 TEST (SampleWindowAssemblerTests, CallbackPartitioningDoesNotChangeWindows)
@@ -138,7 +194,7 @@ TEST (SampleWindowAssemblerTests, CallbackPartitioningDoesNotChangeWindows)
                           std::size_t hopSize,
                           const std::vector<std::size_t>& callbackSizes)
     {
-        SampleWindowAssembler assembler (numChannels, windowSize, hopSize);
+        SampleWindowAssembler assembler (numChannels, windowSize, hopSize, totalSamples);
         std::vector<CapturedWindow> windows;
         std::size_t offset = 0;
 
@@ -148,7 +204,8 @@ TEST (SampleWindowAssemblerTests, CallbackPartitioningDoesNotChangeWindows)
             for (std::size_t channel = 0; channel < numChannels; ++channel)
                 channels[channel] = samples[channel].data() + offset;
 
-            const auto result = assembler.append (channels.data(),
+            const auto result = appendAndConsume (assembler,
+                                                  channels.data(),
                                                   numChannels,
                                                   callbackSize,
                                                   5000 + static_cast<std::int64_t> (offset),
@@ -202,22 +259,22 @@ TEST (SampleWindowAssemblerTests, CallbackPartitioningDoesNotChangeWindows)
 
 TEST (SampleWindowAssemblerTests, DiscontinuityDiscardsPartialWindow)
 {
-    SampleWindowAssembler assembler (1, 4, 2);
+    SampleWindowAssembler assembler (1, 4, 2, 6);
     const std::array<float, 3> partial { 0.0f, 1.0f, 2.0f };
     const std::array<float, 6> afterGap { 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f };
     std::vector<CapturedWindow> windows;
 
     const float* partialChannel[] { partial.data() };
-    const auto first = assembler.append (partialChannel, 1, partial.size(), 0, [&] (const auto& window)
+    const auto first = appendAndConsume (assembler, partialChannel, 1, partial.size(), 0, [&] (const auto& window)
     {
         windows.push_back ({ window.firstSample, copyChannels (window) });
     });
 
     EXPECT_FALSE (first.discontinuity);
-    EXPECT_EQ (first.windowsEmitted, 0u);
+    EXPECT_EQ (first.windowsReady, 0u);
 
     const float* channelAfterGap[] { afterGap.data() };
-    const auto second = assembler.append (channelAfterGap, 1, afterGap.size(), 10, [&] (const auto& window)
+    const auto second = appendAndConsume (assembler, channelAfterGap, 1, afterGap.size(), 10, [&] (const auto& window)
     {
         windows.push_back ({ window.firstSample, copyChannels (window) });
     });
@@ -233,25 +290,25 @@ TEST (SampleWindowAssemblerTests, DiscontinuityDiscardsPartialWindow)
 
 TEST (SampleWindowAssemblerTests, OverlappingInputDiscardsPartialWindow)
 {
-    SampleWindowAssembler assembler (1, 4, 2);
+    SampleWindowAssembler assembler (1, 4, 2, 4);
     const std::array<float, 3> partial { 0.0f, 1.0f, 2.0f };
     const std::array<float, 4> replayed { 1.0f, 2.0f, 3.0f, 4.0f };
     std::vector<CapturedWindow> windows;
 
     const float* partialChannel[] { partial.data() };
-    assembler.append (partialChannel, 1, partial.size(), 0, [&] (const auto& window)
+    appendAndConsume (assembler, partialChannel, 1, partial.size(), 0, [&] (const auto& window)
     {
         windows.push_back ({ window.firstSample, copyChannels (window) });
     });
 
     const float* replayedChannel[] { replayed.data() };
-    const auto result = assembler.append (replayedChannel, 1, replayed.size(), 1, [&] (const auto& window)
+    const auto result = appendAndConsume (assembler, replayedChannel, 1, replayed.size(), 1, [&] (const auto& window)
     {
         windows.push_back ({ window.firstSample, copyChannels (window) });
     });
 
     EXPECT_TRUE (result.discontinuity);
-    EXPECT_EQ (result.windowsEmitted, 1u);
+    EXPECT_EQ (result.windowsReady, 1u);
     EXPECT_EQ (assembler.getDiscontinuityCount(), 1u);
     ASSERT_EQ (windows.size(), 1u);
     EXPECT_EQ (windows[0].firstSample, 1u);
@@ -260,19 +317,19 @@ TEST (SampleWindowAssemblerTests, OverlappingInputDiscardsPartialWindow)
 
 TEST (SampleWindowAssemblerTests, KeepsChannelSamplesPlanar)
 {
-    SampleWindowAssembler assembler (2, 3, 3);
+    SampleWindowAssembler assembler (2, 3, 3, 3);
     const std::array<float, 3> channel0 { 1.0f, 2.0f, 3.0f };
     const std::array<float, 3> channel1 { 11.0f, 12.0f, 13.0f };
     const float* channels[] { channel0.data(), channel1.data() };
     std::vector<std::vector<float>> captured;
 
-    const auto result = assembler.append (channels, 2, 3, 50, [&] (const auto& window)
+    const auto result = appendAndConsume (assembler, channels, 2, 3, 50, [&] (const auto& window)
     {
         captured = copyChannels (window);
     });
 
     EXPECT_TRUE (result.accepted);
-    EXPECT_EQ (result.windowsEmitted, 1u);
+    EXPECT_EQ (result.windowsReady, 1u);
     ASSERT_EQ (captured.size(), 2u);
     EXPECT_EQ (captured[0], (std::vector<float> { 1.0f, 2.0f, 3.0f }));
     EXPECT_EQ (captured[1], (std::vector<float> { 11.0f, 12.0f, 13.0f }));

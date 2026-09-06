@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -35,9 +36,13 @@ namespace spectrumviewer
 /**
     Builds sample-indexed overlapping windows on the analysis thread.
 
-    All history is private to the calling thread. Incoming blocks may have arbitrary
-    sizes, but their first-sample positions must be contiguous. A gap or overlap resets
-    partial history so a published window never splices discontinuous samples.
+    appendBlock() copies a complete incoming block into private circular history.
+    consumeReadyWindows() subsequently exposes all newly completed windows. Keeping
+    these phases separate allows an input FIFO slot to be released before any DSP.
+
+    Callers must consume all ready windows before appending another block. History
+    holds one analysis window plus one maximum-sized input block, so every window
+    completed by the most recent append remains valid without another sample copy.
 */
 class SampleWindowAssembler
 {
@@ -53,20 +58,15 @@ public:
             std::size_t secondSize = 0;
         };
 
-        /**
-            Returns one channel in chronological order as at most two contiguous regions.
-
-            The regions refer to the assembler's circular history and are valid only while
-            the consumer passed to append() is running. The second region is empty when the
-            window does not wrap around the end of the history allocation.
-        */
+        /** Returns one channel chronologically as at most two circular regions. */
         ChannelView getChannel (std::size_t channel) const noexcept
         {
-            const auto* channelData = data + channel * numSamples;
+            const auto* channelData = data + channel * channelStride;
+            const auto firstSize = std::min (numSamples, channelStride - firstOffset);
             return { channelData + firstOffset,
-                     numSamples - firstOffset,
+                     firstSize,
                      channelData,
-                     firstOffset };
+                     numSamples - firstSize };
         }
 
         std::int64_t firstSample = 0;
@@ -76,52 +76,54 @@ public:
     private:
         friend class SampleWindowAssembler;
         const float* data = nullptr;
+        std::size_t channelStride = 0;
         std::size_t firstOffset = 0;
     };
 
     struct AppendResult
     {
-        std::size_t windowsEmitted = 0;
+        std::size_t windowsReady = 0;
         bool discontinuity = false;
         bool accepted = false;
     };
 
     SampleWindowAssembler (std::size_t numChannels,
                            std::size_t windowSize,
-                           std::size_t hopSize)
+                           std::size_t hopSize,
+                           std::size_t maxSamplesPerBlock)
         : channelCount (numChannels),
           windowSampleCount (windowSize),
           hopSampleCount (hopSize),
-          history (numChannels * windowSize),
-          samplesUntilWindow (windowSize)
+          maximumAppendSampleCount (maxSamplesPerBlock),
+          historySampleCount (checkedHistorySampleCount (windowSize, maxSamplesPerBlock)),
+          history (checkedStorageSampleCount (numChannels, historySampleCount))
     {
-        if (numChannels == 0 || windowSize == 0 || hopSize == 0)
+        if (numChannels == 0 || windowSize == 0 || hopSize == 0 || maxSamplesPerBlock == 0)
             throw std::invalid_argument ("SampleWindowAssembler dimensions must be non-zero");
+        if (hopSize > static_cast<std::size_t> (std::numeric_limits<std::int64_t>::max()))
+            throw std::length_error ("SampleWindowAssembler hop size is out of range");
     }
 
-    template <typename Consumer>
-    AppendResult append (const float* const* source,
-                         std::size_t numChannels,
-                         std::size_t numSamples,
-                         std::int64_t firstSample,
-                         Consumer&& consumer)
+    AppendResult appendBlock (const float* const* source,
+                              std::size_t numChannels,
+                              std::size_t numSamples,
+                              std::int64_t firstSample)
     {
         AppendResult result;
 
-        if (source == nullptr || numChannels != channelCount || numSamples == 0)
+        if (source == nullptr || numChannels != channelCount || numSamples == 0
+            || numSamples > maximumAppendSampleCount || hasReadyWindow())
             return result;
 
         for (std::size_t channel = 0; channel < channelCount; ++channel)
-        {
             if (source[channel] == nullptr)
                 return result;
-        }
 
         result.accepted = true;
 
         if (! hasExpectedSample)
         {
-            nextExpectedSample = firstSample;
+            resetHistory (firstSample);
             hasExpectedSample = true;
         }
         else if (firstSample != nextExpectedSample)
@@ -131,76 +133,128 @@ public:
             result.discontinuity = true;
         }
 
-        std::size_t sourceOffset = 0;
+        const auto firstCopySize = std::min (numSamples, historySampleCount - writePosition);
+        const auto secondCopySize = numSamples - firstCopySize;
 
-        while (sourceOffset < numSamples)
+        for (std::size_t channel = 0; channel < channelCount; ++channel)
         {
-            const auto samplesToCopy = std::min ({ numSamples - sourceOffset,
-                                                   windowSampleCount - writePosition,
-                                                   samplesUntilWindow });
-
-            for (std::size_t channel = 0; channel < channelCount; ++channel)
-            {
-                std::memcpy (history.data() + channel * windowSampleCount + writePosition,
-                             source[channel] + sourceOffset,
-                             samplesToCopy * sizeof (float));
-            }
-
-            sourceOffset += samplesToCopy;
-            writePosition += samplesToCopy;
-            if (writePosition == windowSampleCount)
-                writePosition = 0;
-
-            nextExpectedSample += static_cast<std::int64_t> (samplesToCopy);
-            samplesUntilWindow -= samplesToCopy;
-
-            if (samplesUntilWindow == 0)
-            {
-                WindowView view;
-                view.data = history.data();
-                view.firstOffset = writePosition;
-                view.firstSample = nextExpectedSample - static_cast<std::int64_t> (windowSampleCount);
-                view.numChannels = channelCount;
-                view.numSamples = windowSampleCount;
-
-                ++result.windowsEmitted;
-                samplesUntilWindow = hopSampleCount;
-                consumer (view);
-            }
+            auto* channelHistory = history.data() + channel * historySampleCount;
+            std::memcpy (channelHistory + writePosition,
+                         source[channel],
+                         firstCopySize * sizeof (float));
+            if (secondCopySize > 0)
+                std::memcpy (channelHistory,
+                             source[channel] + firstCopySize,
+                             secondCopySize * sizeof (float));
         }
 
+        writePosition = (writePosition + numSamples) % historySampleCount;
+        nextExpectedSample += static_cast<std::int64_t> (numSamples);
+        result.windowsReady = getNumReadyWindows();
         return result;
+    }
+
+    template <typename Consumer>
+    std::size_t consumeReadyWindows (Consumer&& consumer)
+    {
+        std::size_t consumed = 0;
+        while (hasReadyWindow())
+        {
+            const auto samplesBehindWrite = static_cast<std::size_t> (
+                nextExpectedSample - nextWindowFirstSample);
+
+            WindowView view;
+            view.data = history.data();
+            view.channelStride = historySampleCount;
+            view.firstOffset = (writePosition + historySampleCount
+                                - samplesBehindWrite % historySampleCount)
+                % historySampleCount;
+            view.firstSample = nextWindowFirstSample;
+            view.numChannels = channelCount;
+            view.numSamples = windowSampleCount;
+
+            consumer (view);
+            nextWindowFirstSample += static_cast<std::int64_t> (hopSampleCount);
+            ++consumed;
+        }
+        return consumed;
+    }
+
+    bool hasReadyWindow() const noexcept
+    {
+        return hasExpectedSample
+            && nextExpectedSample - nextWindowFirstSample
+                >= static_cast<std::int64_t> (windowSampleCount);
     }
 
     void reset() noexcept
     {
         writePosition = 0;
-        samplesUntilWindow = windowSampleCount;
         nextExpectedSample = 0;
+        nextWindowFirstSample = 0;
         hasExpectedSample = false;
     }
 
     std::size_t getChannelCount() const noexcept { return channelCount; }
     std::size_t getWindowSize() const noexcept { return windowSampleCount; }
     std::size_t getHopSize() const noexcept { return hopSampleCount; }
+    std::size_t getMaxSamplesPerBlock() const noexcept { return maximumAppendSampleCount; }
+    std::size_t getHistorySize() const noexcept { return historySampleCount; }
     std::uint64_t getDiscontinuityCount() const noexcept { return discontinuityCount; }
 
 private:
+    static std::size_t checkedHistorySampleCount (std::size_t windowSize,
+                                                  std::size_t maxSamplesPerBlock)
+    {
+        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+        if (windowSize == 0 || maxSamplesPerBlock == 0)
+            return 0;
+        if (windowSize > maximum - maxSamplesPerBlock)
+            throw std::length_error ("SampleWindowAssembler history is too large");
+        if (windowSize > static_cast<std::size_t> (std::numeric_limits<std::int64_t>::max())
+            || maxSamplesPerBlock > static_cast<std::size_t> (std::numeric_limits<std::int64_t>::max()))
+            throw std::length_error ("SampleWindowAssembler sample count is out of range");
+        return windowSize + maxSamplesPerBlock;
+    }
+
+    static std::size_t checkedStorageSampleCount (std::size_t numChannels,
+                                                  std::size_t historySize)
+    {
+        if (numChannels == 0 || historySize == 0)
+            return 0;
+        if (numChannels > std::numeric_limits<std::size_t>::max() / historySize)
+            throw std::length_error ("SampleWindowAssembler allocation is too large");
+        return numChannels * historySize;
+    }
+
+    std::size_t getNumReadyWindows() const noexcept
+    {
+        if (! hasReadyWindow())
+            return 0;
+
+        const auto samplesPastFirstWindow = static_cast<std::size_t> (
+            nextExpectedSample - nextWindowFirstSample
+            - static_cast<std::int64_t> (windowSampleCount));
+        return 1 + samplesPastFirstWindow / hopSampleCount;
+    }
+
     void resetHistory (std::int64_t firstSample) noexcept
     {
         writePosition = 0;
-        samplesUntilWindow = windowSampleCount;
         nextExpectedSample = firstSample;
+        nextWindowFirstSample = firstSample;
     }
 
     const std::size_t channelCount;
     const std::size_t windowSampleCount;
     const std::size_t hopSampleCount;
+    const std::size_t maximumAppendSampleCount;
+    const std::size_t historySampleCount;
     std::vector<float> history;
 
     std::size_t writePosition = 0;
-    std::size_t samplesUntilWindow;
     std::int64_t nextExpectedSample = 0;
+    std::int64_t nextWindowFirstSample = 0;
     std::uint64_t discontinuityCount = 0;
     bool hasExpectedSample = false;
 };

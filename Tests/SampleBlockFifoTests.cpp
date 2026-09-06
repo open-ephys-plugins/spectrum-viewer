@@ -131,7 +131,7 @@ TEST (SampleBlockFifoTests, RejectsInvalidBlocksWithoutPublishingThem)
 TEST (SampleBlockFifoTests, DroppedRangeBecomesAssemblerDiscontinuity)
 {
     SampleBlockFifo fifo (1, 2, 1);
-    SampleWindowAssembler assembler (1, 4, 2);
+    SampleWindowAssembler assembler (1, 4, 2, 2);
     const std::array<float, 2> firstSamples { 0.0f, 1.0f };
     const std::array<float, 2> droppedSamples { 2.0f, 3.0f };
     const std::array<float, 2> laterSamples { 4.0f, 5.0f };
@@ -144,7 +144,8 @@ TEST (SampleBlockFifoTests, DroppedRangeBecomesAssemblerDiscontinuity)
     ASSERT_TRUE (fifo.tryPop ([&] (const auto& block)
     {
         const float* channels[] { block.getChannelData (0) };
-        const auto result = assembler.append (channels, 1, block.numSamples, block.firstSample, [] (const auto&) {});
+        const auto result = assembler.appendBlock (channels, 1, block.numSamples, block.firstSample);
+        assembler.consumeReadyWindows ([] (const auto&) {});
         EXPECT_FALSE (result.discontinuity);
     }));
 
@@ -152,7 +153,8 @@ TEST (SampleBlockFifoTests, DroppedRangeBecomesAssemblerDiscontinuity)
     ASSERT_TRUE (fifo.tryPop ([&] (const auto& block)
     {
         const float* channels[] { block.getChannelData (0) };
-        const auto result = assembler.append (channels, 1, block.numSamples, block.firstSample, [] (const auto&) {});
+        const auto result = assembler.appendBlock (channels, 1, block.numSamples, block.firstSample);
+        assembler.consumeReadyWindows ([] (const auto&) {});
         EXPECT_TRUE (result.discontinuity);
     }));
     EXPECT_EQ (assembler.getDiscontinuityCount(), 1u);
@@ -178,7 +180,7 @@ TEST (SampleBlockFifoTests, QuiescentResetClearsQueueAndCounters)
 TEST (SampleBlockFifoTests, ConfigurationChangeDoesNotSpliceAWindow)
 {
     SampleBlockFifo fifo (1, 2, 3);
-    SampleWindowAssembler assembler (1, 4, 2);
+    SampleWindowAssembler assembler (1, 4, 2, 2);
     const std::array<float, 2> first { 0.0f, 1.0f };
     const std::array<float, 2> reconfigured { 2.0f, 3.0f };
     const std::array<float, 2> continued { 4.0f, 5.0f };
@@ -200,7 +202,9 @@ TEST (SampleBlockFifoTests, ConfigurationChangeDoesNotSpliceAWindow)
         }
 
         const float* channels[] { block.getChannelData (0) };
-        assembler.append (channels, 1, block.numSamples, block.firstSample, [&] (const auto& window)
+        const auto result = assembler.appendBlock (channels, 1, block.numSamples, block.firstSample);
+        EXPECT_TRUE (result.accepted);
+        assembler.consumeReadyWindows ([&] (const auto& window)
         {
             const auto channel = window.getChannel (0);
             auto& captured = windows.emplace_back();
