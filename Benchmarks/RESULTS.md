@@ -32,3 +32,26 @@ instructions but did not improve timings consistently, which is compatible with
 a cache/memory-bound kernel and frequency-scaling noise. Repeat on supported
 platforms, sweep tile size, and include matched float/double FFT execution before
 making the final implementation decision.
+
+## Float FFT and estimator follow-up
+
+The following measurements used matched system FFTW float and double builds on
+the same i9-12900K. Persistent `plan_many` float transforms took about 0.49 ms
+for 32 transforms of 15,000 samples and 2.65 ms for 40 transforms of 60,000
+samples. Persistent individual plans were 10% and 6% faster respectively, so
+batching is an API and planning convenience rather than an automatic execution
+win. Power-of-two controls showed the same pattern.
+
+FFTW-internal threading changed that result for the 40-by-60,000 batch:
+`plan_many` took approximately 1.37 ms with two threads, 0.78 ms with four, and
+0.63 ms with eight, though run-to-run variability increased. Threading separate
+plans was slower because each transform repeatedly entered the FFTW thread
+team. These results justify keeping the wrapper's backend private and deferring
+a public threading API until end-to-end p99 measurements show a need.
+
+For eight channels and 60,000 samples, the complete float single-taper path
+(detrending, tapering, FFT, and PSD scaling) took approximately 0.80 ms without
+detrending, 1.26 ms with mean removal, and 1.36 ms with linear detrending.
+Wrapped and contiguous inputs were effectively equivalent. Combined with the
+five-taper preprocessing result above, this ballparks a serial five-taper
+update at only a few milliseconds against the proposed 500 ms fine-mode hop.

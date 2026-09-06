@@ -34,4 +34,13 @@ DC/Nyquist treatment, frequency coordinates, detrending, spectral leakage,
 Parseval energy, white-noise density, and planar channel isolation. The live
 float FFT implementation must be compared against it rather than replacing it.
 
+`SingleTaperPeriodogram` is the allocation-free production candidate. It uses
+float FFTW storage and accepts each channel as one or two chronological spans,
+so wrapped worker history is detrended and tapered directly into aligned FFT
+input. Its tests compare every output bin against the double oracle across
+odd/even lengths, all detrend modes, planar channels, wrapped input, and a weak
+tone beside a strong tone and large offset. The lightweight OpenEphysFFTW batch
+implementation is compiled directly into this headless target to avoid loading
+the legacy wrapper's GUI/JUCE dependencies.
+
 Pure transport and DSP components belong in this fast standalone suite. Processor-level behavior should use the GUI's `ProcessorTester` and fake-source conventions once the processor integration is ready, rather than mocking Open Ephys lifecycle and parameter behavior locally.

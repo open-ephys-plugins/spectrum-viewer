@@ -23,18 +23,13 @@
 #ifndef REFERENCE_PERIODOGRAM_H_INCLUDED
 #define REFERENCE_PERIODOGRAM_H_INCLUDED
 
+#include "SpectrumEstimation.h"
+
 #include <cstddef>
 #include <vector>
 
 namespace spectrumviewer
 {
-enum class DetrendMode
-{
-    none,
-    mean,
-    linear
-};
-
 struct PeriodogramResult
 {
     const double* getChannelData (std::size_t channel) const noexcept

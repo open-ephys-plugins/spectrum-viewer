@@ -1,28 +1,42 @@
 # Spectrum Viewer Benchmarks
 
 These opt-in benchmarks compare full-window materialization, per-taper fusion,
-and cache-tiled materialization. They are informational and are not CTest
-pass/fail gates. See `RESULTS.md` for the initial local measurements and their
-limitations.
+cache-tiled materialization, raw FFTW plans, and the allocation-free float
+single-taper estimator. They are informational and are not CTest pass/fail
+gates. See `RESULTS.md` for measurements and their limitations.
 
-Configure a portable Release build:
+Configure and run locally:
 
-```sh
-cmake -S . -B BuildBenchmark -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCHMARKS=ON
+```bash
+cmake -S . -B BuildBenchmark -DCMAKE_BUILD_TYPE=Release \
+  -DGUI_BASE_DIR=/path/to/plugin-GUI \
+  -DBUILD_BENCHMARKS=ON -DBENCHMARK_NATIVE_ARCH=ON
 cmake --build BuildBenchmark --target spectrum_viewer_benchmarks --parallel
-./BuildBenchmark/Benchmarks/spectrum_viewer_benchmarks
+./BuildBenchmark/Benchmarks/spectrum_viewer_benchmarks \
+  --benchmark_filter='^(Estimator|FFTW)/'
 ```
 
-To measure the build machine's available instruction set, configure a separate
-directory with `-DBENCHMARK_NATIVE_ARCH=ON`. Never distribute that binary: it
-may contain instructions unsupported by other Open Ephys systems.
+Omit `BENCHMARK_NATIVE_ARCH` for a portable build. Never distribute a native
+benchmark binary: it may contain instructions unsupported by other Open Ephys
+systems.
 
-The argument columns are window samples, taper count, channel count, circular
-history offset (`0` is unwrapped), and detrend mode (`0=None`, `1=Mean`,
-`2=Linear`). Use Google Benchmark filters and JSON output to select or archive
-runs, for example:
+The FFTW cases use matched system float/double libraries when both are
+available. Plans are persistent and planning is outside execution timings.
+`FFTWPlanning` measures cold `FFTW_MEASURE` construction separately;
+`FFTWThreaded` measures FFTW-internal float threading without nesting another
+thread pool.
 
-```sh
+On an i9-12900K, the eight-channel, 60,000-sample single-taper estimator took
+about 0.80 ms without detrending, 1.24 ms with mean removal, and 1.34 ms with
+linear detrending. Preparing five tapered rows for all eight channels took
+about 0.52 ms for mean removal using fused/tiled layouts; five-taper float FFTs
+took about 2.5 ms serially. FFTW-internal `plan_many` reduced the latter to
+approximately 1.37, 0.78, and 0.63 ms with 2, 4, and 8 threads, but variability
+increased. These figures are machine-specific and do not replace a complete
+target-rig p99 measurement. Use Google Benchmark filters, repetitions, and JSON
+output to archive comparable runs:
+
+```bash
 ./BuildBenchmark/Benchmarks/spectrum_viewer_benchmarks \
   --benchmark_filter='Float/(Materialized|Fused|Tiled)/30kHz/N:15000/K:4/channels:8' \
   --benchmark_repetitions=30 --benchmark_report_aggregates_only=true \
