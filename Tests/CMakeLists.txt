@@ -11,7 +11,9 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(
 	spectrum_viewer_tests
+	../Source/ReferencePeriodogram.cpp
 	JuceAbstractFifo.cpp
+	ReferencePeriodogramTests.cpp
 	SampleBlockFifoTests.cpp
 	SampleWindowAssemblerTests.cpp
 	SpectrumFrameFifoTests.cpp)

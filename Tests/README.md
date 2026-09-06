@@ -28,4 +28,10 @@ own concurrent tests cover the FIFO primitive's SPSC publication semantics.
 Its tests cover coherent metadata and channel data, overflow, slot wraparound,
 concurrent publication, and draining stale frames to the newest complete frame.
 
+`ReferencePeriodogram` is an intentionally slow, double-precision direct DFT
+used only as a correctness oracle. Its tests pin one-sided PSD calibration,
+DC/Nyquist treatment, frequency coordinates, detrending, spectral leakage,
+Parseval energy, white-noise density, and planar channel isolation. The live
+float FFT implementation must be compared against it rather than replacing it.
+
 Pure transport and DSP components belong in this fast standalone suite. Processor-level behavior should use the GUI's `ProcessorTester` and fake-source conventions once the processor integration is ready, rather than mocking Open Ephys lifecycle and parameter behavior locally.
