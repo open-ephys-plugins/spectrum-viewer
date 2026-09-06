@@ -43,4 +43,13 @@ tone beside a strong tone and large offset. The lightweight OpenEphysFFTW batch
 implementation is compiled directly into this headless target to avoid loading
 the legacy wrapper's GUI/JUCE dependencies.
 
+`MultitaperPeriodogram` applies one immutable DPSS bank with cache-tiled float
+preprocessing and a persistent channel-by-taper FFT batch. It estimates each
+trend once, normalizes each eigenspectrum by the actual stored taper energy,
+and averages only in linear power. Tests compare every bin with the independent
+double direct-DFT oracle, including odd/even endpoints, every detrend mode,
+wrapped windows, channel isolation, white-noise density, and rejected-frame
+output integrity. Line fitting, adaptive weighting, and temporal smoothing are
+deliberately outside this class.
+
 Pure transport and DSP components belong in this fast standalone suite. Processor-level behavior should use the GUI's `ProcessorTester` and fake-source conventions once the processor integration is ready, rather than mocking Open Ephys lifecycle and parameter behavior locally.

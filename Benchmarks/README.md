@@ -2,8 +2,9 @@
 
 These opt-in benchmarks compare full-window materialization, per-taper fusion,
 cache-tiled materialization, raw FFTW plans, and the allocation-free float
-single-taper estimator. They are informational and are not CTest pass/fail
-gates. See `RESULTS.md` for measurements and their limitations.
+single- and equal-weighted multitaper estimators. They are informational and
+are not CTest pass/fail gates. See `RESULTS.md` for measurements and their
+limitations.
 
 Configure and run locally:
 
@@ -15,6 +16,10 @@ cmake --build BuildBenchmark --target spectrum_viewer_benchmarks --parallel
 ./BuildBenchmark/Benchmarks/spectrum_viewer_benchmarks \
   --benchmark_filter='^(Estimator|FFTW)/'
 ```
+
+The multitaper cases generate their DPSS bank and construct an
+`FFTW_ESTIMATE` plan before the timed loop. Timings cover preprocessing,
+channel-by-taper transforms, and calibrated equal-power aggregation.
 
 Omit `BENCHMARK_NATIVE_ARCH` for a portable build. Never distribute a native
 benchmark binary: it may contain instructions unsupported by other Open Ephys

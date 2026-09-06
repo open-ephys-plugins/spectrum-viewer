@@ -55,3 +55,14 @@ detrending, 1.26 ms with mean removal, and 1.36 ms with linear detrending.
 Wrapped and contiguous inputs were effectively equivalent. Combined with the
 five-taper preprocessing result above, this ballparks a serial five-taper
 update at only a few milliseconds against the proposed 500 ms fine-mode hop.
+
+## Equal-weighted multitaper estimator
+
+The implemented cache-tiled estimator was measured end to end with persistent
+`FFTW_ESTIMATE` plans, including trend estimation, five-taper materialization,
+40 float transforms, actual taper-energy normalization, double-precision power
+accumulation, and one-sided endpoint scaling. For eight channels at N=60,000,
+ten-repetition median wall times were 4.65 ms for no detrending, 5.01 ms for
+mean removal, and 5.12 ms for linear detrending. Standard deviations were 0.3%
+to 1.2% with CPU frequency scaling enabled. These are local throughput results,
+not target-rig p99 latency or evidence for a response-profile default.

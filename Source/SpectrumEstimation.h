@@ -23,6 +23,8 @@
 #ifndef SPECTRUM_ESTIMATION_H_INCLUDED
 #define SPECTRUM_ESTIMATION_H_INCLUDED
 
+#include <cstddef>
+
 namespace spectrumviewer
 {
 enum class DetrendMode
@@ -30,6 +32,15 @@ enum class DetrendMode
     none,
     mean,
     linear
+};
+
+/** One chronological channel represented by one or two contiguous regions. */
+struct ChannelSampleView
+{
+    const float* firstData = nullptr;
+    std::size_t firstSize = 0;
+    const float* secondData = nullptr;
+    std::size_t secondSize = 0;
 };
 } // namespace spectrumviewer
 

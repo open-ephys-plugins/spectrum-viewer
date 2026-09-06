@@ -71,6 +71,27 @@ if(FFTW_BENCH_INCLUDE_DIR AND FFTW_BENCH_DOUBLE_LIBRARY AND FFTW_BENCH_FLOAT_LIB
 	target_link_libraries(spectrum_viewer_benchmarks PRIVATE
 		${FFTW_BENCH_DOUBLE_LIBRARY}
 		${FFTW_BENCH_FLOAT_LIBRARY})
+
+	set(OPENEPHYS_NUMERICS_SOURCE_DIR
+		"${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysNumerics"
+		CACHE PATH "Path to the matching OpenEphysNumerics source checkout")
+	find_library(BENCH_OPENEPHYS_NUMERICS_LIBRARY NAMES OpenEphysNumerics
+		HINTS "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build"
+		      "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build/Release"
+		      "${GUI_COMMONLIB_DIR}/Release/lib/x64")
+	if(EXISTS "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source/OpenEphysNumerics.h"
+	   AND BENCH_OPENEPHYS_NUMERICS_LIBRARY)
+		target_sources(spectrum_viewer_benchmarks PRIVATE
+			../Source/DpssTapers.cpp
+			../Source/MultitaperPeriodogram.cpp
+			MultitaperPeriodogramBenchmarks.cpp)
+		target_include_directories(spectrum_viewer_benchmarks PRIVATE
+			${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source)
+		target_link_libraries(spectrum_viewer_benchmarks PRIVATE
+			${BENCH_OPENEPHYS_NUMERICS_LIBRARY})
+	else()
+		message(STATUS "Skipping multitaper benchmark: OpenEphysNumerics is required")
+	endif()
 	if(FFTW_BENCH_DOUBLE_THREADS_LIBRARY AND FFTW_BENCH_FLOAT_THREADS_LIBRARY)
 		target_compile_definitions(spectrum_viewer_benchmarks PRIVATE SPECTRUM_VIEWER_FFTW_THREADS=1)
 		target_link_libraries(spectrum_viewer_benchmarks PRIVATE
