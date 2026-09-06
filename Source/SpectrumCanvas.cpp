@@ -89,40 +89,23 @@ void SpectrumCanvas::endAnimation()
 
 void SpectrumCanvas::refresh()
 {
-    //std::cout << "Refresh." << std::endl;
-
     bool needsRedraw = false;
 
-    for (int i = 0; i < MAX_CHANS; i++)
+    processor->consumeLatestSpectrumFrame ([&] (const spectrumviewer::SpectrumFrameFifo::FrameView& frame)
     {
-        SpectrumViewer::PowerBuffer* buffer = &processor->powerBuffers[i];
-
-        for (int j = 0; j < buffer->power.size(); j++)
+        for (std::size_t channel = 0; channel < frame.numChannels; ++channel)
         {
-            if (buffer->power[j]->hasUpdate())
+            std::vector<float> power (frame.getChannelData (channel),
+                                      frame.getChannelData (channel) + frame.numBins);
+            if (displayType == POWER_SPECTRUM)
             {
-                AtomicScopedReadPtr<std::vector<float>> powerReader (*buffer->power[j]);
-
-                powerReader.pullUpdate();
-
-                if (powerReader.isValid())
-                {
-                    //LOGD("Buffer ", j, " drawing spectrum");
-                    if (displayType == POWER_SPECTRUM)
-                    {
-                        needsRedraw = true;
-
-                        canvasPlot->updatePowerSpectrum (powerReader.operator*(), i);
-                    }
-                    else //Spectrogram
-                    {
-                        if (i == 0)
-                            canvasPlot->drawSpectrogram (powerReader.operator*());
-                    }
-                }
+                needsRedraw = true;
+                canvasPlot->updatePowerSpectrum (std::move (power), static_cast<int> (channel));
             }
+            else if (channel == 0)
+                canvasPlot->drawSpectrogram (std::move (power));
         }
-    }
+    });
 
     if (needsRedraw)
         canvasPlot->plotPowerSpectrum();

@@ -23,4 +23,8 @@ storage. Its tests cover Spectrum Viewer policy: complete-block overflow,
 metadata and channel layout, wraparound, rejection, and quiescent reset. JUCE's
 own concurrent tests cover the FIFO primitive's SPSC publication semantics.
 
+`SpectrumFrameFifo` publishes all selected channels as one planar display frame.
+Its tests cover coherent metadata and channel data, overflow, slot wraparound,
+concurrent publication, and draining stale frames to the newest complete frame.
+
 Pure transport and DSP components belong in this fast standalone suite. Processor-level behavior should use the GUI's `ProcessorTester` and fake-source conventions once the processor integration is ready, rather than mocking Open Ephys lifecycle and parameter behavior locally.

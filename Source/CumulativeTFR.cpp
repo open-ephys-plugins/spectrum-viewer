@@ -133,9 +133,17 @@ void CumulativeTFR::getPower (std::vector<float>& power, int channelIndex)
     //int numFreqs = powBuffer[0].size();
     //int numTimes = powBuffer[0][0].size();
 
-    for (int frq = 0; frq < power.size(); ++frq)
+    getPower (power.data(), power.size(), channelIndex);
+}
+
+void CumulativeTFR::getPower (float* power, std::size_t numBins, int channelIndex)
+{
+    jassert (power != nullptr || numBins == 0);
+    jassert (numBins <= static_cast<std::size_t> (nFreqs));
+
+    for (std::size_t frq = 0; frq < numBins; ++frq)
     {
-        power[frq] = (float) powBuffer[channelIndex][frq][0].getAverage();
+        power[frq] = static_cast<float> (powBuffer[channelIndex][frq][0].getAverage());
     }
 }
 

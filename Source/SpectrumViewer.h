@@ -26,10 +26,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <ProcessorHeaders.h>
 
-#include "AtomicSynchronizer.h"
 #include "CumulativeTFR.h"
 #include "SampleBlockFifo.h"
 #include "SampleWindowAssembler.h"
+#include "SpectrumFrameFifo.h"
 
 #include <algorithm>
 #include <array>
@@ -38,6 +38,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <fstream>
 #include <iostream>
 #include <time.h>
+#include <utility>
 #include <vector>
 
 #define MAX_CHANS 8
@@ -51,7 +52,7 @@ enum DisplayType
 class SpectrumViewer;
 
 /*
-	Resize data and power buffers, and show a progress window
+	Resize analysis buffers and show a progress window
 */
 class BufferResizer : public Thread
 {
@@ -136,12 +137,29 @@ public:
     /** Returns sample-index gaps or overlaps observed by the worker. */
     std::uint64_t getInputDiscontinuityCount() const noexcept { return inputDiscontinuities.load (std::memory_order_relaxed); }
 
-    /** Holds analysis dimensions and outgoing powers */
+    /** Consumes all pending display frames and passes only the newest complete frame to consumer. */
+    template <typename Consumer>
+    bool consumeLatestSpectrumFrame (Consumer&& consumer)
+    {
+        auto* fifo = spectrumFrameFifo.get();
+        return fifo != nullptr && fifo->tryPopLatest (std::forward<Consumer> (consumer));
+    }
+
+    std::uint64_t getDroppedSpectrumFrameCount() const noexcept
+    {
+        const auto* fifo = spectrumFrameFifo.get();
+        return fifo != nullptr ? fifo->getDroppedFrameCount() : 0;
+    }
+
+    std::uint64_t getStaleSpectrumFrameCount() const noexcept
+    {
+        const auto* fifo = spectrumFrameFifo.get();
+        return fifo != nullptr ? fifo->getStaleFrameCount() : 0;
+    }
+
+    /** Holds analysis dimensions and window coefficients. */
     struct PowerBuffer
     {
-        /** Outgoing power for each time step */
-        OwnedArray<AtomicallyShared<std::vector<float>>> power;
-
         /** Hamming window to apply to buffer */
         Array<float> window;
 
@@ -186,13 +204,6 @@ public:
             }
         }
 
-        /** Resets output publication slots */
-        void reset()
-        {
-            for (int i = 0; i < power.size(); ++i)
-                power[i]->reset();
-        }
-
         /** Resizes all buffers */
         void resize()
         {
@@ -209,17 +220,6 @@ public:
                 {
                     window.add (0.54 - 0.46 * cos (2 * PI * n / N));
                 }
-            }
-
-            power.clear();
-
-            LOGD ("Creating ", stepsPerBuffer + 5, " power buffers of length ", nFreqs);
-
-            for (int i = 0; i < stepsPerBuffer + 5; i++)
-            {
-                power.add (new AtomicallyShared<std::vector<float>>());
-                power.getLast()->map ([this] (std::vector<float>& arr)
-                                      { arr.resize (nFreqs); });
             }
 
             numFreqsChanged = false;
@@ -244,13 +244,16 @@ private:
     Array<int> channels;
 
     static constexpr std::size_t INPUT_QUEUE_CAPACITY = 8;
+    static constexpr std::size_t OUTPUT_QUEUE_CAPACITY = 8;
     static constexpr std::size_t MAX_INPUT_BLOCK_SAMPLES = 8192;
     std::unique_ptr<spectrumviewer::SampleBlockFifo> inputFifo;
+    std::unique_ptr<spectrumviewer::SpectrumFrameFifo> spectrumFrameFifo;
     std::unique_ptr<spectrumviewer::SampleWindowAssembler> windowAssembler;
     OwnedArray<FFTWArrayType> fftBuffers;
+    std::vector<float> powerScratch;
     std::array<int, MAX_CHANS> acquisitionChannels {};
     std::size_t acquisitionChannelCount = 0;
-    std::size_t nextPowerSlot = 0;
+    std::uint64_t nextSpectrumFrameSequence = 0;
     std::uint64_t acquisitionGeneration = 0;
     std::uint64_t workerConfigurationGeneration = 0;
     bool workerHasConfiguration = false;

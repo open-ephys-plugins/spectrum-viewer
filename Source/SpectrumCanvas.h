@@ -26,7 +26,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <VisualizerWindowHeaders.h>
 
-#include "AtomicSynchronizer.h"
 #include "SpectrumViewer.h"
 
 #include <DspLib.h>

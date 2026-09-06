@@ -115,6 +115,7 @@ public:
 
     // Calculates power for input channels based on powerbuffer size.
     void getPower (std::vector<float>& power, int channelIndex);
+    void getPower (float* power, std::size_t numBins, int channelIndex);
 
 private:
     // Generate wavelet to be multplied by the channel spectrum

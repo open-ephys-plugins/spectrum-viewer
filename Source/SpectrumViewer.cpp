@@ -239,7 +239,10 @@ void SpectrumViewer::run()
 
 void SpectrumViewer::processWindow (const spectrumviewer::SampleWindowAssembler::WindowView& window)
 {
-    if (TFR == nullptr || window.numChannels != static_cast<std::size_t> (fftBuffers.size()))
+    auto* outputFifo = spectrumFrameFifo.get();
+    if (TFR == nullptr || outputFifo == nullptr
+        || window.numChannels != static_cast<std::size_t> (fftBuffers.size())
+        || powerScratch.size() != window.numChannels * outputFifo->getBinCount())
         return;
 
     for (std::size_t channel = 0; channel < window.numChannels; ++channel)
@@ -259,20 +262,17 @@ void SpectrumViewer::processWindow (const spectrumviewer::SampleWindowAssembler:
         copyRegion (channelView.secondData, channelView.secondSize);
         TFR->computeFFT (fftBuffer, static_cast<int> (channel));
 
-        auto& outputs = powerBuffers[channel].power;
-        if (outputs.isEmpty())
-            continue;
-
-        auto& output = *outputs[static_cast<int> (nextPowerSlot % static_cast<std::size_t> (outputs.size()))];
-        AtomicScopedWritePtr<std::vector<float>> powerWriter (output);
-        if (powerWriter.isValid())
-        {
-            TFR->getPower (powerWriter.operator*(), static_cast<int> (channel));
-            powerWriter.pushUpdate();
-        }
+        TFR->getPower (powerScratch.data() + channel * outputFifo->getBinCount(),
+                       outputFifo->getBinCount(),
+                       static_cast<int> (channel));
     }
 
-    ++nextPowerSlot;
+    outputFifo->tryPush (powerScratch.data(),
+                         window.numChannels,
+                         outputFifo->getBinCount(),
+                         window.firstSample,
+                         acquisitionGeneration,
+                         nextSpectrumFrameSequence++);
 }
 
 void SpectrumViewer::updateSettings()
@@ -317,13 +317,9 @@ bool SpectrumViewer::startAcquisition()
     {
         bufferResizer->waitForThreadToExit (5000);
 
-        for (int i = 0; i < MAX_CHANS; i++)
-        {
-            powerBuffers[i].reset();
-        }
-
         acquisitionChannelCount = static_cast<std::size_t> (std::min (channels.size(), MAX_CHANS));
-        if (acquisitionChannelCount == 0 || powerBuffers[0].bufferSize <= 0 || powerBuffers[0].stepSize <= 0)
+        if (acquisitionChannelCount == 0 || powerBuffers[0].bufferSize <= 0
+            || powerBuffers[0].stepSize <= 0 || tfrParams.nFreqs <= 0)
             return isEnabled;
 
         for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
@@ -331,6 +327,10 @@ bool SpectrumViewer::startAcquisition()
 
         inputFifo = std::make_unique<spectrumviewer::SampleBlockFifo> (
             acquisitionChannelCount, MAX_INPUT_BLOCK_SAMPLES, INPUT_QUEUE_CAPACITY);
+        spectrumFrameFifo = std::make_unique<spectrumviewer::SpectrumFrameFifo> (
+            acquisitionChannelCount,
+            static_cast<std::size_t> (tfrParams.nFreqs),
+            OUTPUT_QUEUE_CAPACITY);
         windowAssembler = std::make_unique<spectrumviewer::SampleWindowAssembler> (
             acquisitionChannelCount,
             static_cast<std::size_t> (powerBuffers[0].bufferSize),
@@ -340,7 +340,8 @@ bool SpectrumViewer::startAcquisition()
         for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
             fftBuffers.add (new FFTWArrayType (powerBuffers[0].bufferSize));
 
-        nextPowerSlot = 0;
+        powerScratch.resize (acquisitionChannelCount * static_cast<std::size_t> (tfrParams.nFreqs));
+        nextSpectrumFrameSequence = 0;
         ++acquisitionGeneration;
         workerConfigurationGeneration = 0;
         workerHasConfiguration = false;
@@ -357,8 +358,10 @@ bool SpectrumViewer::stopAcquisition()
 {
     stopThread (1000);
     fftBuffers.clear();
+    powerScratch.clear();
     windowAssembler.reset();
     inputFifo.reset();
+    spectrumFrameFifo.reset();
     acquisitionChannelCount = 0;
     return true;
 }
