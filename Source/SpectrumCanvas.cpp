@@ -230,6 +230,12 @@ void SpectrumCanvas::refresh()
 
     processor->consumeLatestSpectrumFrame ([&] (const spectrumviewer::SpectrumFrameFifo::FrameView& frame)
                                            {
+        canvasPlot->beginSpectrumFrame (
+            frame.configurationGeneration,
+            frame.sequence,
+            frame.numChannels,
+            static_cast<double> (frame.descriptor.hopSampleCount)
+                / frame.descriptor.sampleRateHz);
         for (std::size_t channel = 0; channel < frame.numChannels; ++channel)
         {
             if (displayType == POWER_SPECTRUM)
@@ -252,7 +258,7 @@ void SpectrumCanvas::refresh()
         } });
 
     if (needsRedraw)
-        canvasPlot->plotPowerSpectrum();
+        canvasPlot->plotPowerSpectrum (true);
 }
 
 void SpectrumCanvas::setDisplayType (DisplayType type)
@@ -280,7 +286,10 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
 {
     plt = std::make_unique<FrequencyPlot>();
     plt->title ("POWER SPECTRUM");
-    XYRange range { 0, 1000, 0, 5 };
+    const auto initialAmplitudeRange = amplitudeRange.getCurrentRange();
+    XYRange range { 0, 1000,
+                    initialAmplitudeRange.minimum,
+                    initialAmplitudeRange.maximum };
     plt->setRange (range);
     plt->xlabel ("Frequency (Hz)");
     plt->ylabel ("PSD (dB re native unit^2/Hz)");
@@ -362,7 +371,9 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
         xvalues.push_back (i * freqStep);
     }
 
-    XYRange range { (float) freqStart_, (float) freqEnd_, 0, 5 };
+    const auto amplitude = amplitudeRange.getCurrentRange();
+    XYRange range { (float) freqStart_, (float) freqEnd_,
+                    amplitude.minimum, amplitude.maximum };
     plt->setRange (range);
 
     for (int ch = 0; ch < MAX_CHANS; ch++)
@@ -400,44 +411,38 @@ void CanvasPlot::setDisplayType (DisplayType type)
     repaint();
 }
 
-void CanvasPlot::plotPowerSpectrum()
+void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
 {
     plt->clear();
     updateAmplitudeAxisLabel();
 
-    auto minimum = std::numeric_limits<float>::infinity();
-    auto maximum = -std::numeric_limits<float>::infinity();
     const auto plotFrequencies = plt->transformFrequencies (xvalues, frequencyScale);
     for (int i = 0; i < activeChannels.size(); i++)
     {
-        for (const auto value : currPower[static_cast<std::size_t> (i)])
-        {
-            if (std::isfinite (value))
-            {
-                minimum = std::min (minimum, value);
-                maximum = std::max (maximum, value);
-            }
-        }
-        for (const auto value : currPeakPower[static_cast<std::size_t> (i)])
-            if (std::isfinite (value))
-                maximum = std::max (maximum, value);
         plt->plot (plotFrequencies, currPeakPower[i], chanColors[i], 1.0f, 0.35f);
         plt->plot (plotFrequencies, currPower[i], chanColors[i], 1.5f);
     }
 
-    if (std::isfinite (minimum) && std::isfinite (maximum))
+    if (! xvalues.empty())
     {
-        const auto padding = std::max (1.0f, 0.05f * (maximum - minimum));
-        XYRange range;
-        plt->getRange (range);
-        range.ymin = minimum - padding;
-        range.ymax = maximum + padding;
-        if (! xvalues.empty())
-            plt->setFrequencyAxis (frequencyScale,
-                                   displayMinimumFrequencyHz,
-                                   displayMaximumFrequencyHz,
-                                   range.ymin,
-                                   range.ymax);
+        if (amplitudeUnitsChanged)
+        {
+            amplitudeRange.resetAutomatic();
+            amplitudeUnitsChanged = false;
+        }
+        const auto range = updateAutomaticRange
+                               ? amplitudeRange.update (currPower,
+                                                        currPeakPower,
+                                                        frameChannelCount,
+                                                        pendingRangeElapsedSeconds)
+                               : amplitudeRange.getCurrentRange();
+        if (updateAutomaticRange)
+            pendingRangeElapsedSeconds = 0.0;
+        plt->setFrequencyAxis (frequencyScale,
+                               displayMinimumFrequencyHz,
+                               displayMaximumFrequencyHz,
+                               range.minimum,
+                               range.maximum);
     }
 }
 
@@ -459,7 +464,10 @@ void CanvasPlot::updatePowerSpectrum (const float* meanPsd,
     displayMaximumFrequencyHz = static_cast<float> (maximumFrequencyHz);
     if (channelIndex == 0)
         xvalues.assign (frequenciesHz, frequenciesHz + valueCount);
-    channelUnits[static_cast<std::size_t> (channelIndex)] = unit;
+    auto& channelUnit = channelUnits[static_cast<std::size_t> (channelIndex)];
+    if (channelUnit != unit)
+        amplitudeUnitsChanged = true;
+    channelUnit = unit;
     auto& destination = currPower[static_cast<std::size_t> (channelIndex)];
     auto& peakDestination = currPeakPower[static_cast<std::size_t> (channelIndex)];
     auto& linearDestination = currLinearPower[static_cast<std::size_t> (channelIndex)];
@@ -486,6 +494,54 @@ void CanvasPlot::setAmplitudeDisplay (SpectrumAmplitudeDisplay display)
 {
     amplitudeDisplay = display;
     updateAmplitudeAxisLabel();
+}
+
+void CanvasPlot::setAmplitudeRangeMode (spectrumviewer::AmplitudeRangeMode mode)
+{
+    amplitudeRange.setMode (mode);
+    plotPowerSpectrum (mode == spectrumviewer::AmplitudeRangeMode::automatic);
+}
+
+bool CanvasPlot::setFixedAmplitudeRange (float minimumDb, float maximumDb)
+{
+    if (! amplitudeRange.setFixedRange (minimumDb, maximumDb))
+        return false;
+    if (amplitudeRange.getMode() == spectrumviewer::AmplitudeRangeMode::fixed)
+        plotPowerSpectrum();
+    return true;
+}
+
+spectrumviewer::AmplitudeRangeMode CanvasPlot::getAmplitudeRangeMode() const noexcept
+{
+    return amplitudeRange.getMode();
+}
+
+spectrumviewer::DecibelRange CanvasPlot::getAmplitudeRange() const noexcept
+{
+    return amplitudeRange.getCurrentRange();
+}
+
+bool CanvasPlot::hasAutomaticAmplitudeRange() const noexcept
+{
+    return amplitudeRange.hasAutomaticRange();
+}
+
+void CanvasPlot::beginSpectrumFrame (std::uint64_t configurationGeneration,
+                                     std::uint64_t sequence,
+                                     std::size_t channelCount,
+                                     double hopDurationSeconds)
+{
+    frameChannelCount = std::min (channelCount, currPower.size());
+    auto elapsedFrames = std::uint64_t { 1 };
+    if (hasFrameTiming
+        && configurationGeneration == lastConfigurationGeneration
+        && sequence > lastFrameSequence)
+        elapsedFrames = sequence - lastFrameSequence;
+    pendingRangeElapsedSeconds = static_cast<double> (elapsedFrames)
+                                 * hopDurationSeconds;
+    lastConfigurationGeneration = configurationGeneration;
+    lastFrameSequence = sequence;
+    hasFrameTiming = true;
 }
 
 void CanvasPlot::updateAmplitudeAxisLabel()

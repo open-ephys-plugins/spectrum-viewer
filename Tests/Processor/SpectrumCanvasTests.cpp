@@ -178,6 +178,9 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
                plot->getFrequencyCountForTesting());
     EXPECT_EQ (plot->getPeakTraceForTesting (3).size(),
                plot->getFrequencyCountForTesting());
+    const auto fixedLinearRange = plot->getPlotRangeForTesting();
+    EXPECT_FLOAT_EQ (fixedLinearRange.ymin, -120.0f);
+    EXPECT_FLOAT_EQ (fixedLinearRange.ymax, 20.0f);
 
     bool foundPreservedPeak = false;
     for (std::size_t column = 0; column < plot->getFrequencyCountForTesting(); ++column)
@@ -216,6 +219,8 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
     const auto logRange = plot->getPlotRangeForTesting();
     EXPECT_NEAR (logRange.xmin, std::log10 (4.0f), 1.0e-5f);
     EXPECT_NEAR (logRange.xmax, std::log10 (sampleRate * 0.5f), 1.0e-5f);
+    EXPECT_FLOAT_EQ (logRange.ymin, fixedLinearRange.ymin);
+    EXPECT_FLOAT_EQ (logRange.ymax, fixedLinearRange.ymax);
     const auto plottedFrequencies = plot->getPlottedFrequenciesForTesting();
     ASSERT_FALSE (plottedFrequencies.empty());
     EXPECT_GT (plottedFrequencies.front(), logRange.xmin);
@@ -239,5 +244,18 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
     EXPECT_NE (imageHash (logImage), linearHash);
     expectTraceCoverage (logImage, plot->getDrawingBoundsForTesting());
     optionallyWriteImage (logImage, "spectrum-log-asd.png");
+}
+
+TEST_F (SpectrumCanvasTests, SpectralSequenceGapsAdvanceAutoRangeUsingSignalTime)
+{
+    auto* plot = canvas->getPlotPtr();
+    plot->beginSpectrumFrame (7, 10, 8, 0.125);
+    EXPECT_DOUBLE_EQ (plot->getPendingRangeElapsedSecondsForTesting(), 0.125);
+
+    plot->beginSpectrumFrame (7, 14, 8, 0.125);
+    EXPECT_DOUBLE_EQ (plot->getPendingRangeElapsedSecondsForTesting(), 0.5);
+
+    plot->beginSpectrumFrame (8, 2, 8, 0.125);
+    EXPECT_DOUBLE_EQ (plot->getPendingRangeElapsedSecondsForTesting(), 0.125);
 }
 } // namespace

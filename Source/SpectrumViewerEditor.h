@@ -28,6 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 class SpectrumViewerEditor : public VisualizerEditor,
                              public ComboBox::Listener,
+                             public Slider::Listener,
                              private Timer
 {
     friend class SpectrumCanvas;
@@ -48,6 +49,8 @@ public:
     /** Called when a ComboBox changes*/
     void comboBoxChanged (ComboBox* comboBox);
 
+    void sliderValueChanged (Slider* slider) override;
+
     /** Creates the canvas */
     Visualizer* createNewCanvas();
 
@@ -60,6 +63,8 @@ public:
 
 private:
     void timerCallback() override;
+    void updateAmplitudeRangeControls();
+    void applyAmplitudeRangeToCanvas();
 
     std::unique_ptr<Label> displayLabel;
     std::unique_ptr<ComboBox> displayType;
@@ -73,6 +78,13 @@ private:
     std::unique_ptr<ComboBox> frequencyScale;
     std::unique_ptr<Label> amplitudeLabel;
     std::unique_ptr<ComboBox> amplitudeDisplay;
+    std::unique_ptr<Label> amplitudeRangeLabel;
+    std::unique_ptr<ComboBox> amplitudeRangeMode;
+    std::unique_ptr<Label> minimumDbLabel;
+    std::unique_ptr<Slider> minimumDb;
+    std::unique_ptr<Label> maximumDbLabel;
+    std::unique_ptr<Slider> maximumDb;
+    std::unique_ptr<Label> automaticRangeLabel;
     std::unique_ptr<Label> readinessLabel;
 
     Array<Range<int>> freqRanges;

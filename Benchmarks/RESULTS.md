@@ -98,12 +98,17 @@ segment: five-repetition medians were 41--50 ms across profiles and axes. A
 plugin-local `XYLine` subclass now submits one JUCE path per trace while retaining
 the host plot's axes, grid, ownership, and clearing behavior.
 
-In a 30-repetition run after batching, linear-axis repaint p50/p99 was 9.15/18.0
-ms Fast, 7.50/9.30 ms Balanced, and 5.47/8.45 ms Fine. Log-axis p50/p99 was
-4.80/7.57, 5.14/6.21, and 4.20/5.82 ms respectively. Profile differences here
-come from trace geometry and host scheduling, not different column counts. CPU
-scaling was enabled and the Fast linear tail was noisy; these are diagnostic
-software-raster results, not target-rig acceptance figures.
+In a 30-repetition run with the fixed default amplitude range, linear-axis
+repaint p50/p99 was 6.53/14.2 ms Fast, 5.28/9.07 ms Balanced, and 3.52/4.66 ms
+Fine. Log-axis p50/p99 was 3.71/5.77, 4.46/7.75, and 3.82/4.70 ms
+respectively. Profile differences here come from trace geometry and host
+scheduling, not different column counts. CPU scaling was enabled and the Fast
+linear tail was noisy; these are diagnostic software-raster results, not
+target-rig acceptance figures.
+
+The robust auto-amplitude fit and time update took 43.5 microseconds median for
+eight 1,920-column mean/peak traces over 30 repetitions. This work runs only for
+new spectral frames, never for repaint-only callbacks.
 
 The matching worker-to-display p50/p99 was 0.451/0.457 ms Fast, 1.043/1.063 ms
 Balanced, and 5.673/5.893 ms Fine on a linear axis. Log reduction remained

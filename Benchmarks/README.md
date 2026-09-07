@@ -31,6 +31,8 @@ linear and logarithmic axes. When processor tests are enabled,
 for a production frame, and times an eight-channel 2,048 x 900 software repaint.
 It isolates paint cost from worker scheduling; interpret it together with
 `WorkerToDisplay`, not as a single end-to-end latency measurement.
+`GUI/AutoAmplitudeRange` separately times the robust range fit and signal-time
+update for eight 1,920-column mean/peak traces.
 
 Omit `BENCHMARK_NATIVE_ARCH` for a portable build. Never distribute a native
 benchmark binary: it may contain instructions unsupported by other Open Ephys
@@ -63,7 +65,7 @@ For the integrated eight-channel display path:
 
 ```bash
 ./Build/Benchmarks/spectrum_viewer_benchmarks \
-  --benchmark_filter='^(WorkerToDisplay|GUI/SoftwareRepaint)' \
+  --benchmark_filter='^(WorkerToDisplay|GUI/)' \
   --benchmark_repetitions=30 --benchmark_report_aggregates_only=true
 ```
 

@@ -52,6 +52,7 @@ add_executable(
 	../Source/ReferencePeriodogram.cpp
 	../Source/SingleTaperPeriodogram.cpp
 	../Source/SpectrumAnalysis.cpp
+	../Source/SpectrumAmplitudeRange.cpp
 	../Source/SpectrumDisplayReducer.cpp
 	AsyncSpectrumAnalysisTests.cpp
 	BacklogSheddingPolicyTests.cpp
@@ -64,6 +65,7 @@ add_executable(
 	SampleWindowAssemblerTests.cpp
 	SingleTaperPeriodogramTests.cpp
 	SpectrumAnalysisTests.cpp
+	SpectrumAmplitudeRangeTests.cpp
 	SpectrumDisplayReducerTests.cpp
 	SpectrumFrameFifoTests.cpp)
 

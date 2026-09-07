@@ -99,10 +99,56 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     amplitudeLabel->setBounds (123, 178, 80, 18);
     addAndMakeVisible (amplitudeLabel.get());
 
+    amplitudeRangeMode = std::make_unique<ComboBox> ("AmplitudeRangeMode");
+    amplitudeRangeMode->setBounds (15, 203, 100, 18);
+    amplitudeRangeMode->addListener (this);
+    amplitudeRangeMode->addItemList ({ "Auto", "Fixed" }, 1);
+    amplitudeRangeMode->setSelectedId (2, dontSendNotification);
+    addAndMakeVisible (amplitudeRangeMode.get());
+
+    amplitudeRangeLabel = std::make_unique<Label> ("AmplitudeRangeLabel", "dB Range");
+    amplitudeRangeLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    amplitudeRangeLabel->setBounds (123, 203, 80, 18);
+    addAndMakeVisible (amplitudeRangeLabel.get());
+
+    minimumDb = std::make_unique<Slider> ("MinimumDb");
+    minimumDb->setRange (-240.0, 100.0, 1.0);
+    minimumDb->setValue (-120.0, dontSendNotification);
+    minimumDb->setSliderStyle (Slider::LinearHorizontal);
+    minimumDb->setTextBoxStyle (Slider::TextBoxLeft, false, 55, 18);
+    minimumDb->setBounds (15, 228, 100, 18);
+    minimumDb->addListener (this);
+    addAndMakeVisible (minimumDb.get());
+
+    minimumDbLabel = std::make_unique<Label> ("MinimumDbLabel", "Minimum dB");
+    minimumDbLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    minimumDbLabel->setBounds (123, 228, 90, 18);
+    addAndMakeVisible (minimumDbLabel.get());
+
+    maximumDb = std::make_unique<Slider> ("MaximumDb");
+    maximumDb->setRange (-220.0, 120.0, 1.0);
+    maximumDb->setValue (20.0, dontSendNotification);
+    maximumDb->setSliderStyle (Slider::LinearHorizontal);
+    maximumDb->setTextBoxStyle (Slider::TextBoxLeft, false, 55, 18);
+    maximumDb->setBounds (15, 253, 100, 18);
+    maximumDb->addListener (this);
+    addAndMakeVisible (maximumDb.get());
+
+    maximumDbLabel = std::make_unique<Label> ("MaximumDbLabel", "Maximum dB");
+    maximumDbLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    maximumDbLabel->setBounds (123, 253, 90, 18);
+    addAndMakeVisible (maximumDbLabel.get());
+
+    automaticRangeLabel = std::make_unique<Label> ("AutomaticRangeLabel", "Awaiting spectrum...");
+    automaticRangeLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
+    automaticRangeLabel->setBounds (15, 228, 200, 18);
+    addAndMakeVisible (automaticRangeLabel.get());
+
     readinessLabel = std::make_unique<Label> ("AnalysisReadiness", "Stopped");
     readinessLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
-    readinessLabel->setBounds (15, 203, 220, 18);
+    readinessLabel->setBounds (15, 278, 220, 18);
     addAndMakeVisible (readinessLabel.get());
+    updateAmplitudeRangeControls();
     startTimerHz (4);
 }
 
@@ -121,6 +167,12 @@ Visualizer* SpectrumViewerEditor::createNewCanvas()
     spectrumCanvas->setDisplayType (type);
     spectrumCanvas->getPlotPtr()->setAmplitudeDisplay (
         static_cast<SpectrumAmplitudeDisplay> (amplitudeDisplay->getSelectedId()));
+    spectrumCanvas->getPlotPtr()->setFixedAmplitudeRange (
+        static_cast<float> (minimumDb->getValue()),
+        static_cast<float> (maximumDb->getValue()));
+    spectrumCanvas->getPlotPtr()->setAmplitudeRangeMode (
+        static_cast<spectrumviewer::AmplitudeRangeMode> (
+            amplitudeRangeMode->getSelectedId()));
 
     return spectrumCanvas;
 }
@@ -182,6 +234,50 @@ void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
         sc->getPlotPtr()->setAmplitudeDisplay (
             static_cast<SpectrumAmplitudeDisplay> (cb->getSelectedId()));
     }
+    else if (cb == amplitudeRangeMode.get())
+    {
+        updateAmplitudeRangeControls();
+        applyAmplitudeRangeToCanvas();
+    }
+}
+
+void SpectrumViewerEditor::sliderValueChanged (Slider* slider)
+{
+    constexpr double minimumSpanDb = 20.0;
+    if (slider == minimumDb.get()
+        && minimumDb->getValue() > maximumDb->getValue() - minimumSpanDb)
+        minimumDb->setValue (maximumDb->getValue() - minimumSpanDb,
+                             dontSendNotification);
+    else if (slider == maximumDb.get()
+             && maximumDb->getValue() < minimumDb->getValue() + minimumSpanDb)
+        maximumDb->setValue (minimumDb->getValue() + minimumSpanDb,
+                             dontSendNotification);
+    applyAmplitudeRangeToCanvas();
+}
+
+void SpectrumViewerEditor::updateAmplitudeRangeControls()
+{
+    const auto fixed = amplitudeRangeMode->getSelectedId() == 2;
+    minimumDb->setEnabled (fixed);
+    maximumDb->setEnabled (fixed);
+    minimumDb->setVisible (fixed);
+    maximumDb->setVisible (fixed);
+    minimumDbLabel->setVisible (fixed);
+    maximumDbLabel->setVisible (fixed);
+    automaticRangeLabel->setVisible (! fixed);
+}
+
+void SpectrumViewerEditor::applyAmplitudeRangeToCanvas()
+{
+    auto* spectrumCanvas = static_cast<SpectrumCanvas*> (canvas.get());
+    if (spectrumCanvas == nullptr)
+        return;
+    auto* plot = spectrumCanvas->getPlotPtr();
+    plot->setFixedAmplitudeRange (static_cast<float> (minimumDb->getValue()),
+                                  static_cast<float> (maximumDb->getValue()));
+    plot->setAmplitudeRangeMode (
+        static_cast<spectrumviewer::AmplitudeRangeMode> (
+            amplitudeRangeMode->getSelectedId()));
 }
 
 void SpectrumViewerEditor::timerCallback()
@@ -214,6 +310,21 @@ void SpectrumViewerEditor::timerCallback()
             break;
     }
     readinessLabel->setText (text, dontSendNotification);
+    auto* spectrumCanvas = static_cast<SpectrumCanvas*> (canvas.get());
+    if (spectrumCanvas != nullptr && amplitudeRangeMode->getSelectedId() == 1)
+    {
+        auto* plot = spectrumCanvas->getPlotPtr();
+        if (plot->hasAutomaticAmplitudeRange())
+        {
+            const auto range = plot->getAmplitudeRange();
+            automaticRangeLabel->setText (String (range.minimum, 1) + " to "
+                                              + String (range.maximum, 1) + " dB",
+                                          dontSendNotification);
+        }
+        else
+            automaticRangeLabel->setText ("Awaiting spectrum...",
+                                          dontSendNotification);
+    }
 }
 
 void SpectrumViewerEditor::selectedStreamHasChanged()
@@ -251,6 +362,9 @@ void SpectrumViewerEditor::saveVisualizerEditorParameters (XmlElement* xml)
     xml->setAttribute ("analysis_profile", analysisProfile->getSelectedId());
     xml->setAttribute ("frequency_scale", frequencyScale->getSelectedId());
     xml->setAttribute ("amplitude_display", amplitudeDisplay->getSelectedId());
+    xml->setAttribute ("amplitude_range_mode", amplitudeRangeMode->getSelectedId());
+    xml->setAttribute ("minimum_db", minimumDb->getValue());
+    xml->setAttribute ("maximum_db", maximumDb->getValue());
 }
 
 void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
@@ -268,4 +382,15 @@ void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
         xml->getIntAttribute ("frequency_scale", 1), sendNotification);
     amplitudeDisplay->setSelectedId (
         xml->getIntAttribute ("amplitude_display", 1), sendNotification);
+    minimumDb->setValue (xml->getDoubleAttribute ("minimum_db", -120.0),
+                         dontSendNotification);
+    maximumDb->setValue (xml->getDoubleAttribute ("maximum_db", 20.0),
+                         dontSendNotification);
+    if (maximumDb->getValue() - minimumDb->getValue() < 20.0)
+    {
+        minimumDb->setValue (-120.0, dontSendNotification);
+        maximumDb->setValue (20.0, dontSendNotification);
+    }
+    amplitudeRangeMode->setSelectedId (
+        xml->getIntAttribute ("amplitude_range_mode", 2), sendNotification);
 }

@@ -26,7 +26,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <VisualizerWindowHeaders.h>
 
+#include "SpectrumAmplitudeRange.h"
 #include "SpectrumViewer.h"
+
+#include <cstdint>
 
 class SpectrumCanvas;
 
@@ -108,9 +111,20 @@ public:
 
     void setAmplitudeDisplay (SpectrumAmplitudeDisplay display);
 
+    void setAmplitudeRangeMode (spectrumviewer::AmplitudeRangeMode mode);
+    bool setFixedAmplitudeRange (float minimumDb, float maximumDb);
+    spectrumviewer::AmplitudeRangeMode getAmplitudeRangeMode() const noexcept;
+    spectrumviewer::DecibelRange getAmplitudeRange() const noexcept;
+    bool hasAutomaticAmplitudeRange() const noexcept;
+
+    void beginSpectrumFrame (std::uint64_t configurationGeneration,
+                             std::uint64_t sequence,
+                             std::size_t channelCount,
+                             double hopDurationSeconds);
+
     void mouseMove (const MouseEvent& event) override;
 
-    void plotPowerSpectrum();
+    void plotPowerSpectrum (bool updateAutomaticRange = false);
 
     void drawSpectrogram (std::vector<float> powerData);
 
@@ -155,6 +169,10 @@ public:
     {
         return plt->getDrawingBoundsForTesting().translated (plt->getX(), plt->getY());
     }
+    double getPendingRangeElapsedSecondsForTesting() const noexcept
+    {
+        return pendingRangeElapsedSeconds;
+    }
 #endif
 
     int legendWidth = 150;
@@ -184,6 +202,8 @@ private:
     std::vector<std::vector<float>> currLinearPower;
     std::vector<std::vector<float>> currLinearPeakPower;
     std::vector<String> channelUnits;
+    spectrumviewer::SpectrumAmplitudeRange amplitudeRange;
+    bool amplitudeUnitsChanged = false;
 
     std::vector<float> xvalues;
 
@@ -200,6 +220,11 @@ private:
     spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
     float displayMinimumFrequencyHz = 0.0f;
     float displayMaximumFrequencyHz = 1000.0f;
+    std::size_t frameChannelCount = 0;
+    std::uint64_t lastConfigurationGeneration = 0;
+    std::uint64_t lastFrameSequence = 0;
+    double pendingRangeElapsedSeconds = 0.0;
+    bool hasFrameTiming = false;
 
     /** Image to draw*/
     std::unique_ptr<Image> spectrogramImg;
