@@ -149,6 +149,7 @@ public:
     const SpectrumAnalysisConfiguration& getConfiguration() const noexcept { return *configuration; }
     std::uint64_t getFailedWindowCount() const noexcept { return failedWindowCount; }
     std::uint64_t getDiscontinuityCount() const noexcept { return assembler.getDiscontinuityCount(); }
+    std::size_t getBufferedSampleCount() const noexcept { return assembler.getBufferedSampleCount(); }
 
 private:
     std::shared_ptr<const SpectrumAnalysisConfiguration> configuration;

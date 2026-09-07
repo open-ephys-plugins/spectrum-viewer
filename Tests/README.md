@@ -61,4 +61,11 @@ the standalone estimator. Published frames contain the complete one-sided PSD,
 fixed source-channel mapping, and the configuration needed to interpret every
 bin.
 
+`AsyncSpectrumAnalysis` prepares the complete immutable runtime—including the
+DPSS bank, history, estimator plan, and output FIFO—on a dedicated
+configuration thread. Tests hold a synthetic build in progress to verify that
+new requests return immediately, that rapid changes coalesce to the newest
+generation, and that a failed build is reported without killing the service.
+Superseded and retired runtimes are destroyed by the configuration thread.
+
 Pure transport and DSP components belong in this fast standalone suite. Processor-level behavior should use the GUI's `ProcessorTester` and fake-source conventions once the processor integration is ready, rather than mocking Open Ephys lifecycle and parameter behavior locally.

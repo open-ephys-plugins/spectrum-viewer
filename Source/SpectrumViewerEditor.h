@@ -27,7 +27,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <VisualizerEditorHeaders.h>
 
 class SpectrumViewerEditor : public VisualizerEditor,
-                             public ComboBox::Listener
+                             public ComboBox::Listener,
+                             private Timer
 {
     friend class SpectrumCanvas;
 
@@ -58,11 +59,17 @@ public:
     void loadVisualizerEditorParameters (XmlElement* xml) override;
 
 private:
+    void timerCallback() override;
+
     std::unique_ptr<Label> displayLabel;
     std::unique_ptr<ComboBox> displayType;
 
     std::unique_ptr<Label> frequencyLabel;
     std::unique_ptr<ComboBox> frequencyRange;
+
+    std::unique_ptr<Label> profileLabel;
+    std::unique_ptr<ComboBox> analysisProfile;
+    std::unique_ptr<Label> readinessLabel;
 
     Array<Range<int>> freqRanges;
 

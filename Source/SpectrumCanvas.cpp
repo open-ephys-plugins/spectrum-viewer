@@ -24,6 +24,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "SpectrumCanvas.h"
 #include <math.h>
 
+#include <limits>
+
 SpectrumCanvas::SpectrumCanvas (SpectrumViewer* n)
     : Visualizer ((GenericProcessor*) n), processor (n), displayType (POWER_SPECTRUM)
 {
@@ -89,10 +91,27 @@ void SpectrumCanvas::endAnimation()
 
 void SpectrumCanvas::refresh()
 {
+    const auto readiness = processor->getAnalysisReadiness();
+    const auto unavailable = readiness == SpectrumAnalysisReadiness::preparing
+                             || readiness == SpectrumAnalysisReadiness::warmingUp
+                             || (readiness == SpectrumAnalysisReadiness::configurationFailed
+                                 && ! processor->hasActiveAnalysis());
+    if (unavailable)
+    {
+        if (! unavailableStateCleared)
+        {
+            canvasPlot->clear();
+            unavailableStateCleared = true;
+        }
+        return;
+    }
+    unavailableStateCleared = false;
+
     bool needsRedraw = false;
 
     processor->consumeLatestSpectrumFrame ([&] (const spectrumviewer::SpectrumFrameFifo::FrameView& frame)
                                            {
+        canvasPlot->setBinWidth (static_cast<float> (frame.descriptor.binWidthHz));
         for (std::size_t channel = 0; channel < frame.numChannels; ++channel)
         {
             std::vector<float> power (frame.getChannelData (channel),
@@ -138,7 +157,7 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
     XYRange range { 0, 1000, 0, 5 };
     plt->setRange (range);
     plt->xlabel ("Frequency (Hz)");
-    plt->ylabel ("Power");
+    plt->ylabel ("PSD (dB)");
     plt->setBackgroundColour (Colour (45, 45, 45));
     plt->setGridColour (Colour (100, 100, 100));
     plt->setInteractive (InteractivePlotMode::OFF);
@@ -158,7 +177,6 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
     for (int ch = 0; ch < MAX_CHANS; ch++)
     {
         currPower[ch].clear();
-        lowPassFilters.add (new OwnedArray<Dsp::Filter>());
     }
 
     for (int i = 0; i < nFreqs; i++)
@@ -193,6 +211,7 @@ void CanvasPlot::updateActiveChans()
 void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep_)
 {
     freqStep = freqStep_;
+    freqStart = freqStart_;
     freqEnd = freqEnd_;
     nFreqs = (int) (freqEnd_ - freqStart_) / freqStep_;
 
@@ -205,27 +224,17 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
     XYRange range { (float) freqStart_, (float) freqEnd_, 0, 5 };
     plt->setRange (range);
 
-    // Create a low pass filter for each frequency within each channel
     for (int ch = 0; ch < MAX_CHANS; ch++)
     {
-        lowPassFilters[ch]->clear();
-        currPower[ch].clear();
-        for (int i = 0; i < nFreqs; i++)
-        {
-            lowPassFilters[ch]->add (new Dsp::SmoothedFilterDesign<Dsp::Butterworth::Design::LowPass // design type
-                                                                   <2>, // order
-                                                                   1, // number of channels (must be const)
-                                                                   Dsp::DirectFormII> (1));
-
-            Dsp::Params params;
-            params[0] = 50; // sample rate (Hz)
-            params[1] = 2; // order
-            params[2] = 1; // cut-off frequency
-            lowPassFilters[ch]->getLast()->setParams (params);
-
-            currPower[ch].push_back (0.0f);
-        }
+        currPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
     }
+}
+
+void CanvasPlot::setBinWidth (float newBinWidth)
+{
+    if (std::isfinite (newBinWidth) && newBinWidth > 0.0f
+        && std::abs (newBinWidth - freqStep) > std::numeric_limits<float>::epsilon())
+        setFrequencyRange (freqStart, freqEnd, newBinWidth);
 }
 
 void CanvasPlot::setDisplayType (DisplayType type)
@@ -251,21 +260,29 @@ void CanvasPlot::plotPowerSpectrum()
 {
     plt->clear();
 
+    auto minimum = std::numeric_limits<float>::infinity();
+    auto maximum = -std::numeric_limits<float>::infinity();
     for (int i = 0; i < activeChannels.size(); i++)
     {
-        if (std::isgreater (maxPower, 0.0f))
+        for (const auto value : currPower[static_cast<std::size_t> (i)])
         {
-            XYRange pltRange;
-            plt->getRange (pltRange);
-
-            if (pltRange.ymax < maxPower || (pltRange.ymax - maxPower) > 5)
+            if (std::isfinite (value))
             {
-                pltRange.ymax = maxPower;
-                plt->setRange (pltRange);
+                minimum = std::min (minimum, value);
+                maximum = std::max (maximum, value);
             }
         }
-
         plt->plot (xvalues, currPower[i], chanColors[i], 1.0f);
+    }
+
+    if (std::isfinite (minimum) && std::isfinite (maximum))
+    {
+        const auto padding = std::max (1.0f, 0.05f * (maximum - minimum));
+        XYRange range;
+        plt->getRange (range);
+        range.ymin = minimum - padding;
+        range.ymax = maximum + padding;
+        plt->setRange (range);
     }
 }
 
@@ -275,64 +292,17 @@ void CanvasPlot::updatePowerSpectrum (std::vector<float> powerData, int channelI
         return;
     powerData.resize (std::min (powerData.size(), currPower[static_cast<std::size_t> (channelIndex)].size()));
 
-    // currPower[channelIndex].clear();
-    std::vector<float> powerBuffer;
-
-    for (int n = 0; n < powerData.size(); n++)
+    auto& destination = currPower[static_cast<std::size_t> (channelIndex)];
+    for (std::size_t n = 0; n < powerData.size(); ++n)
     {
-        if (std::isfinite (powerData[n]))
+        const auto power = powerData[n];
+        if (std::isfinite (power) && power > 0.0f)
         {
-            // Apply low pass filter for that frequency
-            float* pData = &powerData[n];
-            lowPassFilters[channelIndex]->getUnchecked (n)->process (1, &pData);
-
-            if (std::isgreaterequal (*pData, 1.0f))
-            {
-                float logP = log (*pData);
-
-                if (logP > maxPower)
-                    maxPower = logP;
-
-                powerBuffer.push_back (logP);
-            }
-            else
-            {
-                powerBuffer.push_back (currPower[channelIndex][n]);
-            }
+            const auto decibels = 10.0f * std::log10 (power);
+            destination[n] = decibels;
         }
         else
-        {
-            powerBuffer.push_back (currPower[channelIndex][n]);
-        }
-    }
-
-    if (true)
-    {
-        float window[] = { 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111, 0.1111 };
-
-        // apply smoothing
-        for (int n = 0; n < powerBuffer.size(); n++)
-        {
-            float value = 0;
-
-            for (int offset = -4; offset < 5; offset++)
-            {
-                int i = n + offset;
-
-                if (i < 0)
-                {
-                    i = 0;
-                }
-                else if (i >= powerBuffer.size())
-                {
-                    i = powerBuffer.size() - 1;
-                }
-
-                value += (powerBuffer[i] * window[offset + 4]);
-            }
-
-            currPower.at (channelIndex).at (n) = value;
-        }
+            destination[n] = std::numeric_limits<float>::quiet_NaN();
     }
 }
 
@@ -462,16 +432,8 @@ void CanvasPlot::clear()
 {
     for (int ch = 0; ch < MAX_CHANS; ch++)
     {
-        currPower[ch].clear();
-
-        for (int i = 0; i < nFreqs; i++)
-        {
-            lowPassFilters[ch]->getUnchecked (i)->reset();
-            currPower[ch].push_back (0.0f);
-        }
+        currPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
     }
-
-    maxPower = 0.0f;
 
     spectrogramImg->clear (spectrogramImg->getBounds());
     plt->clear();

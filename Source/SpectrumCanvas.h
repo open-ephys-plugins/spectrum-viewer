@@ -28,8 +28,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "SpectrumViewer.h"
 
-#include <DspLib.h>
-
 class SpectrumCanvas;
 
 // Component for housing power spectrum & spectrograph plots
@@ -54,6 +52,8 @@ public:
     void updateActiveChans();
 
     void setFrequencyRange (int freqStart, int freqEnd, float freqStep);
+
+    void setBinWidth (float newBinWidth);
 
     void updatePowerSpectrum (std::vector<float> powerData, int channelIndex);
 
@@ -90,8 +90,6 @@ private:
 
     int rowHeight = 50;
 
-    float maxPower = 0.0f;
-
     std::vector<std::vector<float>> currPower; // channels x freqs
 
     std::vector<float> xvalues;
@@ -99,6 +97,7 @@ private:
     std::unique_ptr<InteractivePlot> plt;
 
     float freqStep;
+    int freqStart = 0;
     int nFreqs;
     int freqEnd;
 
@@ -106,8 +105,6 @@ private:
 
     /** Image to draw*/
     std::unique_ptr<Image> spectrogramImg;
-
-    OwnedArray<OwnedArray<Dsp::Filter>> lowPassFilters;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CanvasPlot);
 };
@@ -160,6 +157,7 @@ private:
     juce::Rectangle<int> canvasBounds;
 
     DisplayType displayType;
+    bool unavailableStateCleared = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumCanvas);
 };

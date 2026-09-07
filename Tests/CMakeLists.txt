@@ -47,10 +47,12 @@ add_executable(
 	spectrum_viewer_tests
 	${OPENEPHYS_FFTW_SOURCE_DIR}/Source/OpenEphysFFTWBatch.cpp
 	../Source/DpssTapers.cpp
+	../Source/AsyncSpectrumAnalysis.cpp
 	../Source/MultitaperPeriodogram.cpp
 	../Source/ReferencePeriodogram.cpp
 	../Source/SingleTaperPeriodogram.cpp
 	../Source/SpectrumAnalysis.cpp
+	AsyncSpectrumAnalysisTests.cpp
 	JuceAbstractFifo.cpp
 	OpenEphysFFTWBatchTests.cpp
 	DpssTapersTests.cpp

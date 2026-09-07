@@ -200,6 +200,14 @@ public:
     std::size_t getHopSize() const noexcept { return hopSampleCount; }
     std::size_t getMaxSamplesPerBlock() const noexcept { return maximumAppendSampleCount; }
     std::size_t getHistorySize() const noexcept { return historySampleCount; }
+    std::size_t getBufferedSampleCount() const noexcept
+    {
+        if (! hasExpectedSample)
+            return 0;
+        const auto available = static_cast<std::size_t> (
+            nextExpectedSample - nextWindowFirstSample);
+        return std::min (available, windowSampleCount);
+    }
     std::uint64_t getDiscontinuityCount() const noexcept { return discontinuityCount; }
 
 private:

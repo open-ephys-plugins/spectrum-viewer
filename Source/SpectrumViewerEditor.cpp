@@ -61,6 +61,24 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     frequencyLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
     frequencyLabel->setBounds (123, 103, 80, 18);
     addAndMakeVisible (frequencyLabel.get());
+
+    analysisProfile = std::make_unique<ComboBox> ("AnalysisProfile");
+    analysisProfile->setBounds (15, 128, 100, 18);
+    analysisProfile->addListener (this);
+    analysisProfile->addItemList ({ "Fast", "Balanced", "Fine" }, 1);
+    analysisProfile->setSelectedId (1, dontSendNotification);
+    addAndMakeVisible (analysisProfile.get());
+
+    profileLabel = std::make_unique<Label> ("AnalysisProfileLabel", "Analysis");
+    profileLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    profileLabel->setBounds (123, 128, 80, 18);
+    addAndMakeVisible (profileLabel.get());
+
+    readinessLabel = std::make_unique<Label> ("AnalysisReadiness", "Stopped");
+    readinessLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
+    readinessLabel->setBounds (15, 153, 200, 18);
+    addAndMakeVisible (readinessLabel.get());
+    startTimerHz (4);
 }
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
@@ -121,6 +139,44 @@ void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
                                                  processor->getFreqStep());
         }
     }
+    else if (cb == analysisProfile.get())
+    {
+        auto processor = static_cast<SpectrumViewer*> (getProcessor());
+        processor->setAnalysisProfile (
+            static_cast<SpectrumAnalysisProfile> (analysisProfile->getSelectedId()));
+    }
+}
+
+void SpectrumViewerEditor::timerCallback()
+{
+    auto processor = static_cast<SpectrumViewer*> (getProcessor());
+    String text;
+    switch (processor->getAnalysisReadiness())
+    {
+        case SpectrumAnalysisReadiness::preparing:
+            text = "Preparing analysis...";
+            break;
+        case SpectrumAnalysisReadiness::warmingUp:
+            text = "Warming up "
+                   + String (processor->getWarmupSampleCount()) + "/"
+                   + String (processor->getWarmupTargetSampleCount());
+            break;
+        case SpectrumAnalysisReadiness::live:
+            text = processor->isAnalysisConfigurationPending()
+                       ? "Live (preparing new profile...)"
+                       : "Live";
+            break;
+        case SpectrumAnalysisReadiness::configurationFailed:
+            text = processor->hasActiveAnalysis()
+                       ? "Live (new profile failed)"
+                       : "Analysis configuration failed";
+            break;
+        case SpectrumAnalysisReadiness::stopped:
+        default:
+            text = "Stopped";
+            break;
+    }
+    readinessLabel->setText (text, dontSendNotification);
 }
 
 void SpectrumViewerEditor::selectedStreamHasChanged()
@@ -152,6 +208,7 @@ void SpectrumViewerEditor::saveVisualizerEditorParameters (XmlElement* xml)
 {
     xml->setAttribute ("display_type", displayType->getSelectedId());
     xml->setAttribute ("frequency_range", frequencyRange->getSelectedId());
+    xml->setAttribute ("analysis_profile", analysisProfile->getSelectedId());
 }
 
 void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
@@ -161,4 +218,7 @@ void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
 
     int selectedRange = xml->getIntAttribute ("frequency_range", 3);
     frequencyRange->setSelectedId (selectedRange, sendNotification);
+
+    int selectedProfile = xml->getIntAttribute ("analysis_profile", 1);
+    analysisProfile->setSelectedId (selectedProfile, sendNotification);
 }
