@@ -37,7 +37,7 @@ namespace spectrumviewer
     Builds sample-indexed overlapping windows on the analysis thread.
 
     appendBlock() copies a complete incoming block into private circular history.
-    consumeReadyWindows() subsequently exposes all newly completed windows. Keeping
+    Ready windows must subsequently be consumed or explicitly discarded. Keeping
     these phases separate allows an input FIFO slot to be released before any DSP.
 
     Callers must consume all ready windows before appending another block. History
@@ -178,6 +178,20 @@ public:
             ++consumed;
         }
         return consumed;
+    }
+
+    /**
+        Advances past the oldest ready windows without exposing their samples.
+
+        Discarding changes estimator cadence, but it does not discard input
+        samples, splice history, or change the sample-indexed hop grid.
+    */
+    std::size_t discardReadyWindows (std::size_t windowsToKeep = 0) noexcept
+    {
+        const auto ready = getNumReadyWindows();
+        const auto discarded = ready > windowsToKeep ? ready - windowsToKeep : 0;
+        nextWindowFirstSample += static_cast<std::int64_t> (discarded * hopSampleCount);
+        return discarded;
     }
 
     bool hasReadyWindow() const noexcept

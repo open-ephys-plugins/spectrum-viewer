@@ -23,6 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "SpectrumViewer.h"
 
+#include "BacklogSheddingPolicy.h"
 #include "SpectrumViewerEditor.h"
 
 #include <cmath>
@@ -217,6 +218,7 @@ void SpectrumViewer::run()
         bool consumedBlock = false;
         auto* fifo = inputFifo.get();
         auto* pipeline = activeAnalysis != nullptr ? &activeAnalysis->getPipeline() : nullptr;
+        spectrumviewer::BacklogSheddingPolicy sheddingPolicy;
 
         if (fifo != nullptr && pipeline != nullptr)
         {
@@ -248,6 +250,8 @@ void SpectrumViewer::run()
                     break;
 
                 consumedBlock = true;
+                const auto sheddingAction = sheddingPolicy.inputBlockDequeued (
+                    fifo->getNumReady() > 0);
                 if (appendResult.status != spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::accepted)
                 {
                     if (appendResult.status == spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::configurationMismatch)
@@ -262,6 +266,19 @@ void SpectrumViewer::run()
 
                 if (appendResult.discontinuity)
                     inputDiscontinuities.store (pipeline->getDiscontinuityCount(), std::memory_order_relaxed);
+
+                if (sheddingAction
+                    != spectrumviewer::BacklogSheddingPolicy::Action::processAll)
+                {
+                    const auto shed = sheddingAction
+                                              == spectrumviewer::BacklogSheddingPolicy::Action::discardAll
+                                          ? pipeline->discardReadyFrames()
+                                          : pipeline->discardReadyFramesExceptLatest();
+                    shedSpectrumWindows.fetch_add (shed, std::memory_order_relaxed);
+                    if (sheddingAction
+                        == spectrumviewer::BacklogSheddingPolicy::Action::discardAll)
+                        continue;
+                }
 
                 auto* outputFifo = &activeAnalysis->getFrameFifo();
                 const auto publishFrame = [outputFifo] (const auto& frame)
@@ -408,6 +425,7 @@ bool SpectrumViewer::startAcquisition()
         rejectedInputBlocks.store (0, std::memory_order_relaxed);
         inputDiscontinuities.store (0, std::memory_order_relaxed);
         failedSpectrumWindows.store (0, std::memory_order_relaxed);
+        shedSpectrumWindows.store (0, std::memory_order_relaxed);
         unconfiguredInputBlocks.store (0, std::memory_order_relaxed);
         unconfiguredInputSamples.store (0, std::memory_order_relaxed);
         staleConfigurationBlocks.store (0, std::memory_order_relaxed);

@@ -145,19 +145,38 @@ public:
         return completed;
     }
 
+    /** Skips all ready analysis windows while preserving cadence in frame sequence IDs. */
+    std::size_t discardReadyFrames() noexcept { return discardReadyFramesKeeping (0); }
+
+    /** Skips every ready window except the newest one. */
+    std::size_t discardReadyFramesExceptLatest() noexcept
+    {
+        return discardReadyFramesKeeping (1);
+    }
+
     void reset() noexcept { assembler.reset(); }
     const SpectrumAnalysisConfiguration& getConfiguration() const noexcept { return *configuration; }
     std::uint64_t getFailedWindowCount() const noexcept { return failedWindowCount; }
+    std::uint64_t getShedWindowCount() const noexcept { return shedWindowCount; }
     std::uint64_t getDiscontinuityCount() const noexcept { return assembler.getDiscontinuityCount(); }
     std::size_t getBufferedSampleCount() const noexcept { return assembler.getBufferedSampleCount(); }
 
 private:
+    std::size_t discardReadyFramesKeeping (std::size_t count) noexcept
+    {
+        const auto discarded = assembler.discardReadyWindows (count);
+        nextFrameSequence += discarded;
+        shedWindowCount += discarded;
+        return discarded;
+    }
+
     std::shared_ptr<const SpectrumAnalysisConfiguration> configuration;
     SampleWindowAssembler assembler;
     MultitaperPeriodogram estimator;
     std::vector<ChannelSampleView> channelViews;
     std::uint64_t nextFrameSequence = 0;
     std::uint64_t failedWindowCount = 0;
+    std::uint64_t shedWindowCount = 0;
 };
 } // namespace spectrumviewer
 

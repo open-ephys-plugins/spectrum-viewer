@@ -153,6 +153,34 @@ TEST (SampleWindowAssemblerTests, RequiresReadyWindowsToBeConsumedBeforeAnotherA
     EXPECT_TRUE (assembler.appendBlock (secondChannel, 1, second.size(), 4).accepted);
 }
 
+TEST (SampleWindowAssemblerTests, DiscardsOldWindowsWithoutChangingTheHopGrid)
+{
+    SampleWindowAssembler assembler (1, 4, 2, 6);
+    const std::array<float, 8> samples { 0, 1, 2, 3, 4, 5, 6, 7 };
+    const float* first[] { samples.data() };
+
+    const auto append = assembler.appendBlock (first, 1, 6, 100);
+    ASSERT_TRUE (append.accepted);
+    ASSERT_EQ (append.windowsReady, 2u);
+    EXPECT_EQ (assembler.discardReadyWindows (1), 1u);
+
+    std::vector<CapturedWindow> windows;
+    EXPECT_EQ (assembler.consumeReadyWindows ([&] (const auto& window)
+    {
+        windows.push_back ({ window.firstSample, copyChannels (window) });
+    }), 1u);
+    ASSERT_EQ (windows.size(), 1u);
+    EXPECT_EQ (windows[0].firstSample, 102);
+    EXPECT_EQ (windows[0].channels[0], (std::vector<float> { 2, 3, 4, 5 }));
+
+    const float* second[] { samples.data() + 6 };
+    const auto next = assembler.appendBlock (second, 1, 2, 106);
+    ASSERT_TRUE (next.accepted);
+    ASSERT_EQ (next.windowsReady, 1u);
+    EXPECT_EQ (assembler.discardReadyWindows(), 1u);
+    EXPECT_FALSE (assembler.hasReadyWindow());
+}
+
 TEST (SampleWindowAssemblerTests, ExposesWrappedWindowsAsTwoChronologicalRegions)
 {
     SampleWindowAssembler assembler (1, 4, 2, 4);

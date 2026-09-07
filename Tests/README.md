@@ -17,7 +17,14 @@ GoogleTest is fetched at configure time and pinned to the version used by `plugi
 blocks into exact overlapping windows and resets on a sample-index
 discontinuity. It copies a complete block before exposing ready windows, allowing
 the processor to release its preallocated planar `SampleBlockFifo` slot before
-performing any FFT work.
+performing any FFT work. Its explicit discard operation advances along the same
+sample-indexed hop grid without computing obsolete windows.
+
+`BacklogSheddingPolicy` is a queue- and DSP-independent scheduling primitive.
+When a consumer observes queued input behind the block it just dequeued, it
+discards intermediate completed work, retains only the newest work at catch-up,
+and then resumes normal processing. This intentionally small interface is a
+candidate for reuse by other real-time Open Ephys plugins.
 
 `SampleBlockFifo` wraps `juce::AbstractFifo` with preallocated planar block
 storage. Its tests cover Spectrum Viewer policy: complete-block overflow,
@@ -68,4 +75,6 @@ new requests return immediately, that rapid changes coalesce to the newest
 generation, and that a failed build is reported without killing the service.
 Superseded and retired runtimes are destroyed by the configuration thread.
 
-Pure transport and DSP components belong in this fast standalone suite. Processor-level behavior should use the GUI's `ProcessorTester` and fake-source conventions once the processor integration is ready, rather than mocking Open Ephys lifecycle and parameter behavior locally.
+Pure transport and DSP components belong in this fast standalone suite.
+Processor-level lifecycle and overload behavior uses the GUI's `ProcessorTester`
+and fake-source conventions rather than mocking Open Ephys behavior locally.

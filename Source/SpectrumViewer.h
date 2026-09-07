@@ -167,6 +167,12 @@ public:
     /** Returns analysis windows rejected because samples were non-finite. */
     std::uint64_t getFailedSpectrumWindowCount() const noexcept { return failedSpectrumWindows.load (std::memory_order_relaxed); }
 
+    /** Returns obsolete analysis windows skipped while the input queue was backlogged. */
+    std::uint64_t getShedSpectrumWindowCount() const noexcept
+    {
+        return shedSpectrumWindows.load (std::memory_order_relaxed);
+    }
+
     /** Returns callback blocks ignored while no prepared runtime was active. */
     std::uint64_t getUnconfiguredInputBlockCount() const noexcept
     {
@@ -255,6 +261,7 @@ private:
     std::atomic<std::uint64_t> rejectedInputBlocks { 0 };
     std::atomic<std::uint64_t> inputDiscontinuities { 0 };
     std::atomic<std::uint64_t> failedSpectrumWindows { 0 };
+    std::atomic<std::uint64_t> shedSpectrumWindows { 0 };
     std::atomic<std::uint64_t> unconfiguredInputBlocks { 0 };
     std::atomic<std::uint64_t> unconfiguredInputSamples { 0 };
     std::atomic<std::uint64_t> staleConfigurationBlocks { 0 };

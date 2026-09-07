@@ -227,4 +227,44 @@ TEST (SpectrumAnalysisTests, CountsFailedWindowsAndLeavesASequenceGap)
         ++frames; });
     EXPECT_EQ (frames, 1u);
 }
+
+TEST (SpectrumAnalysisTests, SheddingPublishesOnlyTheNewestWindowWithASequenceGap)
+{
+    auto parameters = makeParameters();
+    parameters.maximumInputBlockSampleCount = 14;
+    auto configuration = std::make_shared<const SpectrumAnalysisConfiguration> (parameters);
+    SpectrumAnalysisPipeline pipeline (configuration);
+
+    std::array<float, 17> samples {};
+    for (std::size_t sample = 0; sample < samples.size(); ++sample)
+        samples[sample] = static_cast<float> (sample);
+
+    const std::array<const float*, 2> first { samples.data(), samples.data() };
+    const auto append = pipeline.appendBlock (first.data(), 2, 14, 500, parameters.generation);
+    ASSERT_EQ (append.status, SpectrumAnalysisPipeline::AppendStatus::accepted);
+    ASSERT_EQ (append.windowsReady, 3u);
+    EXPECT_EQ (pipeline.discardReadyFramesExceptLatest(), 2u);
+
+    std::vector<CapturedFrame> frames;
+    EXPECT_EQ (pipeline.consumeReadyFrames ([&] (const auto& frame)
+    {
+        frames.push_back ({ frame.firstSample, frame.sequence, frame.descriptor, {} });
+    }), 1u);
+    ASSERT_EQ (frames.size(), 1u);
+    EXPECT_EQ (frames[0].firstSample, 506);
+    EXPECT_EQ (frames[0].sequence, 2u);
+    EXPECT_EQ (pipeline.getShedWindowCount(), 2u);
+
+    const std::array<const float*, 2> second { samples.data() + 14, samples.data() + 14 };
+    ASSERT_EQ (pipeline.appendBlock (second.data(), 2, 3, 514, parameters.generation).status,
+               SpectrumAnalysisPipeline::AppendStatus::accepted);
+    std::size_t nextFrameCount = 0;
+    pipeline.consumeReadyFrames ([&] (const auto& frame)
+    {
+        EXPECT_EQ (frame.firstSample, 509);
+        EXPECT_EQ (frame.sequence, 3u);
+        ++nextFrameCount;
+    });
+    EXPECT_EQ (nextFrameCount, 1u);
+}
 } // namespace

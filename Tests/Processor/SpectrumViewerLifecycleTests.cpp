@@ -273,4 +273,49 @@ TEST_F (SpectrumViewerLifecycleTests, StopAndRestartDuringPreparationRejectsStal
         return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
     }));
 }
+
+TEST_F (SpectrumViewerLifecycleTests, BacklogShedsObsoleteWindowsAndThenResumesCadence)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+
+    // Pause only the analysis consumer so the fake source can deterministically
+    // fill the real processor FIFO without introducing a production test hook.
+    ASSERT_TRUE (processor->stopThread (1000));
+    writeBlocks (6);
+    ASSERT_TRUE (processor->startThread (juce::Thread::Priority::normal));
+
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
+    }));
+    EXPECT_EQ (processor->getShedSpectrumWindowCount(), 1u);
+
+    std::int64_t firstSample = -1;
+    std::uint64_t sequence = 0;
+    ASSERT_TRUE (waitUntil ([this, &firstSample, &sequence]
+    {
+        return processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            firstSample = frame.firstSample;
+            sequence = frame.sequence;
+        });
+    }));
+    EXPECT_EQ (firstSample, 10);
+    EXPECT_EQ (sequence, 1u);
+
+    writeBlocks (2);
+    ASSERT_TRUE (waitUntil ([this, &firstSample, &sequence]
+    {
+        return processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            firstSample = frame.firstSample;
+            sequence = frame.sequence;
+        });
+    }));
+    EXPECT_EQ (firstSample, 20);
+    EXPECT_EQ (sequence, 2u);
+    EXPECT_EQ (processor->getShedSpectrumWindowCount(), 1u);
+}
 } // namespace
