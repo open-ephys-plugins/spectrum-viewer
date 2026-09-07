@@ -52,6 +52,7 @@ add_executable(
 	../Source/ReferencePeriodogram.cpp
 	../Source/SingleTaperPeriodogram.cpp
 	../Source/SpectrumAnalysis.cpp
+	../Source/SpectrumDisplayReducer.cpp
 	AsyncSpectrumAnalysisTests.cpp
 	BacklogSheddingPolicyTests.cpp
 	JuceCore.cpp
@@ -63,6 +64,7 @@ add_executable(
 	SampleWindowAssemblerTests.cpp
 	SingleTaperPeriodogramTests.cpp
 	SpectrumAnalysisTests.cpp
+	SpectrumDisplayReducerTests.cpp
 	SpectrumFrameFifoTests.cpp)
 
 target_compile_features(spectrum_viewer_tests PRIVATE cxx_std_17)

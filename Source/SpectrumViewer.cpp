@@ -156,6 +156,12 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
 
 void SpectrumViewer::setFrequencyRange (Range<int> newRange)
 {
+    beginDisplaySettingsUpdate();
+    displayMinimumFrequencyHz.store (static_cast<double> (newRange.getStart()),
+                                     std::memory_order_relaxed);
+    displayMaximumFrequencyHz.store (static_cast<double> (newRange.getEnd()),
+                                     std::memory_order_relaxed);
+    endDisplaySettingsUpdate();
     if (newRange.getEnd() != tfrParams.freqEnd)
     {
         tfrParams.freqEnd = newRange.getEnd();
@@ -165,6 +171,25 @@ void SpectrumViewer::setFrequencyRange (Range<int> newRange)
 
         if (auto* currentEditor = getEditor())
             currentEditor->updateVisualizer();
+    }
+}
+
+SpectrumViewer::DisplaySettings SpectrumViewer::readDisplaySettings() const noexcept
+{
+    DisplaySettings settings;
+    for (;;)
+    {
+        const auto before = displaySettingsSequence.load (std::memory_order_acquire);
+        if ((before & 1u) != 0u)
+            continue;
+
+        settings.columnCount = displayColumnCount.load (std::memory_order_relaxed);
+        settings.frequencyScale = displayFrequencyScale.load (std::memory_order_relaxed);
+        settings.minimumFrequencyHz = displayMinimumFrequencyHz.load (std::memory_order_relaxed);
+        settings.maximumFrequencyHz = displayMaximumFrequencyHz.load (std::memory_order_relaxed);
+
+        if (displaySettingsSequence.load (std::memory_order_acquire) == before)
+            return settings;
     }
 }
 
@@ -281,14 +306,36 @@ void SpectrumViewer::run()
                 }
 
                 auto* outputFifo = &activeAnalysis->getFrameFifo();
-                const auto publishFrame = [outputFifo] (const auto& frame)
+                auto* reducer = &activeAnalysis->getDisplayReducer();
+                const auto publishFrame = [this, outputFifo, reducer] (const auto& frame)
                 {
-                    if (outputFifo != nullptr)
-                        outputFifo->tryPush (frame.getChannelData (0),
-                                             frame.numChannels,
-                                             frame.numBins,
-                                             frame.firstSample,
-                                             frame.sequence);
+                    const auto settings = readDisplaySettings();
+                    auto maximumHz = settings.maximumFrequencyHz;
+                    if (maximumHz <= 0.0)
+                        maximumHz = frame.descriptor.sampleRateHz * 0.5;
+                    if (reducer->reduce (
+                            frame.getChannelData (0),
+                            frame.numChannels,
+                            frame.numBins,
+                            frame.descriptor.sampleRateHz,
+                            frame.descriptor.windowSampleCount,
+                            settings.columnCount,
+                            settings.frequencyScale,
+                            settings.minimumFrequencyHz,
+                            maximumHz))
+                    {
+                        const auto& reduced = reducer->getView();
+                        outputFifo->tryPushReduced (reduced.getChannelMean (0),
+                                                    reduced.getChannelPeak (0),
+                                                    reduced.frequenciesHz,
+                                                    reduced.numChannels,
+                                                    reduced.numColumns,
+                                                    frame.firstSample,
+                                                    frame.sequence,
+                                                    reduced.frequencyScale,
+                                                    reduced.minimumFrequencyHz,
+                                                    reduced.maximumFrequencyHz);
+                    }
                 };
                 pipeline->consumeReadyFrames (publishFrame);
                 failedSpectrumWindows.store (pipeline->getFailedWindowCount(), std::memory_order_relaxed);
@@ -397,7 +444,13 @@ bool SpectrumViewer::startAcquisition()
         }
 
         for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
+        {
             acquisitionChannels[channel] = channels[static_cast<int> (channel)];
+            acquisitionChannelUnits[channel] = getDataStream (activeStream)
+                                                   ->getContinuousChannels()[acquisitionChannels[channel]]
+                                                   ->getUnits()
+                                                   .toStdString();
+        }
 
         try
         {
@@ -519,9 +572,12 @@ void SpectrumViewer::requestAnalysisConfiguration()
     request.sourceChannelIndices.assign (
         acquisitionChannels.begin(),
         acquisitionChannels.begin() + static_cast<std::ptrdiff_t> (acquisitionChannelCount));
+    request.sourceChannelUnits.assign (
+        acquisitionChannelUnits.begin(),
+        acquisitionChannelUnits.begin() + static_cast<std::ptrdiff_t> (acquisitionChannelCount));
 
     requestedConfigurationGeneration.store (request.parameters.generation,
-                                             std::memory_order_release);
+                                            std::memory_order_release);
     configurationPending.store (true, std::memory_order_release);
     if (! hasActiveAnalysis())
         analysisReadiness.store (SpectrumAnalysisReadiness::preparing, std::memory_order_release);

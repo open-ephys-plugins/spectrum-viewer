@@ -12,7 +12,8 @@ FetchContent_MakeAvailable(googlebenchmark)
 
 add_executable(
 	spectrum_viewer_benchmarks
-	WindowPreprocessingBenchmarks.cpp)
+	WindowPreprocessingBenchmarks.cpp
+	../Source/SpectrumDisplayReducer.cpp)
 
 target_compile_features(spectrum_viewer_benchmarks PRIVATE cxx_std_17)
 

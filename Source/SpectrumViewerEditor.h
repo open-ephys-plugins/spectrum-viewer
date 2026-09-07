@@ -69,6 +69,10 @@ private:
 
     std::unique_ptr<Label> profileLabel;
     std::unique_ptr<ComboBox> analysisProfile;
+    std::unique_ptr<Label> scaleLabel;
+    std::unique_ptr<ComboBox> frequencyScale;
+    std::unique_ptr<Label> amplitudeLabel;
+    std::unique_ptr<ComboBox> amplitudeDisplay;
     std::unique_ptr<Label> readinessLabel;
 
     Array<Range<int>> freqRanges;

@@ -26,7 +26,8 @@ std::shared_ptr<Runtime> buildRuntime (Request request)
 {
     return std::make_shared<Runtime> (request.parameters,
                                       std::move (request.sourceChannelIndices),
-                                      request.outputQueueCapacity);
+                                      request.outputQueueCapacity,
+                                      std::move (request.sourceChannelUnits));
 }
 
 struct BuildGate
@@ -317,5 +318,65 @@ TEST_F (SpectrumViewerLifecycleTests, BacklogShedsObsoleteWindowsAndThenResumesC
     EXPECT_EQ (firstSample, 20);
     EXPECT_EQ (sequence, 2u);
     EXPECT_EQ (processor->getShedSpectrumWindowCount(), 1u);
+}
+
+TEST_F (SpectrumViewerLifecycleTests, PublishesFullRangeReducedFramesWithNativeUnits)
+{
+    createProcessor();
+    processor->setDisplayColumnCount (4);
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    writeBlocks (4);
+
+    bool inspected = false;
+    ASSERT_TRUE (waitUntil ([this, &inspected]
+    {
+        return processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            inspected = true;
+            EXPECT_TRUE (frame.reducedForDisplay);
+            EXPECT_EQ (frame.numBins, 4u);
+            EXPECT_STREQ (frame.getSourceChannelUnit (0), "uV");
+            EXPECT_EQ (frame.frequencyScale, spectrumviewer::FrequencyScale::linear);
+            EXPECT_DOUBLE_EQ (frame.minimumFrequencyHz, 0.0);
+            EXPECT_DOUBLE_EQ (frame.maximumFrequencyHz, sampleRate * 0.5);
+            EXPECT_GT (frame.frequenciesHz[0], 0.0f);
+            EXPECT_LT (frame.frequenciesHz[0], frame.frequenciesHz[3]);
+            EXPECT_LT (frame.frequenciesHz[3], sampleRate * 0.5f);
+        });
+    }));
+    EXPECT_TRUE (inspected);
+
+    processor->setFrequencyScale (spectrumviewer::FrequencyScale::logarithmic);
+    writeBlocks (2);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool matched = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            matched = frame.frequencyScale == spectrumviewer::FrequencyScale::logarithmic;
+            if (matched)
+                EXPECT_GT (frame.frequenciesHz[0], 0.0f);
+        });
+        return matched;
+    }));
+
+    processor->setFrequencyRange ({ 10, 30 });
+    writeBlocks (2);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool matched = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            matched = frame.minimumFrequencyHz == 10.0
+                      && frame.maximumFrequencyHz == 30.0;
+            if (matched)
+            {
+                EXPECT_GT (frame.frequenciesHz[0], 10.0f);
+                EXPECT_LT (frame.frequenciesHz[frame.numBins - 1], 30.0f);
+            }
+        });
+        return matched;
+    }));
 }
 } // namespace

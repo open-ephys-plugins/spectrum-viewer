@@ -34,6 +34,15 @@ own concurrent tests cover the FIFO primitive's SPSC publication semantics.
 `SpectrumFrameFifo` publishes all selected channels as one planar display frame.
 Its tests cover coherent metadata and channel data, overflow, slot wraparound,
 concurrent publication, and draining stale frames to the newest complete frame.
+Reduced frames additionally carry native channel units, exact frequency bounds
+and coordinates, frequency-axis scale, area-weighted PSD means, and a narrow-line
+peak envelope.
+
+`SpectrumDisplayReducer` projects the complete one-sided PSD onto the current
+plot width without allocation. Tests pin DC/Nyquist half-bin support,
+integrated-power conservation, flat-noise level, narrow-line preservation, and
+monotonic linear/log frequency coordinates. Log display excludes DC because
+zero has no logarithmic coordinate; the underlying full PSD remains unchanged.
 
 `ReferencePeriodogram` is an intentionally slow, double-precision direct DFT
 used only as a correctness oracle. Its tests pin one-sided PSD calibration,

@@ -36,6 +36,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -61,6 +62,12 @@ enum class SpectrumAnalysisReadiness
     warmingUp,
     live,
     configurationFailed
+};
+
+enum class SpectrumAmplitudeDisplay
+{
+    psd = 1,
+    asd = 2
 };
 
 /*
@@ -111,6 +118,29 @@ public:
 
     /** Sets the min/max frequency range*/
     void setFrequencyRange (Range<int>);
+
+    /** Uses the complete one-sided frequency range through Nyquist. */
+    void setFullFrequencyRange() noexcept
+    {
+        beginDisplaySettingsUpdate();
+        displayMinimumFrequencyHz.store (0.0, std::memory_order_relaxed);
+        displayMaximumFrequencyHz.store (0.0, std::memory_order_relaxed);
+        endDisplaySettingsUpdate();
+    }
+
+    void setFrequencyScale (spectrumviewer::FrequencyScale scale) noexcept
+    {
+        beginDisplaySettingsUpdate();
+        displayFrequencyScale.store (scale, std::memory_order_relaxed);
+        endDisplaySettingsUpdate();
+    }
+
+    void setDisplayColumnCount (std::size_t count) noexcept
+    {
+        beginDisplaySettingsUpdate();
+        displayColumnCount.store (std::max<std::size_t> (1, count), std::memory_order_relaxed);
+        endDisplaySettingsUpdate();
+    }
 
     /** Returns the frequency step for the currently selected range*/
     float getFreqStep() const noexcept
@@ -222,6 +252,26 @@ public:
     DisplayType displayType;
 
 private:
+    struct DisplaySettings
+    {
+        std::size_t columnCount = 1;
+        spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
+        double minimumFrequencyHz = 0.0;
+        double maximumFrequencyHz = 0.0;
+    };
+
+    void beginDisplaySettingsUpdate() noexcept
+    {
+        displaySettingsSequence.fetch_add (1, std::memory_order_acq_rel);
+    }
+
+    void endDisplaySettingsUpdate() noexcept
+    {
+        displaySettingsSequence.fetch_add (1, std::memory_order_release);
+    }
+
+    DisplaySettings readDisplaySettings() const noexcept;
+
     void requestAnalysisConfiguration();
     void adoptPreparedAnalysis();
     std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> tryGetDisplayAnalysis() const noexcept
@@ -243,11 +293,21 @@ private:
     mutable std::mutex displayAnalysisMutex;
     std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> displayAnalysis;
     std::array<int, MAX_CHANS> acquisitionChannels {};
+    std::array<std::string, MAX_CHANS> acquisitionChannelUnits {};
     std::size_t acquisitionChannelCount = 0;
     std::size_t acquisitionMaximumInputBlockSamples = 0;
     double acquisitionSampleRateHz = 0.0;
     std::atomic<std::uint64_t> activeConfigurationGeneration { 0 };
     std::atomic<float> activeBinWidthHz { 0.0f };
+    std::atomic<std::size_t> displayColumnCount { 800 };
+    std::atomic<spectrumviewer::FrequencyScale> displayFrequencyScale {
+        spectrumviewer::FrequencyScale::linear
+    };
+    std::atomic<double> displayMinimumFrequencyHz { 0.0 };
+    // A non-positive maximum means the active stream's Nyquist frequency.
+    std::atomic<double> displayMaximumFrequencyHz { 0.0 };
+    // Even values identify stable control-thread snapshots; odd means update in progress.
+    std::atomic<std::uint64_t> displaySettingsSequence { 0 };
     std::atomic<std::uint64_t> requestedConfigurationGeneration { 0 };
     std::uint64_t nextConfigurationGeneration = 1;
     std::atomic<SpectrumAnalysisProfile> analysisProfile { SpectrumAnalysisProfile::fast };

@@ -37,15 +37,18 @@ class PreparedSpectrumAnalysis
 public:
     PreparedSpectrumAnalysis (SpectrumAnalysisParameters parameters,
                               std::vector<int> sourceChannelIndices,
-                              std::size_t outputQueueCapacity);
+                              std::size_t outputQueueCapacity,
+                              std::vector<std::string> sourceChannelUnits = {});
 
     SpectrumAnalysisPipeline& getPipeline() noexcept { return pipeline; }
     SpectrumFrameFifo& getFrameFifo() noexcept { return frameFifo; }
+    SpectrumDisplayReducer& getDisplayReducer() noexcept { return displayReducer; }
     const SpectrumAnalysisConfiguration& getConfiguration() const noexcept { return *configuration; }
 
 private:
     std::shared_ptr<const SpectrumAnalysisConfiguration> configuration;
     SpectrumAnalysisPipeline pipeline;
+    SpectrumDisplayReducer displayReducer;
     SpectrumFrameFifo frameFifo;
 };
 
@@ -53,6 +56,7 @@ struct SpectrumAnalysisPreparationRequest
 {
     SpectrumAnalysisParameters parameters;
     std::vector<int> sourceChannelIndices;
+    std::vector<std::string> sourceChannelUnits;
     std::size_t outputQueueCapacity = 0;
 };
 

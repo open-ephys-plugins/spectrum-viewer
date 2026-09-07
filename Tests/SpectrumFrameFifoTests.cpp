@@ -71,6 +71,33 @@ TEST (SpectrumFrameFifoTests, PublishesACompletePlanarFrame)
                    (std::vector<float> { 11.0f, 12.0f, 13.0f })); }));
 }
 
+TEST (SpectrumFrameFifoTests, PublishesReducedMeansPeaksFrequenciesAndUnits)
+{
+    SpectrumFrameFifo fifo (2, 5, 2, makeDescriptor (5, 3), { 4, 9 }, { "uV", "mV" });
+    const std::array<float, 6> means { 1, 2, 3, 11, 12, 13 };
+    const std::array<float, 6> peaks { 4, 5, 6, 14, 15, 16 };
+    const std::array<float, 3> frequencies { 10, 20, 30 };
+    ASSERT_TRUE (fifo.tryPushReduced (means.data(), peaks.data(), frequencies.data(), 2, 3, 42, 7, spectrumviewer::FrequencyScale::logarithmic, 10.0, 40.0));
+
+    ASSERT_TRUE (fifo.tryPopLatest ([&] (const auto& frame)
+                                    {
+        EXPECT_TRUE (frame.reducedForDisplay);
+        EXPECT_EQ (frame.numBins, 3u);
+        EXPECT_EQ (frame.frequencyScale, spectrumviewer::FrequencyScale::logarithmic);
+        EXPECT_DOUBLE_EQ (frame.minimumFrequencyHz, 10.0);
+        EXPECT_DOUBLE_EQ (frame.maximumFrequencyHz, 40.0);
+        EXPECT_STREQ (frame.getSourceChannelUnit (0), "uV");
+        EXPECT_STREQ (frame.getSourceChannelUnit (1), "mV");
+        EXPECT_EQ (std::vector<float> (frame.frequenciesHz, frame.frequenciesHz + 3),
+                   (std::vector<float> { 10, 20, 30 }));
+        EXPECT_EQ (std::vector<float> (frame.getChannelData (1),
+                                       frame.getChannelData (1) + 3),
+                   (std::vector<float> { 11, 12, 13 }));
+        EXPECT_EQ (std::vector<float> (frame.getChannelPeakData (1),
+                                       frame.getChannelPeakData (1) + 3),
+                   (std::vector<float> { 14, 15, 16 })); }));
+}
+
 TEST (SpectrumFrameFifoTests, DrainsStaleFramesAndReturnsOnlyNewest)
 {
     SpectrumFrameFifo fifo (1, 1, 3, makeDescriptor (1));

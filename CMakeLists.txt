@@ -6,6 +6,8 @@ if (NOT DEFINED GUI_BASE_DIR)
 		set(GUI_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../plugin-GUI)
 	endif()
 endif()
+get_filename_component(GUI_BASE_DIR "${GUI_BASE_DIR}" ABSOLUTE
+                       BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
 get_filename_component(PROJECT_FOLDER ${CMAKE_CURRENT_SOURCE_DIR} ABSOLUTE)
 get_filename_component(PLUGIN_NAME ${PROJECT_FOLDER} NAME)

@@ -27,7 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "SpectrumViewer.h"
 
 SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
-    : VisualizerEditor (p, "Power Spectrum", 220)
+    : VisualizerEditor (p, "Power Spectrum", 270)
 {
     addSelectedStreamParameterEditor (Parameter::PROCESSOR_SCOPE, "active_stream", 15, 28);
     getParameterEditor ("active_stream")->setSize (210, 18);
@@ -50,11 +50,12 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     freqRanges.add (Range (0, 100));
     freqRanges.add (Range (0, 500));
     freqRanges.add (Range (0, 1000));
+    freqRanges.add (Range (0, 1000)); // Updated to the selected stream's Nyquist.
     frequencyRange = std::make_unique<ComboBox> ("FreqRange");
     frequencyRange->setBounds (15, 103, 100, 18);
     frequencyRange->addListener (this);
-    frequencyRange->addItemList ({ "0 - 100", "0 - 500", "0 - 1000" }, 1);
-    frequencyRange->setSelectedId (3, dontSendNotification);
+    frequencyRange->addItemList ({ "0 - 100", "0 - 500", "0 - 1000", "Full" }, 1);
+    frequencyRange->setSelectedId (4, dontSendNotification);
     addAndMakeVisible (frequencyRange.get());
 
     frequencyLabel = std::make_unique<Label> ("FreqRangeLabel", "Freq. Range");
@@ -74,9 +75,33 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     profileLabel->setBounds (123, 128, 80, 18);
     addAndMakeVisible (profileLabel.get());
 
+    frequencyScale = std::make_unique<ComboBox> ("FrequencyScale");
+    frequencyScale->setBounds (15, 153, 100, 18);
+    frequencyScale->addListener (this);
+    frequencyScale->addItemList ({ "Linear", "Log" }, 1);
+    frequencyScale->setSelectedId (1, dontSendNotification);
+    addAndMakeVisible (frequencyScale.get());
+
+    scaleLabel = std::make_unique<Label> ("FrequencyScaleLabel", "Frequency Axis");
+    scaleLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    scaleLabel->setBounds (123, 153, 95, 18);
+    addAndMakeVisible (scaleLabel.get());
+
+    amplitudeDisplay = std::make_unique<ComboBox> ("AmplitudeDisplay");
+    amplitudeDisplay->setBounds (15, 178, 100, 18);
+    amplitudeDisplay->addListener (this);
+    amplitudeDisplay->addItemList ({ "PSD", "ASD" }, 1);
+    amplitudeDisplay->setSelectedId (1, dontSendNotification);
+    addAndMakeVisible (amplitudeDisplay.get());
+
+    amplitudeLabel = std::make_unique<Label> ("AmplitudeDisplayLabel", "Values");
+    amplitudeLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    amplitudeLabel->setBounds (123, 178, 80, 18);
+    addAndMakeVisible (amplitudeLabel.get());
+
     readinessLabel = std::make_unique<Label> ("AnalysisReadiness", "Stopped");
     readinessLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
-    readinessLabel->setBounds (15, 153, 200, 18);
+    readinessLabel->setBounds (15, 203, 220, 18);
     addAndMakeVisible (readinessLabel.get());
     startTimerHz (4);
 }
@@ -94,19 +119,19 @@ Visualizer* SpectrumViewerEditor::createNewCanvas()
     // Set display type for canvas
     auto type = (DisplayType) displayType->getSelectedId();
     spectrumCanvas->setDisplayType (type);
+    spectrumCanvas->getPlotPtr()->setAmplitudeDisplay (
+        static_cast<SpectrumAmplitudeDisplay> (amplitudeDisplay->getSelectedId()));
 
     return spectrumCanvas;
 }
 
 void SpectrumViewerEditor::startAcquisition()
 {
-    frequencyRange->setEnabled (false);
     enable();
 }
 
 void SpectrumViewerEditor::stopAcquisition()
 {
-    frequencyRange->setEnabled (true);
     disable();
 }
 
@@ -129,7 +154,10 @@ void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
 
         // Send frequency range update to processor
         auto processor = static_cast<SpectrumViewer*> (getProcessor());
-        processor->setFrequencyRange (range);
+        if (cb->getSelectedId() == 4)
+            processor->setFullFrequencyRange();
+        else
+            processor->setFrequencyRange (range);
 
         // Send frequency range update to canvas plot
         if (sc != nullptr)
@@ -144,6 +172,15 @@ void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
         auto processor = static_cast<SpectrumViewer*> (getProcessor());
         processor->setAnalysisProfile (
             static_cast<SpectrumAnalysisProfile> (analysisProfile->getSelectedId()));
+    }
+    else if (cb == frequencyScale.get())
+    {
+        static_cast<SpectrumViewer*> (getProcessor())->setFrequencyScale (cb->getSelectedId() == 2 ? spectrumviewer::FrequencyScale::logarithmic : spectrumviewer::FrequencyScale::linear);
+    }
+    else if (cb == amplitudeDisplay.get() && sc != nullptr)
+    {
+        sc->getPlotPtr()->setAmplitudeDisplay (
+            static_cast<SpectrumAmplitudeDisplay> (cb->getSelectedId()));
     }
 }
 
@@ -192,15 +229,18 @@ void SpectrumViewerEditor::selectedStreamHasChanged()
         if (frequencyRange->getNumItems() == 4)
         {
             int selectedId = frequencyRange->getSelectedId();
-            frequencyRange->changeItemText (4, "0 - " + String (maxFreq));
+            frequencyRange->changeItemText (4, "Full (0 - " + String (maxFreq) + ")");
 
             if (selectedId == 4)
             {
-                frequencyRange->setText ("0 - " + String (maxFreq), sendNotification);
+                frequencyRange->setText ("Full (0 - " + String (maxFreq) + ")", sendNotification);
             }
         }
         else
-            frequencyRange->addItem ("0 - " + String (maxFreq), 4);
+            frequencyRange->addItem ("Full (0 - " + String (maxFreq) + ")", 4);
+
+        if (frequencyRange->getSelectedId() == 4)
+            static_cast<SpectrumViewer*> (getProcessor())->setFullFrequencyRange();
     }
 }
 
@@ -209,6 +249,8 @@ void SpectrumViewerEditor::saveVisualizerEditorParameters (XmlElement* xml)
     xml->setAttribute ("display_type", displayType->getSelectedId());
     xml->setAttribute ("frequency_range", frequencyRange->getSelectedId());
     xml->setAttribute ("analysis_profile", analysisProfile->getSelectedId());
+    xml->setAttribute ("frequency_scale", frequencyScale->getSelectedId());
+    xml->setAttribute ("amplitude_display", amplitudeDisplay->getSelectedId());
 }
 
 void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
@@ -216,9 +258,14 @@ void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
     int selectedType = xml->getIntAttribute ("display_type", 1);
     displayType->setSelectedId (selectedType, sendNotification);
 
-    int selectedRange = xml->getIntAttribute ("frequency_range", 3);
+    int selectedRange = xml->getIntAttribute ("frequency_range", 4);
     frequencyRange->setSelectedId (selectedRange, sendNotification);
 
     int selectedProfile = xml->getIntAttribute ("analysis_profile", 1);
     analysisProfile->setSelectedId (selectedProfile, sendNotification);
+
+    frequencyScale->setSelectedId (
+        xml->getIntAttribute ("frequency_scale", 1), sendNotification);
+    amplitudeDisplay->setSelectedId (
+        xml->getIntAttribute ("amplitude_display", 1), sendNotification);
 }

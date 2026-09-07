@@ -61,7 +61,8 @@ std::shared_ptr<PreparedSpectrumAnalysis> build (
     return std::make_shared<PreparedSpectrumAnalysis> (
         request.parameters,
         std::move (request.sourceChannelIndices),
-        request.outputQueueCapacity);
+        request.outputQueueCapacity,
+        std::move (request.sourceChannelUnits));
 }
 
 TEST (AsyncSpectrumAnalysisTests, BuildsACompleteRuntimeOffThread)

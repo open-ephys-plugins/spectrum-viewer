@@ -26,6 +26,53 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <limits>
 
+void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
+                                      float minimumHz,
+                                      float maximumHz,
+                                      float minimumDb,
+                                      float maximumDb)
+{
+    frequencyScale = scale;
+    minimumFrequencyHz = minimumHz;
+    maximumFrequencyHz = maximumHz;
+    const auto axisMinimum = scale == spectrumviewer::FrequencyScale::linear
+                                 ? minimumHz
+                                 : std::log10 (minimumHz);
+    const auto axisMaximum = scale == spectrumviewer::FrequencyScale::linear
+                                 ? maximumHz
+                                 : std::log10 (maximumHz);
+    XYRange range { axisMinimum, axisMaximum, minimumDb, maximumDb };
+    setRange (range);
+    xlabel (scale == spectrumviewer::FrequencyScale::linear
+                ? "Frequency (Hz)"
+                : "log10 Frequency (Hz)");
+}
+
+std::vector<float> FrequencyPlot::transformFrequencies (
+    const std::vector<float>& frequencies) const
+{
+    if (frequencyScale == spectrumviewer::FrequencyScale::linear)
+        return frequencies;
+    std::vector<float> transformed (frequencies.size());
+    std::transform (frequencies.begin(), frequencies.end(), transformed.begin(), [] (float frequency)
+                    { return std::log10 (frequency); });
+    return transformed;
+}
+
+float FrequencyPlot::frequencyAt (Point<int> point) const noexcept
+{
+    const auto bounds = drawComponent->getBounds();
+    if (! bounds.contains (point) || bounds.getWidth() <= 0)
+        return std::numeric_limits<float>::quiet_NaN();
+    const auto fraction = static_cast<float> (point.x - bounds.getX())
+                          / static_cast<float> (bounds.getWidth());
+    if (frequencyScale == spectrumviewer::FrequencyScale::linear)
+        return minimumFrequencyHz + fraction * (maximumFrequencyHz - minimumFrequencyHz);
+    return std::pow (10.0f,
+                     std::log10 (minimumFrequencyHz)
+                         + fraction * (std::log10 (maximumFrequencyHz) - std::log10 (minimumFrequencyHz)));
+}
+
 SpectrumCanvas::SpectrumCanvas (SpectrumViewer* n)
     : Visualizer ((GenericProcessor*) n), processor (n), displayType (POWER_SPECTRUM)
 {
@@ -111,18 +158,25 @@ void SpectrumCanvas::refresh()
 
     processor->consumeLatestSpectrumFrame ([&] (const spectrumviewer::SpectrumFrameFifo::FrameView& frame)
                                            {
-        canvasPlot->setBinWidth (static_cast<float> (frame.descriptor.binWidthHz));
         for (std::size_t channel = 0; channel < frame.numChannels; ++channel)
         {
-            std::vector<float> power (frame.getChannelData (channel),
-                                      frame.getChannelData (channel) + frame.numBins);
             if (displayType == POWER_SPECTRUM)
             {
                 needsRedraw = true;
-                canvasPlot->updatePowerSpectrum (std::move (power), static_cast<int> (channel));
+                canvasPlot->updatePowerSpectrum (frame.getChannelData (channel),
+                                                 frame.getChannelPeakData (channel),
+                                                 frame.numBins,
+                                                 frame.frequenciesHz,
+                                                 frame.getSourceChannelUnit (channel),
+                                                 frame.frequencyScale,
+                                                 frame.minimumFrequencyHz,
+                                                 frame.maximumFrequencyHz,
+                                                 static_cast<int> (channel));
             }
             else if (channel == 0)
-                canvasPlot->drawSpectrogram (std::move (power));
+                canvasPlot->drawSpectrogram (
+                    std::vector<float> (frame.getChannelData (0),
+                                        frame.getChannelData (0) + frame.numBins));
         } });
 
     if (needsRedraw)
@@ -152,16 +206,21 @@ void SpectrumCanvas::setDisplayType (DisplayType type)
 CanvasPlot::CanvasPlot (SpectrumViewer* p)
     : processor (p), displayType (POWER_SPECTRUM), freqStep (4), nFreqs (250), freqEnd (1000)
 {
-    plt = std::make_unique<InteractivePlot>();
+    plt = std::make_unique<FrequencyPlot>();
     plt->title ("POWER SPECTRUM");
     XYRange range { 0, 1000, 0, 5 };
     plt->setRange (range);
     plt->xlabel ("Frequency (Hz)");
-    plt->ylabel ("PSD (dB)");
+    plt->ylabel ("PSD (dB re native unit^2/Hz)");
     plt->setBackgroundColour (Colour (45, 45, 45));
     plt->setGridColour (Colour (100, 100, 100));
     plt->setInteractive (InteractivePlotMode::OFF);
     addAndMakeVisible (plt.get());
+    plt->addMouseListener (this, true);
+
+    cursorLabel = std::make_unique<Label> ("SpectrumCursor", "");
+    cursorLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
+    addAndMakeVisible (cursorLabel.get());
 
     clearButton = std::make_unique<UtilityButton> ("Clear");
     clearButton->addListener (this);
@@ -173,10 +232,17 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
     setOpaque (true);
 
     currPower.resize (MAX_CHANS);
+    currPeakPower.resize (MAX_CHANS);
+    currLinearPower.resize (MAX_CHANS);
+    currLinearPeakPower.resize (MAX_CHANS);
+    channelUnits.resize (MAX_CHANS);
 
     for (int ch = 0; ch < MAX_CHANS; ch++)
     {
         currPower[ch].clear();
+        currPeakPower[ch].clear();
+        currLinearPower[ch].clear();
+        currLinearPeakPower[ch].clear();
     }
 
     for (int i = 0; i < nFreqs; i++)
@@ -188,7 +254,10 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
 void CanvasPlot::resized()
 {
     plt->setBounds (20, 30, getWidth() - legendWidth - 40, getHeight() - 50);
+    processor->setDisplayColumnCount (
+        static_cast<std::size_t> (std::max (1, plt->getDrawingWidth())));
     clearButton->setBounds (plt->getRight() - 80, plt->getBottom() - 90, 60, 20);
+    cursorLabel->setBounds (plt->getX() + 60, plt->getY(), 560, 20);
 }
 
 void CanvasPlot::lookAndFeelChanged()
@@ -198,7 +267,7 @@ void CanvasPlot::lookAndFeelChanged()
     plt->setAxisColour (findColour (ThemeColours::controlPanelText));
 
     chanColors[0] = findColour (ThemeColours::defaultText);
-    plt->plot (xvalues, currPower[0], chanColors[0], 1.0f);
+    plotPowerSpectrum();
 }
 
 void CanvasPlot::updateActiveChans()
@@ -227,6 +296,9 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
     for (int ch = 0; ch < MAX_CHANS; ch++)
     {
         currPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
+        currPeakPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
+        currLinearPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
+        currLinearPeakPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
     }
 }
 
@@ -262,6 +334,7 @@ void CanvasPlot::plotPowerSpectrum()
 
     auto minimum = std::numeric_limits<float>::infinity();
     auto maximum = -std::numeric_limits<float>::infinity();
+    const auto plotFrequencies = plt->transformFrequencies (xvalues);
     for (int i = 0; i < activeChannels.size(); i++)
     {
         for (const auto value : currPower[static_cast<std::size_t> (i)])
@@ -272,7 +345,11 @@ void CanvasPlot::plotPowerSpectrum()
                 maximum = std::max (maximum, value);
             }
         }
-        plt->plot (xvalues, currPower[i], chanColors[i], 1.0f);
+        for (const auto value : currPeakPower[static_cast<std::size_t> (i)])
+            if (std::isfinite (value))
+                maximum = std::max (maximum, value);
+        plt->plot (plotFrequencies, currPeakPower[i], chanColors[i], 1.0f, 0.35f);
+        plt->plot (plotFrequencies, currPower[i], chanColors[i], 1.5f);
     }
 
     if (std::isfinite (minimum) && std::isfinite (maximum))
@@ -282,28 +359,104 @@ void CanvasPlot::plotPowerSpectrum()
         plt->getRange (range);
         range.ymin = minimum - padding;
         range.ymax = maximum + padding;
-        plt->setRange (range);
+        if (! xvalues.empty())
+            plt->setFrequencyAxis (frequencyScale,
+                                   displayMinimumFrequencyHz,
+                                   displayMaximumFrequencyHz,
+                                   range.ymin,
+                                   range.ymax);
     }
 }
 
-void CanvasPlot::updatePowerSpectrum (std::vector<float> powerData, int channelIndex)
+void CanvasPlot::updatePowerSpectrum (const float* meanPsd,
+                                      const float* peakPsd,
+                                      std::size_t valueCount,
+                                      const float* frequenciesHz,
+                                      const String& unit,
+                                      spectrumviewer::FrequencyScale scale,
+                                      double minimumFrequencyHz,
+                                      double maximumFrequencyHz,
+                                      int channelIndex)
 {
-    if (channelIndex < 0 || channelIndex >= static_cast<int> (currPower.size()))
+    if (channelIndex < 0 || channelIndex >= static_cast<int> (currPower.size())
+        || meanPsd == nullptr || peakPsd == nullptr || frequenciesHz == nullptr)
         return;
-    powerData.resize (std::min (powerData.size(), currPower[static_cast<std::size_t> (channelIndex)].size()));
-
+    frequencyScale = scale;
+    displayMinimumFrequencyHz = static_cast<float> (minimumFrequencyHz);
+    displayMaximumFrequencyHz = static_cast<float> (maximumFrequencyHz);
+    if (channelIndex == 0)
+        xvalues.assign (frequenciesHz, frequenciesHz + valueCount);
+    channelUnits[static_cast<std::size_t> (channelIndex)] = unit;
     auto& destination = currPower[static_cast<std::size_t> (channelIndex)];
-    for (std::size_t n = 0; n < powerData.size(); ++n)
+    auto& peakDestination = currPeakPower[static_cast<std::size_t> (channelIndex)];
+    auto& linearDestination = currLinearPower[static_cast<std::size_t> (channelIndex)];
+    auto& linearPeakDestination = currLinearPeakPower[static_cast<std::size_t> (channelIndex)];
+    destination.resize (valueCount);
+    peakDestination.resize (valueCount);
+    linearDestination.assign (meanPsd, meanPsd + valueCount);
+    linearPeakDestination.assign (peakPsd, peakPsd + valueCount);
+    for (std::size_t n = 0; n < valueCount; ++n)
     {
-        const auto power = powerData[n];
+        const auto power = meanPsd[n];
         if (std::isfinite (power) && power > 0.0f)
-        {
-            const auto decibels = 10.0f * std::log10 (power);
-            destination[n] = decibels;
-        }
+            destination[n] = 10.0f * std::log10 (power);
         else
             destination[n] = std::numeric_limits<float>::quiet_NaN();
+        const auto peak = peakPsd[n];
+        peakDestination[n] = std::isfinite (peak) && peak > 0.0f
+                                 ? 10.0f * std::log10 (peak)
+                                 : std::numeric_limits<float>::quiet_NaN();
     }
+}
+
+void CanvasPlot::setAmplitudeDisplay (SpectrumAmplitudeDisplay display)
+{
+    amplitudeDisplay = display;
+    plt->ylabel (display == SpectrumAmplitudeDisplay::psd
+                     ? "PSD (dB re native unit^2/Hz)"
+                     : "ASD (dB re native unit/sqrt(Hz))");
+}
+
+void CanvasPlot::mouseMove (const MouseEvent& event)
+{
+    if (xvalues.empty() || currLinearPower.empty())
+        return;
+    const auto frequency = plt->frequencyAt (event.getEventRelativeTo (plt.get()).getPosition());
+    if (! std::isfinite (frequency))
+        return;
+    const auto iterator = std::lower_bound (xvalues.begin(), xvalues.end(), frequency);
+    auto index = static_cast<std::size_t> (
+        std::min<std::ptrdiff_t> (std::distance (xvalues.begin(), iterator),
+                                  static_cast<std::ptrdiff_t> (xvalues.size() - 1)));
+    if (index > 0 && std::abs (frequency - xvalues[index - 1]) < std::abs (xvalues[index] - frequency))
+        --index;
+    if (currLinearPower[0].size() <= index || currLinearPeakPower[0].size() <= index)
+        return;
+    const auto power = currLinearPower[0][index];
+    const auto peakPower = currLinearPeakPower[0][index];
+    if (! std::isfinite (power) || power < 0.0f
+        || ! std::isfinite (peakPower) || peakPower < 0.0f)
+    {
+        cursorLabel->setText ({}, dontSendNotification);
+        return;
+    }
+    const auto shown = amplitudeDisplay == SpectrumAmplitudeDisplay::psd
+                           ? power
+                           : std::sqrt (power);
+    const auto shownPeak = amplitudeDisplay == SpectrumAmplitudeDisplay::psd
+                               ? peakPower
+                               : std::sqrt (peakPower);
+    const auto unit = channelUnits[0].isEmpty() ? String ("unit") : channelUnits[0];
+    const auto channel = activeChannels.isEmpty()
+                             ? String ("Channel")
+                             : processor->getChanName (activeChannels[0]);
+    cursorLabel->setText (channel + ": " + String (xvalues[index], 2)
+                              + " Hz, mean " + String (shown, 4)
+                              + ", peak " + String (shownPeak, 4) + " " + unit
+                              + (amplitudeDisplay == SpectrumAmplitudeDisplay::psd
+                                     ? String ("^2/Hz")
+                                     : String ("/sqrt(Hz)")),
+                          dontSendNotification);
 }
 
 void CanvasPlot::drawSpectrogram (std::vector<float> chanData)
@@ -365,6 +518,8 @@ void CanvasPlot::paint (Graphics& g)
 
             g.setColour (findColour (ThemeColours::controlPanelText));
             String chan = processor->getChanName (activeChannels[i]);
+            if (! channelUnits[static_cast<std::size_t> (i)].isEmpty())
+                chan += " [" + channelUnits[static_cast<std::size_t> (i)] + "]";
             g.drawFittedText (chan, left + 45, top + 10, (legendWidth - 20) / 2, 30, Justification::centredLeft, 1);
 
             g.setColour (findColour (ThemeColours::defaultFill));
@@ -433,6 +588,9 @@ void CanvasPlot::clear()
     for (int ch = 0; ch < MAX_CHANS; ch++)
     {
         currPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
+        currPeakPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
+        currLinearPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
+        currLinearPeakPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
     }
 
     spectrogramImg->clear (spectrogramImg->getBounds());

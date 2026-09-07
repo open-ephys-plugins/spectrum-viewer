@@ -19,14 +19,19 @@ namespace spectrumviewer
 PreparedSpectrumAnalysis::PreparedSpectrumAnalysis (
     SpectrumAnalysisParameters parameters,
     std::vector<int> sourceChannelIndices,
-    std::size_t outputQueueCapacity)
+    std::size_t outputQueueCapacity,
+    std::vector<std::string> sourceChannelUnits)
     : configuration (std::make_shared<const SpectrumAnalysisConfiguration> (parameters)),
       pipeline (configuration),
+      displayReducer (parameters.channelCount,
+                      configuration->getBinCount(),
+                      configuration->getBinCount()),
       frameFifo (parameters.channelCount,
                  configuration->getBinCount(),
                  outputQueueCapacity,
                  configuration->getFrameDescriptor(),
-                 std::move (sourceChannelIndices))
+                 std::move (sourceChannelIndices),
+                 std::move (sourceChannelUnits))
 {
 }
 
@@ -82,7 +87,8 @@ std::shared_ptr<PreparedSpectrumAnalysis> AsyncSpectrumAnalysis::buildDefault (
     return std::make_shared<PreparedSpectrumAnalysis> (
         request.parameters,
         std::move (request.sourceChannelIndices),
-        request.outputQueueCapacity);
+        request.outputQueueCapacity,
+        std::move (request.sourceChannelUnits));
 }
 
 void AsyncSpectrumAnalysis::run()

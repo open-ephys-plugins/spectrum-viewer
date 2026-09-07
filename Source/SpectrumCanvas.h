@@ -31,7 +31,27 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 class SpectrumCanvas;
 
 // Component for housing power spectrum & spectrograph plots
-class CanvasPlot : public Component, public Button::Listener
+class FrequencyPlot : public InteractivePlot
+{
+public:
+    void setFrequencyAxis (spectrumviewer::FrequencyScale scale,
+                           float minimumHz,
+                           float maximumHz,
+                           float minimumDb,
+                           float maximumDb);
+
+    std::vector<float> transformFrequencies (const std::vector<float>& frequencies) const;
+    float frequencyAt (Point<int> point) const noexcept;
+    int getDrawingWidth() const noexcept { return drawComponent->getWidth(); }
+
+private:
+    spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
+    float minimumFrequencyHz = 0.0f;
+    float maximumFrequencyHz = 1.0f;
+};
+
+class CanvasPlot : public Component,
+                   public Button::Listener
 {
 public:
     /** Constructor */
@@ -55,7 +75,19 @@ public:
 
     void setBinWidth (float newBinWidth);
 
-    void updatePowerSpectrum (std::vector<float> powerData, int channelIndex);
+    void updatePowerSpectrum (const float* meanPsd,
+                              const float* peakPsd,
+                              std::size_t valueCount,
+                              const float* frequenciesHz,
+                              const String& unit,
+                              spectrumviewer::FrequencyScale scale,
+                              double minimumFrequencyHz,
+                              double maximumFrequencyHz,
+                              int channelIndex);
+
+    void setAmplitudeDisplay (SpectrumAmplitudeDisplay display);
+
+    void mouseMove (const MouseEvent& event) override;
 
     void plotPowerSpectrum();
 
@@ -91,10 +123,15 @@ private:
     int rowHeight = 50;
 
     std::vector<std::vector<float>> currPower; // channels x freqs
+    std::vector<std::vector<float>> currPeakPower;
+    std::vector<std::vector<float>> currLinearPower;
+    std::vector<std::vector<float>> currLinearPeakPower;
+    std::vector<String> channelUnits;
 
     std::vector<float> xvalues;
 
-    std::unique_ptr<InteractivePlot> plt;
+    std::unique_ptr<FrequencyPlot> plt;
+    std::unique_ptr<Label> cursorLabel;
 
     float freqStep;
     int freqStart = 0;
@@ -102,6 +139,10 @@ private:
     int freqEnd;
 
     Array<int> activeChannels;
+    SpectrumAmplitudeDisplay amplitudeDisplay = SpectrumAmplitudeDisplay::psd;
+    spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
+    float displayMinimumFrequencyHz = 0.0f;
+    float displayMaximumFrequencyHz = 1000.0f;
 
     /** Image to draw*/
     std::unique_ptr<Image> spectrogramImg;

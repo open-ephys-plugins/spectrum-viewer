@@ -17,10 +17,12 @@
 #include "DpssTapers.h"
 #include "MultitaperPeriodogram.h"
 #include "SpectrumAnalysis.h"
+#include "SpectrumDisplayReducer.h"
 
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -33,6 +35,7 @@ using spectrumviewer::MultitaperPeriodogram;
 using spectrumviewer::SpectrumAnalysisConfiguration;
 using spectrumviewer::SpectrumAnalysisParameters;
 using spectrumviewer::SpectrumAnalysisPipeline;
+using spectrumviewer::SpectrumDisplayReducer;
 
 constexpr double twoPi = 6.283185307179586476925286766559;
 constexpr unsigned int fftwEstimate = 1U << 6U;
@@ -111,6 +114,7 @@ void addMultitaperCases (benchmark::internal::Benchmark* benchmark)
         ->UseRealTime();
 }
 
+template <bool withDisplayReduction>
 void runSpectrumAnalysisPipeline (benchmark::State& state)
 {
     const auto sampleCount = static_cast<std::size_t> (state.range (0));
@@ -132,6 +136,13 @@ void runSpectrumAnalysisPipeline (benchmark::State& state)
     parameters.generation = 1;
     auto configuration = std::make_shared<const SpectrumAnalysisConfiguration> (parameters);
     SpectrumAnalysisPipeline pipeline (configuration);
+    constexpr std::size_t displayColumns = 1920;
+    SpectrumDisplayReducer reducer (channelCount,
+                                    configuration->getBinCount(),
+                                    displayColumns);
+    std::vector<float> publishedMeans (channelCount * displayColumns);
+    std::vector<float> publishedPeaks (channelCount * displayColumns);
+    std::vector<float> publishedFrequencies (displayColumns);
 
     std::vector<float> samples (hopSampleCount * channelCount);
     std::vector<const float*> channels (channelCount);
@@ -181,7 +192,36 @@ void runSpectrumAnalysisPipeline (benchmark::State& state)
         std::size_t frameCount = 0;
         pipeline.consumeReadyFrames ([&] (const auto& frame)
                                      {
-            benchmark::DoNotOptimize (frame.getChannelData (0));
+            if constexpr (withDisplayReduction)
+            {
+                const auto scale = state.range (5) == 0
+                                       ? spectrumviewer::FrequencyScale::linear
+                                       : spectrumviewer::FrequencyScale::logarithmic;
+                if (! reducer.reduce (frame.getChannelData (0), frame.numChannels,
+                                      frame.numBins, frame.descriptor.sampleRateHz,
+                                      frame.descriptor.windowSampleCount, displayColumns,
+                                      scale, 0.0, frame.descriptor.sampleRateHz * 0.5))
+                {
+                    state.SkipWithError ("Display reducer rejected benchmark frame");
+                    return;
+                }
+                const auto& display = reducer.getView();
+                for (std::size_t channel = 0; channel < channelCount; ++channel)
+                {
+                    std::memcpy (publishedMeans.data() + channel * display.numColumns,
+                                 display.getChannelMean (channel),
+                                 display.numColumns * sizeof (float));
+                    std::memcpy (publishedPeaks.data() + channel * display.numColumns,
+                                 display.getChannelPeak (channel),
+                                 display.numColumns * sizeof (float));
+                }
+                std::memcpy (publishedFrequencies.data(), display.frequenciesHz,
+                             display.numColumns * sizeof (float));
+                benchmark::DoNotOptimize (publishedMeans.data());
+                benchmark::DoNotOptimize (publishedPeaks.data());
+            }
+            else
+                benchmark::DoNotOptimize (frame.getChannelData (0));
             ++frameCount; });
         if (frameCount != 1)
         {
@@ -198,11 +238,29 @@ void runSpectrumAnalysisPipeline (benchmark::State& state)
         state.iterations() * static_cast<std::int64_t> (sizeof (float) * hopSampleCount * channelCount));
 }
 
+void addDisplayPipelineCases (benchmark::internal::Benchmark* benchmark)
+{
+    for (const auto& profile : {
+             std::vector<std::int64_t> { 7500, 3, 4 },
+             std::vector<std::int64_t> { 15000, 4, 5 },
+             std::vector<std::int64_t> { 60000, 5, 6 } })
+        for (const auto scale : { 0, 1 })
+            benchmark->Args ({ profile[0], profile[1], profile[2], 8, 2, scale });
+
+    benchmark->ArgNames ({ "N", "K", "2NW", "channels", "detrend", "log_axis" })
+        ->Unit (benchmark::kMicrosecond)
+        ->UseRealTime();
+}
+
 BENCHMARK (runMultitaperPeriodogram)
     ->Name ("Estimator/FloatEqualMultitaper")
     ->Apply (addMultitaperCases);
 
-BENCHMARK (runSpectrumAnalysisPipeline)
+BENCHMARK_TEMPLATE (runSpectrumAnalysisPipeline, false)
     ->Name ("Pipeline/FloatEqualMultitaper")
     ->Apply (addMultitaperCases);
+
+BENCHMARK_TEMPLATE (runSpectrumAnalysisPipeline, true)
+    ->Name ("WorkerToDisplay/FloatEqualMultitaper")
+    ->Apply (addDisplayPipelineCases);
 } // namespace

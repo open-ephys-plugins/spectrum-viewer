@@ -23,7 +23,10 @@ channel-by-taper transforms, and calibrated equal-power aggregation.
 The pipeline cases additionally time steady-state planar history copying and
 two-span assembly using each proposed profile's hop: 50% overlap for Fast and
 Balanced, and a 0.5 s hop for Fine. Input and display FIFO copies remain outside
-this kernel benchmark.
+this kernel benchmark. `WorkerToDisplay` extends that path through the
+allocation-free bin-to-pixel reducer and copies its 1,920-column mean, peak, and
+frequency outputs into simulated publication storage for eight channels on
+linear and logarithmic axes. It does not time JUCE component painting.
 
 Omit `BENCHMARK_NATIVE_ARCH` for a portable build. Never distribute a native
 benchmark binary: it may contain instructions unsupported by other Open Ephys
@@ -50,4 +53,12 @@ output to archive comparable runs:
   --benchmark_filter='Float/(Materialized|Fused|Tiled)/30kHz/N:15000/K:4/channels:8' \
   --benchmark_repetitions=30 --benchmark_report_aggregates_only=true \
   --benchmark_out=preprocessing.json --benchmark_out_format=json
+```
+
+For the integrated eight-channel display path:
+
+```bash
+./BuildBenchmark/Benchmarks/spectrum_viewer_benchmarks \
+  --benchmark_filter='WorkerToDisplay' \
+  --benchmark_repetitions=30 --benchmark_report_aggregates_only=true
 ```

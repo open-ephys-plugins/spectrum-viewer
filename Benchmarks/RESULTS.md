@@ -77,3 +77,15 @@ generation and FFTW planning occurred before timing. The input-FIFO publication
 copy and display-frame copy remain outside this measurement; both are bounded
 planar copies covered by transport tests. This is still local throughput, not a
 target-rig p99 result.
+
+## Worker-to-display follow-up
+
+The integrated benchmark now continues through full-band reduction to 1,920
+display columns and copies area-weighted means, peak envelopes, and frequency
+coordinates into simulated publication storage. Five-repetition medians for
+eight channels with linear detrending were 0.453/0.470 ms (Fast linear/log),
+1.063/1.077 ms (Balanced), and 6.126/6.150 ms (Fine). Frequency mapping is a
+small part of total worker cost. CPU scaling was enabled, so these measurements
+are informational. They exclude the input FIFO copy, FIFO index publication,
+GUI-thread model copy and JUCE paint; an instrumented graphical target-rig run
+is still required for repaint p50/p99 and responsiveness while resizing.
