@@ -53,7 +53,7 @@ add_executable(
 	../Source/SingleTaperPeriodogram.cpp
 	../Source/SpectrumAnalysis.cpp
 	AsyncSpectrumAnalysisTests.cpp
-	JuceAbstractFifo.cpp
+	JuceCore.cpp
 	OpenEphysFFTWBatchTests.cpp
 	DpssTapersTests.cpp
 	MultitaperPeriodogramTests.cpp

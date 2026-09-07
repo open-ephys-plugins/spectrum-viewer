@@ -10,7 +10,6 @@
 #include "AsyncSpectrumAnalysis.h"
 
 #include <algorithm>
-#include <chrono>
 #include <exception>
 #include <stdexcept>
 #include <utility>
@@ -32,20 +31,16 @@ PreparedSpectrumAnalysis::PreparedSpectrumAnalysis (
 }
 
 AsyncSpectrumAnalysis::AsyncSpectrumAnalysis (Builder newBuilder)
-    : builder (newBuilder ? std::move (newBuilder) : Builder { buildDefault }),
-      thread ([this] { run(); })
+    : juce::Thread ("Spectrum Viewer Configuration"),
+      builder (newBuilder ? std::move (newBuilder) : Builder { buildDefault })
 {
+    if (! startThread (juce::Thread::Priority::low))
+        throw std::runtime_error ("Unable to start Spectrum Viewer configuration thread");
 }
 
 AsyncSpectrumAnalysis::~AsyncSpectrumAnalysis()
 {
-    {
-        const std::lock_guard<std::mutex> lock (mutex);
-        shouldExit = true;
-    }
-    wake.notify_one();
-    if (thread.joinable())
-        thread.join();
+    stopThread (5000);
 }
 
 void AsyncSpectrumAnalysis::request (SpectrumAnalysisPreparationRequest request)
@@ -55,7 +50,7 @@ void AsyncSpectrumAnalysis::request (SpectrumAnalysisPreparationRequest request)
         latestRequestedGeneration = request.parameters.generation;
         pending = std::move (request);
     }
-    wake.notify_one();
+    notify();
 }
 
 bool AsyncSpectrumAnalysis::tryTakeLatest (SpectrumAnalysisPreparationResult& result)
@@ -78,7 +73,7 @@ void AsyncSpectrumAnalysis::retire (std::shared_ptr<PreparedSpectrumAnalysis> an
         const std::lock_guard<std::mutex> lock (mutex);
         retired.push_back (std::move (analysis));
     }
-    wake.notify_one();
+    notify();
 }
 
 std::shared_ptr<PreparedSpectrumAnalysis> AsyncSpectrumAnalysis::buildDefault (
@@ -97,17 +92,12 @@ void AsyncSpectrumAnalysis::run()
         std::optional<SpectrumAnalysisPreparationRequest> request;
         std::vector<std::shared_ptr<PreparedSpectrumAnalysis>> destroyHere;
         {
-            std::unique_lock<std::mutex> lock (mutex);
-            wake.wait_for (lock,
-                           std::chrono::milliseconds (10),
-                           [this] { return shouldExit || pending.has_value(); });
-
-            if (shouldExit)
+            const std::lock_guard<std::mutex> lock (mutex);
+            if (threadShouldExit())
             {
                 pending.reset();
                 completed.reset();
                 destroyHere.swap (retired);
-                lock.unlock();
                 return;
             }
 
@@ -142,7 +132,10 @@ void AsyncSpectrumAnalysis::run()
         // mailbox mutex, and only on this configuration thread.
         destroyHere.clear();
         if (! request.has_value())
+        {
+            wait (10);
             continue;
+        }
 
         SpectrumAnalysisPreparationResult result;
         result.generation = request->parameters.generation;

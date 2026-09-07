@@ -16,6 +16,7 @@ set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architecture for 
 project(OE_PLUGIN_${PLUGIN_NAME})
 
 option(BUILD_TESTS "Build Spectrum Viewer tests" OFF)
+option(BUILD_PROCESSOR_TESTS "Build Spectrum Viewer processor lifecycle tests" OFF)
 option(BUILD_BENCHMARKS "Build Spectrum Viewer performance benchmarks" OFF)
 option(BENCHMARK_NATIVE_ARCH "Compile benchmarks for the build machine's CPU" OFF)
 
@@ -41,7 +42,7 @@ set(SOURCE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 file(GLOB_RECURSE SRC_FILES LIST_DIRECTORIES false "${SOURCE_PATH}/*.cpp" "${SOURCE_PATH}/*.h")
 set(GUI_COMMONLIB_DIR ${GUI_BASE_DIR}/installed_libs)
 
-if (APPLE)
+if (APPLE AND NOT BUILD_PROCESSOR_TESTS)
 	add_library(${PLUGIN_NAME} MODULE ${SRC_FILES})
 else()
 	add_library(${PLUGIN_NAME} SHARED ${SRC_FILES})
@@ -67,7 +68,9 @@ endif()
 
 #Libraries and compiler options
 if(MSVC)
-	target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/open-ephys.lib)
+	if(NOT BUILD_PROCESSOR_TESTS)
+		target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/open-ephys.lib)
+	endif()
 	target_compile_options(${PLUGIN_NAME} PRIVATE /sdl- /W0)
 
 	install(TARGETS ${PLUGIN_NAME} RUNTIME DESTINATION ${GUI_BIN_DIR}/plugins)
@@ -111,6 +114,14 @@ link_open_ephys_lib(${PLUGIN_NAME} OpenEphysNumerics)
 if(BUILD_TESTS)
 	enable_testing()
 	add_subdirectory(Tests)
+endif()
+
+if(BUILD_PROCESSOR_TESTS)
+	if(NOT BUILD_TESTS)
+		message(FATAL_ERROR "BUILD_PROCESSOR_TESTS requires BUILD_TESTS")
+	endif()
+	target_compile_definitions(${PLUGIN_NAME} PRIVATE BUILD_TESTS)
+	add_subdirectory(Tests/Processor)
 endif()
 
 if(BUILD_BENCHMARKS)

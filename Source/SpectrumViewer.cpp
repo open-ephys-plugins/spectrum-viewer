@@ -55,8 +55,12 @@ ProfileSettings getProfileSettings (SpectrumAnalysisProfile profile)
 
 #define MS_FROM_START Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - start) * 1000
 
-SpectrumViewer::SpectrumViewer()
-    : GenericProcessor ("Spectrum Viewer"), Thread ("FFT Thread"), displayType (POWER_SPECTRUM)
+SpectrumViewer::SpectrumViewer (
+    spectrumviewer::AsyncSpectrumAnalysis::Builder configurationBuilder)
+    : GenericProcessor ("Spectrum Viewer"),
+      Thread ("FFT Thread"),
+      displayType (POWER_SPECTRUM),
+      asynchronousAnalysis (std::move (configurationBuilder))
 {
     tfrParams.segLen = 1;
     tfrParams.freqStart = 0;
@@ -132,7 +136,8 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
         if (p != nullptr)
         {
             channels = p->getArrayValue();
-            getEditor()->updateVisualizer();
+            if (auto* currentEditor = getEditor())
+                currentEditor->updateVisualizer();
         }
     }
     else if (param->getName() == "Channels")
@@ -143,7 +148,8 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
 
         channels = p->getArrayValue();
 
-        getEditor()->updateVisualizer();
+        if (auto* currentEditor = getEditor())
+            currentEditor->updateVisualizer();
     }
 }
 
@@ -156,7 +162,8 @@ void SpectrumViewer::setFrequencyRange (Range<int> newRange)
         tfrParams.freqStep = 1.0 / float (tfrParams.winLen * tfrParams.interpRatio);
         tfrParams.nFreqs = int ((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
-        getEditor()->updateVisualizer();
+        if (auto* currentEditor = getEditor())
+            currentEditor->updateVisualizer();
     }
 }
 

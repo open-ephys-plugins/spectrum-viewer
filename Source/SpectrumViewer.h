@@ -69,12 +69,12 @@ enum class SpectrumAnalysisReadiness
 	continuous channels.
 
 */
-class SpectrumViewer : public GenericProcessor,
-                       public Thread
+class TESTABLE SpectrumViewer : public GenericProcessor,
+                                public Thread
 {
 public:
     /** Constructor */
-    SpectrumViewer();
+    explicit SpectrumViewer (spectrumviewer::AsyncSpectrumAnalysis::Builder configurationBuilder = {});
 
     /** Destructor */
     ~SpectrumViewer() override;

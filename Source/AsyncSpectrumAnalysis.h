@@ -18,14 +18,15 @@
 #include "SpectrumAnalysis.h"
 #include "SpectrumFrameFifo.h"
 
-#include <condition_variable>
+#include <AppConfig.h>
+#include <juce_core/juce_core.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace spectrumviewer
@@ -72,7 +73,7 @@ struct SpectrumAnalysisPreparationResult
     must not call any method on this class. Superseded and retired runtimes are
     destroyed on the configuration thread.
 */
-class AsyncSpectrumAnalysis
+class AsyncSpectrumAnalysis : private juce::Thread
 {
 public:
     using Builder = std::function<std::shared_ptr<PreparedSpectrumAnalysis> (
@@ -89,19 +90,16 @@ public:
     void retire (std::shared_ptr<PreparedSpectrumAnalysis> analysis);
 
 private:
-    void run();
+    void run() override;
     static std::shared_ptr<PreparedSpectrumAnalysis> buildDefault (
         SpectrumAnalysisPreparationRequest request);
 
     Builder builder;
     std::mutex mutex;
-    std::condition_variable wake;
     std::optional<SpectrumAnalysisPreparationRequest> pending;
     std::optional<SpectrumAnalysisPreparationResult> completed;
     std::vector<std::shared_ptr<PreparedSpectrumAnalysis>> retired;
-    std::thread thread;
     std::uint64_t latestRequestedGeneration = 0;
-    bool shouldExit = false;
 };
 } // namespace spectrumviewer
 
