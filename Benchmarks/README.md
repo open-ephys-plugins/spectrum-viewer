@@ -26,7 +26,11 @@ Balanced, and a 0.5 s hop for Fine. Input and display FIFO copies remain outside
 this kernel benchmark. `WorkerToDisplay` extends that path through the
 allocation-free bin-to-pixel reducer and copies its 1,920-column mean, peak, and
 frequency outputs into simulated publication storage for eight channels on
-linear and logarithmic axes. It does not time JUCE component painting.
+linear and logarithmic axes. When processor tests are enabled,
+`GUI/SoftwareRepaint` constructs the real processor and `SpectrumCanvas`, waits
+for a production frame, and times an eight-channel 2,048 x 900 software repaint.
+It isolates paint cost from worker scheduling; interpret it together with
+`WorkerToDisplay`, not as a single end-to-end latency measurement.
 
 Omit `BENCHMARK_NATIVE_ARCH` for a portable build. Never distribute a native
 benchmark binary: it may contain instructions unsupported by other Open Ephys
@@ -58,7 +62,12 @@ output to archive comparable runs:
 For the integrated eight-channel display path:
 
 ```bash
-./BuildBenchmark/Benchmarks/spectrum_viewer_benchmarks \
-  --benchmark_filter='WorkerToDisplay' \
+./Build/Benchmarks/spectrum_viewer_benchmarks \
+  --benchmark_filter='^(WorkerToDisplay|GUI/SoftwareRepaint)' \
   --benchmark_repetitions=30 --benchmark_report_aggregates_only=true
 ```
+
+The GUI benchmark requires the same `BUILD_PROCESSOR_TESTS=ON` host test
+libraries as `spectrum_viewer_processor_tests`. Both integrated registrations
+report a `p99` aggregate across repetitions. Use at least 100 repetitions and
+controlled CPU scaling for a serious tail-latency run.

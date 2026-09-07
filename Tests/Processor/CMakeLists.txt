@@ -39,7 +39,9 @@ if(NOT GUI_TESTABLE_SOURCE_LIBRARY OR NOT GUI_TEST_HELPERS_LIBRARY)
         "then set GUI_TEST_BUILD_DIR to that build directory.")
 endif()
 
-add_executable(spectrum_viewer_processor_tests SpectrumViewerLifecycleTests.cpp)
+add_executable(spectrum_viewer_processor_tests
+    SpectrumCanvasTests.cpp
+    SpectrumViewerLifecycleTests.cpp)
 target_compile_features(spectrum_viewer_processor_tests PRIVATE cxx_std_17)
 target_compile_definitions(spectrum_viewer_processor_tests PRIVATE TEST_RUNNER=1 BUILD_TESTS=1)
 target_include_directories(spectrum_viewer_processor_tests PRIVATE

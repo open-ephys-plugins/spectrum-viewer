@@ -31,6 +31,27 @@ endif()
 
 target_link_libraries(spectrum_viewer_benchmarks PRIVATE benchmark::benchmark)
 
+if(BUILD_PROCESSOR_TESTS AND GUI_TESTABLE_SOURCE_LIBRARY AND GUI_TEST_HELPERS_LIBRARY)
+	target_sources(spectrum_viewer_benchmarks PRIVATE GuiRepaintBenchmarks.cpp)
+	target_compile_definitions(spectrum_viewer_benchmarks PRIVATE TEST_RUNNER=1 BUILD_TESTS=1)
+	target_include_directories(spectrum_viewer_benchmarks SYSTEM PRIVATE
+		${GUI_BASE_DIR}/Tests/TestHelpers/include
+		${GUI_BASE_DIR}/Source
+		${GUI_BASE_DIR}/JuceLibraryCode
+		${GUI_BASE_DIR}/JuceLibraryCode/modules
+		${GUI_BASE_DIR}/Plugins/Headers)
+	target_link_libraries(spectrum_viewer_benchmarks PRIVATE
+		${PLUGIN_NAME}
+		${GUI_TEST_HELPERS_LIBRARY}
+		${GUI_TESTABLE_SOURCE_LIBRARY})
+	if(LINUX)
+		set_target_properties(spectrum_viewer_benchmarks PROPERTIES
+			BUILD_RPATH "$ORIGIN/../TestBin/SpectrumViewer;$ORIGIN/../../plugin-GUI/BuildTests/TestBin/common")
+	endif()
+else()
+	message(STATUS "Skipping GUI repaint benchmarks: BUILD_PROCESSOR_TESTS and Open Ephys test libraries are required")
+endif()
+
 find_path(FFTW_BENCH_INCLUDE_DIR fftw3.h
 	HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/${CMAKE_SYSTEM_NAME}/include
 	      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/linux/include
@@ -77,9 +98,9 @@ if(FFTW_BENCH_INCLUDE_DIR AND FFTW_BENCH_DOUBLE_LIBRARY AND FFTW_BENCH_FLOAT_LIB
 		"${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysNumerics"
 		CACHE PATH "Path to the matching OpenEphysNumerics source checkout")
 	find_library(BENCH_OPENEPHYS_NUMERICS_LIBRARY NAMES OpenEphysNumerics
-		HINTS "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build"
-		      "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build/Release"
-		      "${GUI_COMMONLIB_DIR}/Release/lib/x64")
+		HINTS "${GUI_COMMONLIB_DIR}/Release/lib/x64"
+		      "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build"
+		      "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build/Release")
 	if(EXISTS "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source/OpenEphysNumerics.h"
 	   AND BENCH_OPENEPHYS_NUMERICS_LIBRARY)
 		target_sources(spectrum_viewer_benchmarks PRIVATE

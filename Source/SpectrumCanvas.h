@@ -34,15 +34,36 @@ class SpectrumCanvas;
 class FrequencyPlot : public InteractivePlot
 {
 public:
+    void plot (std::vector<float> x,
+               std::vector<float> y,
+               Colour colour = Colours::white,
+               float width = 1.0f,
+               float opacity = 1.0f,
+               PlotType type = PlotType::LINE) override;
+
     void setFrequencyAxis (spectrumviewer::FrequencyScale scale,
                            float minimumHz,
                            float maximumHz,
                            float minimumDb,
                            float maximumDb);
 
-    std::vector<float> transformFrequencies (const std::vector<float>& frequencies) const;
+    static std::vector<float> transformFrequencies (
+        const std::vector<float>& frequencies,
+        spectrumviewer::FrequencyScale scale);
     float frequencyAt (Point<int> point) const noexcept;
     int getDrawingWidth() const noexcept { return drawComponent->getWidth(); }
+
+#if BUILD_TESTS
+    Rectangle<int> getDrawingBoundsForTesting() const { return drawComponent->getBounds(); }
+    String getXAxisLabelForTesting() const { return xLabel->getText(); }
+    String getYAxisLabelForTesting() const { return yLabel->getText(); }
+    XYRange getRangeForTesting()
+    {
+        XYRange range;
+        getRange (range);
+        return range;
+    }
+#endif
 
 private:
     spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
@@ -102,11 +123,47 @@ public:
     /** Clears the plot */
     void clear();
 
+#if BUILD_TESTS
+    std::size_t getFrequencyCountForTesting() const noexcept { return xvalues.size(); }
+    const std::vector<float>& getFrequenciesForTesting() const noexcept { return xvalues; }
+    const std::vector<float>& getMeanTraceForTesting (std::size_t channel) const
+    {
+        return currLinearPower.at (channel);
+    }
+    const std::vector<float>& getPeakTraceForTesting (std::size_t channel) const
+    {
+        return currLinearPeakPower.at (channel);
+    }
+    std::vector<float> getPlottedFrequenciesForTesting() const
+    {
+        return FrequencyPlot::transformFrequencies (xvalues, frequencyScale);
+    }
+    const std::vector<float>& getDbMeanTraceForTesting (std::size_t channel) const
+    {
+        return currPower.at (channel);
+    }
+    float getMinimumFrequencyForTesting() const noexcept { return displayMinimumFrequencyHz; }
+    float getMaximumFrequencyForTesting() const noexcept { return displayMaximumFrequencyHz; }
+    spectrumviewer::FrequencyScale getFrequencyScaleForTesting() const noexcept
+    {
+        return frequencyScale;
+    }
+    String getXAxisLabelForTesting() const { return plt->getXAxisLabelForTesting(); }
+    String getYAxisLabelForTesting() const { return plt->getYAxisLabelForTesting(); }
+    XYRange getPlotRangeForTesting() { return plt->getRangeForTesting(); }
+    Rectangle<int> getDrawingBoundsForTesting() const
+    {
+        return plt->getDrawingBoundsForTesting().translated (plt->getX(), plt->getY());
+    }
+#endif
+
     int legendWidth = 150;
 
     DisplayType displayType;
 
 private:
+    void updateAmplitudeAxisLabel();
+
     std::vector<Colour> chanColors = { Colour (200, 200, 200),
                                        Colour (230, 159, 0),
                                        Colour (86, 180, 233),

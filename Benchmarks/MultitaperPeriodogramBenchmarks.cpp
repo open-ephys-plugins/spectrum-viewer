@@ -19,6 +19,7 @@
 #include "SpectrumAnalysis.h"
 #include "SpectrumDisplayReducer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -39,6 +40,15 @@ using spectrumviewer::SpectrumDisplayReducer;
 
 constexpr double twoPi = 6.283185307179586476925286766559;
 constexpr unsigned int fftwEstimate = 1U << 6U;
+
+double percentile99 (const std::vector<double>& values)
+{
+    auto sorted = values;
+    std::sort (sorted.begin(), sorted.end());
+    const auto index = static_cast<std::size_t> (
+        std::ceil (0.99 * static_cast<double> (sorted.size()))) - 1;
+    return sorted[index];
+}
 
 DetrendMode getMode (std::int64_t value)
 {
@@ -249,7 +259,8 @@ void addDisplayPipelineCases (benchmark::internal::Benchmark* benchmark)
 
     benchmark->ArgNames ({ "N", "K", "2NW", "channels", "detrend", "log_axis" })
         ->Unit (benchmark::kMicrosecond)
-        ->UseRealTime();
+        ->UseRealTime()
+        ->ComputeStatistics ("p99", percentile99);
 }
 
 BENCHMARK (runMultitaperPeriodogram)

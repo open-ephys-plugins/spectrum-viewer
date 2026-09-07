@@ -22,9 +22,80 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "SpectrumCanvas.h"
-#include <math.h>
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
+#include <utility>
+
+namespace
+{
+class BatchedXYLine final : public XYLine
+{
+public:
+    BatchedXYLine (std::vector<float> xValues, std::vector<float> yValues)
+        : XYLine (std::move (xValues), std::move (yValues))
+    {
+    }
+
+    void draw (Graphics& graphics, XYRange& visibleRange, int plotWidth, int plotHeight) override
+    {
+        if (type != PlotType::LINE)
+        {
+            XYLine::draw (graphics, visibleRange, plotWidth, plotHeight);
+            return;
+        }
+
+        const auto xRange = visibleRange.xmax - visibleRange.xmin;
+        const auto yRange = visibleRange.ymax - visibleRange.ymin;
+        const auto pointCount = std::min (x.size(), y.size());
+        if (pointCount < 2 || xRange < 1.0e-6f || yRange < 1.0e-6f)
+            return;
+
+        Path path;
+        auto continuing = false;
+        for (std::size_t index = 0; index < pointCount; ++index)
+        {
+            if (! std::isfinite (x[index]) || ! std::isfinite (y[index]))
+            {
+                continuing = false;
+                continue;
+            }
+
+            const auto pixelX = (x[index] - visibleRange.xmin) / xRange
+                                * static_cast<float> (plotWidth);
+            const auto pixelY = static_cast<float> (plotHeight)
+                                - (y[index] - visibleRange.ymin) / yRange
+                                      * static_cast<float> (plotHeight);
+            if (continuing)
+                path.lineTo (pixelX, pixelY);
+            else
+            {
+                path.startNewSubPath (pixelX, pixelY);
+                continuing = true;
+            }
+        }
+
+        graphics.setColour (colour.withAlpha (opacity));
+        graphics.strokePath (path, PathStrokeType (width));
+    }
+};
+} // namespace
+
+void FrequencyPlot::plot (std::vector<float> x,
+                          std::vector<float> y,
+                          Colour colour,
+                          float width,
+                          float opacity,
+                          PlotType type)
+{
+    auto* line = new BatchedXYLine (std::move (x), std::move (y));
+    line->setColour (colour);
+    line->setWidth (width);
+    line->setOpacity (opacity);
+    line->setType (type);
+    drawComponent->add (line);
+}
 
 void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
                                       float minimumHz,
@@ -49,9 +120,10 @@ void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
 }
 
 std::vector<float> FrequencyPlot::transformFrequencies (
-    const std::vector<float>& frequencies) const
+    const std::vector<float>& frequencies,
+    spectrumviewer::FrequencyScale scale)
 {
-    if (frequencyScale == spectrumviewer::FrequencyScale::linear)
+    if (scale == spectrumviewer::FrequencyScale::linear)
         return frequencies;
     std::vector<float> transformed (frequencies.size());
     std::transform (frequencies.begin(), frequencies.end(), transformed.begin(), [] (float frequency)
@@ -81,7 +153,7 @@ SpectrumCanvas::SpectrumCanvas (SpectrumViewer* n)
     canvasPlot = std::make_unique<CanvasPlot> (processor);
 
     viewport = std::make_unique<Viewport>();
-    viewport->setViewedComponent (canvasPlot.get(), true);
+    viewport->setViewedComponent (canvasPlot.get(), false);
     viewport->setScrollBarsShown (true, true);
     viewport->setScrollBarThickness (12);
     addAndMakeVisible (viewport.get());
@@ -331,10 +403,11 @@ void CanvasPlot::setDisplayType (DisplayType type)
 void CanvasPlot::plotPowerSpectrum()
 {
     plt->clear();
+    updateAmplitudeAxisLabel();
 
     auto minimum = std::numeric_limits<float>::infinity();
     auto maximum = -std::numeric_limits<float>::infinity();
-    const auto plotFrequencies = plt->transformFrequencies (xvalues);
+    const auto plotFrequencies = plt->transformFrequencies (xvalues, frequencyScale);
     for (int i = 0; i < activeChannels.size(); i++)
     {
         for (const auto value : currPower[static_cast<std::size_t> (i)])
@@ -412,9 +485,40 @@ void CanvasPlot::updatePowerSpectrum (const float* meanPsd,
 void CanvasPlot::setAmplitudeDisplay (SpectrumAmplitudeDisplay display)
 {
     amplitudeDisplay = display;
-    plt->ylabel (display == SpectrumAmplitudeDisplay::psd
-                     ? "PSD (dB re native unit^2/Hz)"
-                     : "ASD (dB re native unit/sqrt(Hz))");
+    updateAmplitudeAxisLabel();
+}
+
+void CanvasPlot::updateAmplitudeAxisLabel()
+{
+    String commonUnit;
+    auto hasCommonUnit = false;
+    for (int index = 0; index < activeChannels.size(); ++index)
+    {
+        const auto& unit = channelUnits[static_cast<std::size_t> (index)];
+        if (unit.isEmpty())
+        {
+            commonUnit.clear();
+            hasCommonUnit = false;
+            break;
+        }
+        if (! hasCommonUnit)
+        {
+            commonUnit = unit;
+            hasCommonUnit = true;
+        }
+        else if (unit != commonUnit)
+        {
+            commonUnit.clear();
+            hasCommonUnit = false;
+            break;
+        }
+    }
+
+    if (! hasCommonUnit)
+        commonUnit = "native unit";
+    plt->ylabel (amplitudeDisplay == SpectrumAmplitudeDisplay::psd
+                     ? "PSD (dB re " + commonUnit + "^2/Hz)"
+                     : "ASD (dB re " + commonUnit + "/sqrt(Hz))");
 }
 
 void CanvasPlot::mouseMove (const MouseEvent& event)

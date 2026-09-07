@@ -89,3 +89,23 @@ small part of total worker cost. CPU scaling was enabled, so these measurements
 are informational. They exclude the input FIFO copy, FIFO index publication,
 GUI-thread model copy and JUCE paint; an instrumented graphical target-rig run
 is still required for repaint p50/p99 and responsiveness while resizing.
+
+## GUI software repaint follow-up
+
+The real eight-channel `SpectrumCanvas` was rendered at 2,048 x 900 with 1,640
+display columns. The host `XYLine` initially issued one graphics call per line
+segment: five-repetition medians were 41--50 ms across profiles and axes. A
+plugin-local `XYLine` subclass now submits one JUCE path per trace while retaining
+the host plot's axes, grid, ownership, and clearing behavior.
+
+In a 30-repetition run after batching, linear-axis repaint p50/p99 was 9.15/18.0
+ms Fast, 7.50/9.30 ms Balanced, and 5.47/8.45 ms Fine. Log-axis p50/p99 was
+4.80/7.57, 5.14/6.21, and 4.20/5.82 ms respectively. Profile differences here
+come from trace geometry and host scheduling, not different column counts. CPU
+scaling was enabled and the Fast linear tail was noisy; these are diagnostic
+software-raster results, not target-rig acceptance figures.
+
+The matching worker-to-display p50/p99 was 0.451/0.457 ms Fast, 1.043/1.063 ms
+Balanced, and 5.673/5.893 ms Fine on a linear axis. Log reduction remained
+within 0.02 ms of linear at p50. Actual display latency also includes FIFO
+publication, GUI refresh/model conversion, compositor work, and scheduling.

@@ -87,3 +87,8 @@ Superseded and retired runtimes are destroyed by the configuration thread.
 Pure transport and DSP components belong in this fast standalone suite.
 Processor-level lifecycle and overload behavior uses the GUI's `ProcessorTester`
 and fake-source conventions rather than mocking Open Ephys behavior locally.
+`SpectrumCanvasTests` additionally renders the real component tree into a JUCE
+software image. It verifies full-Nyquist linear display, mean and peak traces,
+native PSD/ASD labels, hot logarithmic switching, valid transformed coordinates,
+and trace coverage across the plot width. Set `SPECTRUM_VIEWER_TEST_IMAGE_DIR`
+to retain PNG artifacts for manual inspection.
