@@ -67,6 +67,14 @@ mean removal, and 5.12 ms for linear detrending. Standard deviations were 0.3%
 to 1.2% with CPU frequency scaling enabled. These are local throughput results,
 not target-rig p99 latency or evidence for a response-profile default.
 
+### Fine taper-selection follow-up
+
+Repeating the eight-channel, N=60,000, NW=3, linear-detrend benchmark with
+different retained taper counts gave five-repetition medians of 3.43 ms for
+K=3, 4.47 ms for K=4, and 5.35 ms for K=5. CPU frequency scaling was enabled.
+K=4 is therefore about 17% faster than the current K=5, although leakage and
+variance—not this already-small worker cost—should select the policy.
+
 ## Worker pipeline follow-up
 
 The worker-side pipeline benchmark adds the circular-history copy and window

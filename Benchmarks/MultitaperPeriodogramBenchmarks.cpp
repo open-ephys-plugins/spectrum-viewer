@@ -112,6 +112,8 @@ void addMultitaperCases (benchmark::internal::Benchmark* benchmark)
     for (const auto& profile : {
              std::vector<std::int64_t> { 7500, 3, 4 },
              std::vector<std::int64_t> { 15000, 4, 5 },
+             std::vector<std::int64_t> { 60000, 3, 6 },
+             std::vector<std::int64_t> { 60000, 4, 6 },
              std::vector<std::int64_t> { 60000, 5, 6 } })
     {
         for (const auto channels : { 1, 4, 8 })
