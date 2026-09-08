@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -27,7 +28,9 @@ std::shared_ptr<Runtime> buildRuntime (Request request)
     return std::make_shared<Runtime> (request.parameters,
                                       std::move (request.sourceChannelIndices),
                                       request.outputQueueCapacity,
-                                      std::move (request.sourceChannelUnits));
+                                      std::move (request.sourceChannelUnits),
+                                      request.captureId,
+                                      request.captureTargetWindowCount);
 }
 
 struct BuildGate
@@ -105,6 +108,19 @@ protected:
         for (int sample = 0; sample < blockSize; ++sample)
             buffer.setSample (0, sample, static_cast<float> (sample + 1));
 
+        for (int block = 0; block < count; ++block)
+        {
+            tester->processBlock (processor, buffer);
+            std::this_thread::sleep_for (1ms);
+        }
+    }
+
+    void writeBlocksWithValue (int count, float value)
+    {
+        AudioBuffer<float> buffer (1, blockSize);
+        buffer.clear();
+        for (int sample = 0; sample < blockSize; ++sample)
+            buffer.setSample (0, sample, value);
         for (int block = 0; block < count; ++block)
         {
             tester->processBlock (processor, buffer);
@@ -377,6 +393,328 @@ TEST_F (SpectrumViewerLifecycleTests, PublishesFullRangeReducedFramesWithNativeU
             }
         });
         return matched;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, CapturesNonOverlappingFineWindowsAndReturnsToLive)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    writeBlocks (4);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
+    }));
+
+    ASSERT_TRUE (processor->startSpectrumCapture (3.0));
+    EXPECT_EQ (processor->getCaptureState(), SpectrumCaptureState::preparing);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+    EXPECT_EQ (processor->getCaptureTargetWindowCount(), 2u);
+    EXPECT_EQ (processor->getWarmupTargetSampleCount(), 160u);
+
+    writeBlocks (32);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureIncludedWindowCount() == 1u;
+    }));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool progress = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            progress = frame.capture.product
+                       == spectrumviewer::SpectrumFrameProduct::captureProgress;
+            if (progress)
+            {
+                EXPECT_EQ (frame.descriptor.windowSampleCount, 160u);
+                EXPECT_EQ (frame.descriptor.hopSampleCount, 160u);
+                EXPECT_EQ (frame.capture.includedWindowCount, 1u);
+                EXPECT_EQ (frame.capture.targetWindowCount, 2u);
+            }
+        });
+        return progress;
+    }));
+
+    writeBlocks (32);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool complete = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            complete = frame.capture.product
+                       == spectrumviewer::SpectrumFrameProduct::captureComplete;
+            if (complete)
+            {
+                EXPECT_EQ (frame.capture.includedWindowCount, 2u);
+                EXPECT_EQ (frame.capture.lastSampleExclusive - frame.firstSample, 320);
+                EXPECT_FALSE (frame.capture.hasQualityWarning());
+            }
+        });
+        return complete;
+    }));
+    EXPECT_DOUBLE_EQ (processor->getCaptureAnalyzedSeconds(), 4.0);
+
+    processor->returnToLive();
+    EXPECT_EQ (processor->getCaptureState(), SpectrumCaptureState::restoringLive);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::live
+               && processor->getWarmupTargetSampleCount() == 20u;
+    }));
+    writeBlocks (4);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, FailedCapturePreparationLeavesLiveRuntimeUsable)
+{
+    createProcessor ([] (Request request)
+    {
+        if (request.captureTargetWindowCount > 0)
+            throw std::runtime_error ("deliberate capture failure");
+        return buildRuntime (std::move (request));
+    });
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    writeBlocks (4);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
+    }));
+
+    ASSERT_TRUE (processor->startSpectrumCapture (10.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::failed;
+    }));
+    EXPECT_TRUE (processor->hasActiveAnalysis());
+    EXPECT_EQ (processor->getConfigurationFailureCount(), 1u);
+
+    writeBlocks (2);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool live = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            live = frame.capture.product == spectrumviewer::SpectrumFrameProduct::live;
+        });
+        return live;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, CancellingCapturePreparationRestoresNewestLiveRequest)
+{
+    auto captureGate = std::make_shared<BuildGate>();
+    createProcessor ([captureGate] (Request request)
+    {
+        if (request.captureTargetWindowCount > 0)
+            captureGate->enterAndWait();
+        return buildRuntime (std::move (request));
+    });
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+
+    ASSERT_TRUE (processor->startSpectrumCapture (10.0));
+    const auto entered = captureGate->waitUntilEntered();
+    if (! entered)
+        captureGate->release();
+    ASSERT_TRUE (entered);
+    processor->cancelSpectrumCapture();
+    EXPECT_EQ (processor->getCaptureState(), SpectrumCaptureState::restoringLive);
+    captureGate->release();
+
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::live
+               && processor->getWarmupTargetSampleCount() == 20u;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, StopDuringCaptureResetsStateForRestart)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    ASSERT_TRUE (processor->startSpectrumCapture (10.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+
+    ASSERT_TRUE (processor->stopAcquisition());
+    EXPECT_EQ (processor->getCaptureState(), SpectrumCaptureState::live);
+    EXPECT_EQ (processor->getCaptureIncludedWindowCount(), 0u);
+    EXPECT_EQ (processor->getAnalysisReadiness(), SpectrumAnalysisReadiness::stopped);
+
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::live
+               && processor->hasActiveAnalysis();
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, FrozenCaptureReReducesWithoutNewInput)
+{
+    createProcessor();
+    processor->setDisplayColumnCount (8);
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    ASSERT_TRUE (processor->startSpectrumCapture (2.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+    writeBlocks (32);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->consumeLatestSpectrumFrame ([] (const auto&) {});
+    }));
+
+    processor->setDisplayColumnCount (4);
+    processor->setFrequencyScale (spectrumviewer::FrequencyScale::logarithmic);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool updated = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            updated = frame.capture.product
+                          == spectrumviewer::SpectrumFrameProduct::captureComplete
+                      && frame.frequencyScale
+                             == spectrumviewer::FrequencyScale::logarithmic
+                      && frame.numBins == 4u;
+        });
+        return updated;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, CaptureReportsInputGapWithoutMixingWindowHistory)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    ASSERT_TRUE (processor->startSpectrumCapture (2.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+
+    ASSERT_TRUE (processor->stopThread (1000));
+    writeBlocks (10);
+    EXPECT_GT (processor->getDroppedInputBlockCount(), 0u);
+    ASSERT_TRUE (processor->startThread (juce::Thread::Priority::normal));
+    std::this_thread::sleep_for (20ms);
+    writeBlocks (1);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getInputDiscontinuityCount() > 0;
+    }));
+    writeBlocks (32);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool warned = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            warned = frame.capture.product
+                         == spectrumviewer::SpectrumFrameProduct::captureComplete
+                     && frame.capture.discontinuityCount > 0
+                     && frame.capture.hasQualityWarning();
+        });
+        return warned;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, FailedSpectrumExtendsCaptureAndMarksResult)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    ASSERT_TRUE (processor->startSpectrumCapture (2.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+
+    writeBlocksWithValue (32, std::numeric_limits<float>::quiet_NaN());
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureFailedWindowCount() == 1u;
+    }));
+    EXPECT_EQ (processor->getCaptureIncludedWindowCount(), 0u);
+
+    writeBlocks (32);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool warned = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            warned = frame.capture.product
+                         == spectrumviewer::SpectrumFrameProduct::captureComplete
+                     && frame.capture.failedWindowCount == 1u
+                     && frame.capture.hasQualityWarning();
+        });
+        return warned;
+    }));
+    EXPECT_DOUBLE_EQ (processor->getCaptureAnalyzedSeconds(), 2.0);
+    EXPECT_DOUBLE_EQ (processor->getCaptureWallSpanSeconds(), 4.0);
+}
+
+TEST_F (SpectrumViewerLifecycleTests, RetriesCompletedCaptureAfterDisplayQueuePressure)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    ASSERT_TRUE (processor->startSpectrumCapture (10.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+
+    for (std::size_t window = 1; window <= 5; ++window)
+    {
+        writeBlocks (32);
+        ASSERT_TRUE (waitUntil ([this, window]
+        {
+            return processor->getCaptureIncludedWindowCount() >= window;
+        }));
+    }
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+    ASSERT_TRUE (processor->consumeLatestSpectrumFrame ([] (const auto&) {}));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool complete = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            complete = frame.capture.product
+                       == spectrumviewer::SpectrumFrameProduct::captureComplete;
+        });
+        return complete;
     }));
 }
 } // namespace

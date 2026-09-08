@@ -91,6 +91,13 @@ new requests return immediately, that rapid changes coalesce to the newest
 generation, and that a failed build is reported without killing the service.
 Superseded and retired runtimes are destroyed by the configuration thread.
 
+`SpectrumCaptureAccumulator` computes an equal mean and Welford sample variance
+from full-resolution planar PSDs without retaining prior spectra. Tests pin
+complete-frame rejection, reset/reuse, planar layout, and float agreement with a
+double oracle. Processor cases exercise the asynchronous non-overlapping Fine
+capture lifecycle, cancellation, failure recovery, stop/restart, frozen-axis
+reduction, and reliable completion publication under display-queue pressure.
+
 Pure transport and DSP components belong in this fast standalone suite.
 Processor-level lifecycle and overload behavior uses the GUI's `ProcessorTester`
 and fake-source conventions rather than mocking Open Ephys behavior locally.

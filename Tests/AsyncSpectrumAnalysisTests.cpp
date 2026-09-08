@@ -62,7 +62,9 @@ std::shared_ptr<PreparedSpectrumAnalysis> build (
         request.parameters,
         std::move (request.sourceChannelIndices),
         request.outputQueueCapacity,
-        std::move (request.sourceChannelUnits));
+        std::move (request.sourceChannelUnits),
+        request.captureId,
+        request.captureTargetWindowCount);
 }
 
 TEST (AsyncSpectrumAnalysisTests, BuildsACompleteRuntimeOffThread)
@@ -76,6 +78,23 @@ TEST (AsyncSpectrumAnalysisTests, BuildsACompleteRuntimeOffThread)
     EXPECT_EQ (result.generation, 4u);
     EXPECT_EQ (result.analysis->getConfiguration().getParameters().generation, 4u);
     EXPECT_EQ (result.analysis->getFrameFifo().getCapacity(), 3u);
+}
+
+TEST (AsyncSpectrumAnalysisTests, BuildsCaptureAccumulatorAsPartOfRuntime)
+{
+    AsyncSpectrumAnalysis analysis;
+    auto request = makeRequest (5);
+    request.captureId = 17;
+    request.captureTargetWindowCount = 6;
+    analysis.request (std::move (request));
+
+    SpectrumAnalysisPreparationResult result;
+    ASSERT_TRUE (waitForResult (analysis, result));
+    ASSERT_TRUE (result.succeeded()) << result.error;
+    EXPECT_EQ (result.captureId, 17u);
+    EXPECT_TRUE (result.analysis->isCaptureRuntime());
+    EXPECT_EQ (result.analysis->getCaptureId(), 17u);
+    EXPECT_EQ (result.analysis->getCaptureAccumulator()->getTargetWindowCount(), 6u);
 }
 
 TEST (AsyncSpectrumAnalysisTests, RequestDoesNotWaitForAnInProgressBuildAndLatestWins)

@@ -16,6 +16,7 @@
 #define ASYNC_SPECTRUM_ANALYSIS_H_INCLUDED
 
 #include "SpectrumAnalysis.h"
+#include "SpectrumCaptureAccumulator.h"
 #include "SpectrumFrameFifo.h"
 
 #include <AppConfig.h>
@@ -38,18 +39,25 @@ public:
     PreparedSpectrumAnalysis (SpectrumAnalysisParameters parameters,
                               std::vector<int> sourceChannelIndices,
                               std::size_t outputQueueCapacity,
-                              std::vector<std::string> sourceChannelUnits = {});
+                              std::vector<std::string> sourceChannelUnits = {},
+                              std::uint64_t captureId = 0,
+                              std::size_t captureTargetWindowCount = 0);
 
     SpectrumAnalysisPipeline& getPipeline() noexcept { return pipeline; }
     SpectrumFrameFifo& getFrameFifo() noexcept { return frameFifo; }
     SpectrumDisplayReducer& getDisplayReducer() noexcept { return displayReducer; }
     const SpectrumAnalysisConfiguration& getConfiguration() const noexcept { return *configuration; }
+    SpectrumCaptureAccumulator* getCaptureAccumulator() noexcept { return captureAccumulator.get(); }
+    bool isCaptureRuntime() const noexcept { return captureAccumulator != nullptr; }
+    std::uint64_t getCaptureId() const noexcept { return captureIdentifier; }
 
 private:
     std::shared_ptr<const SpectrumAnalysisConfiguration> configuration;
     SpectrumAnalysisPipeline pipeline;
     SpectrumDisplayReducer displayReducer;
     SpectrumFrameFifo frameFifo;
+    std::unique_ptr<SpectrumCaptureAccumulator> captureAccumulator;
+    std::uint64_t captureIdentifier = 0;
 };
 
 struct SpectrumAnalysisPreparationRequest
@@ -58,11 +66,14 @@ struct SpectrumAnalysisPreparationRequest
     std::vector<int> sourceChannelIndices;
     std::vector<std::string> sourceChannelUnits;
     std::size_t outputQueueCapacity = 0;
+    std::uint64_t captureId = 0;
+    std::size_t captureTargetWindowCount = 0;
 };
 
 struct SpectrumAnalysisPreparationResult
 {
     std::uint64_t generation = 0;
+    std::uint64_t captureId = 0;
     std::shared_ptr<PreparedSpectrumAnalysis> analysis;
     std::string error;
 

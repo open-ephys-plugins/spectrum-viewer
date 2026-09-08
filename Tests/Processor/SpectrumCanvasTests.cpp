@@ -257,6 +257,9 @@ TEST_F (SpectrumCanvasTests, SpectralSequenceGapsAdvanceAutoRangeUsingSignalTime
     plot->beginSpectrumFrame (7, 14, 8, 0.125);
     EXPECT_DOUBLE_EQ (plot->getPendingRangeElapsedSecondsForTesting(), 0.5);
 
+    plot->beginSpectrumFrame (7, 14, 8, 0.125);
+    EXPECT_DOUBLE_EQ (plot->getPendingRangeElapsedSecondsForTesting(), 0.0);
+
     plot->beginSpectrumFrame (8, 2, 8, 0.125);
     EXPECT_DOUBLE_EQ (plot->getPendingRangeElapsedSecondsForTesting(), 0.125);
 }

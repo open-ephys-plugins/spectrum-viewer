@@ -211,10 +211,10 @@ void SpectrumCanvas::endAnimation()
 void SpectrumCanvas::refresh()
 {
     const auto readiness = processor->getAnalysisReadiness();
-    const auto unavailable = readiness == SpectrumAnalysisReadiness::preparing
-                             || readiness == SpectrumAnalysisReadiness::warmingUp
-                             || (readiness == SpectrumAnalysisReadiness::configurationFailed
-                                 && ! processor->hasActiveAnalysis());
+    const auto unavailable = ! processor->hasActiveAnalysis()
+                             && (readiness == SpectrumAnalysisReadiness::preparing
+                                 || readiness == SpectrumAnalysisReadiness::warmingUp
+                                 || readiness == SpectrumAnalysisReadiness::configurationFailed);
     if (unavailable)
     {
         if (! unavailableStateCleared)
@@ -533,10 +533,10 @@ void CanvasPlot::beginSpectrumFrame (std::uint64_t configurationGeneration,
 {
     frameChannelCount = std::min (channelCount, currPower.size());
     auto elapsedFrames = std::uint64_t { 1 };
-    if (hasFrameTiming
-        && configurationGeneration == lastConfigurationGeneration
-        && sequence > lastFrameSequence)
-        elapsedFrames = sequence - lastFrameSequence;
+    if (hasFrameTiming && configurationGeneration == lastConfigurationGeneration)
+        elapsedFrames = sequence > lastFrameSequence
+                            ? sequence - lastFrameSequence
+                            : 0;
     pendingRangeElapsedSeconds = static_cast<double> (elapsedFrames)
                                  * hopDurationSeconds;
     lastConfigurationGeneration = configurationGeneration;

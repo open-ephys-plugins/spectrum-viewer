@@ -114,3 +114,13 @@ The matching worker-to-display p50/p99 was 0.451/0.457 ms Fast, 1.043/1.063 ms
 Balanced, and 5.673/5.893 ms Fine on a linear axis. Log reduction remained
 within 0.02 ms of linear at p50. Actual display latency also includes FIFO
 publication, GUI refresh/model conversion, compositor work, and scheduling.
+
+## Low-variance capture accumulator
+
+An eight-channel Fine capture has 30,001 bins per channel at 30 kHz. Two float
+arrays for its full-resolution running mean and Welford accumulator occupy
+1.92 MB. A 30-window capture update benchmark completed all 30 planar updates
+in 6.58 ms median, or approximately 0.22 ms per accepted two-second window.
+This local 30-repetition run had 1.64% coefficient of variation with CPU
+scaling enabled. It excludes the multitaper estimate and display reduction,
+which are reported separately above.

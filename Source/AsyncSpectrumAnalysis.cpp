@@ -20,7 +20,9 @@ PreparedSpectrumAnalysis::PreparedSpectrumAnalysis (
     SpectrumAnalysisParameters parameters,
     std::vector<int> sourceChannelIndices,
     std::size_t outputQueueCapacity,
-    std::vector<std::string> sourceChannelUnits)
+    std::vector<std::string> sourceChannelUnits,
+    std::uint64_t captureId,
+    std::size_t captureTargetWindowCount)
     : configuration (std::make_shared<const SpectrumAnalysisConfiguration> (parameters)),
       pipeline (configuration),
       displayReducer (parameters.channelCount,
@@ -31,8 +33,17 @@ PreparedSpectrumAnalysis::PreparedSpectrumAnalysis (
                  outputQueueCapacity,
                  configuration->getFrameDescriptor(),
                  std::move (sourceChannelIndices),
-                 std::move (sourceChannelUnits))
+                 std::move (sourceChannelUnits)),
+      captureAccumulator (captureTargetWindowCount > 0
+                              ? std::make_unique<SpectrumCaptureAccumulator> (
+                                    parameters.channelCount,
+                                    configuration->getBinCount(),
+                                    captureTargetWindowCount)
+                              : nullptr),
+      captureIdentifier (captureId)
 {
+    if ((captureId == 0) != (captureTargetWindowCount == 0))
+        throw std::invalid_argument ("Capture runtime metadata is incomplete");
 }
 
 AsyncSpectrumAnalysis::AsyncSpectrumAnalysis (Builder newBuilder)
@@ -88,7 +99,9 @@ std::shared_ptr<PreparedSpectrumAnalysis> AsyncSpectrumAnalysis::buildDefault (
         request.parameters,
         std::move (request.sourceChannelIndices),
         request.outputQueueCapacity,
-        std::move (request.sourceChannelUnits));
+        std::move (request.sourceChannelUnits),
+        request.captureId,
+        request.captureTargetWindowCount);
 }
 
 void AsyncSpectrumAnalysis::run()
@@ -145,6 +158,7 @@ void AsyncSpectrumAnalysis::run()
 
         SpectrumAnalysisPreparationResult result;
         result.generation = request->parameters.generation;
+        result.captureId = request->captureId;
         try
         {
             result.analysis = builder (std::move (*request));

@@ -13,8 +13,10 @@ FetchContent_MakeAvailable(googlebenchmark)
 add_executable(
 	spectrum_viewer_benchmarks
 	AmplitudeRangeBenchmarks.cpp
+	CaptureAccumulatorBenchmarks.cpp
 	WindowPreprocessingBenchmarks.cpp
 	../Source/SpectrumAmplitudeRange.cpp
+	../Source/SpectrumCaptureAccumulator.cpp
 	../Source/SpectrumDisplayReducer.cpp)
 
 target_compile_features(spectrum_viewer_benchmarks PRIVATE cxx_std_17)

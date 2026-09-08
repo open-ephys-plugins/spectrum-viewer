@@ -36,6 +36,31 @@
 
 namespace spectrumviewer
 {
+enum class SpectrumFrameProduct
+{
+    live,
+    captureProgress,
+    captureComplete
+};
+
+struct SpectrumCaptureFrameStatus
+{
+    SpectrumFrameProduct product = SpectrumFrameProduct::live;
+    std::uint64_t captureId = 0;
+    std::size_t includedWindowCount = 0;
+    std::size_t targetWindowCount = 0;
+    std::int64_t lastSampleExclusive = 0;
+    std::uint64_t failedWindowCount = 0;
+    std::uint64_t shedWindowCount = 0;
+    std::uint64_t discontinuityCount = 0;
+
+    bool hasQualityWarning() const noexcept
+    {
+        return failedWindowCount > 0 || shedWindowCount > 0
+               || discontinuityCount > 0;
+    }
+};
+
 /**
     Publishes complete planar spectrum frames from one worker to one UI thread.
 
@@ -83,6 +108,7 @@ public:
         const float* frequenciesHz = nullptr;
         FrequencyScale frequencyScale = FrequencyScale::linear;
         bool reducedForDisplay = false;
+        SpectrumCaptureFrameStatus capture;
 
     private:
         friend class SpectrumFrameFifo;
@@ -139,7 +165,8 @@ public:
                          std::uint64_t sequence,
                          FrequencyScale scale,
                          double minimumFrequencyHz,
-                         double maximumFrequencyHz) noexcept
+                         double maximumFrequencyHz,
+                         SpectrumCaptureFrameStatus capture = {}) noexcept
     {
         if (planarMeans == nullptr || planarPeaks == nullptr || frequenciesHz == nullptr
             || numChannels != channelCount || numColumns == 0 || numColumns > binCount
@@ -147,7 +174,10 @@ public:
             || ! std::isfinite (minimumFrequencyHz) || ! std::isfinite (maximumFrequencyHz)
             || maximumFrequencyHz <= minimumFrequencyHz
             || (scale == FrequencyScale::logarithmic && minimumFrequencyHz <= 0.0)
-            || ! frequenciesAreValid (frequenciesHz, numColumns, minimumFrequencyHz, maximumFrequencyHz))
+            || ! frequenciesAreValid (frequenciesHz, numColumns, minimumFrequencyHz, maximumFrequencyHz)
+            || ! captureStatusIsValid (capture)
+            || (capture.product != SpectrumFrameProduct::live
+                && capture.lastSampleExclusive <= firstSample))
         {
             rejectedFrames.fetch_add (1, std::memory_order_relaxed);
             return false;
@@ -173,7 +203,7 @@ public:
         std::memcpy (frequencyCoordinates.data() + slot * binCount,
                      frequenciesHz,
                      numColumns * sizeof (float));
-        metadata[slot] = { firstSample, sequence, numColumns, minimumFrequencyHz, maximumFrequencyHz, scale, true };
+        metadata[slot] = { firstSample, sequence, numColumns, minimumFrequencyHz, maximumFrequencyHz, scale, true, capture };
         return true;
     }
 
@@ -200,7 +230,7 @@ public:
         std::memcpy (powers.data() + slot * channelCount * binCount,
                      planarPowers,
                      channelCount * binCount * sizeof (float));
-        metadata[slot] = { firstSample, sequence, binCount, 0.0, descriptor.sampleRateHz * 0.5, FrequencyScale::linear, false };
+        metadata[slot] = { firstSample, sequence, binCount, 0.0, descriptor.sampleRateHz * 0.5, FrequencyScale::linear, false, {} };
         return true;
     }
 
@@ -242,6 +272,7 @@ public:
                                  : nullptr;
         view.frequencyScale = frameMetadata.frequencyScale;
         view.reducedForDisplay = frameMetadata.reduced;
+        view.capture = frameMetadata.capture;
         consumer (view);
 
         staleFrames.fetch_add (static_cast<std::uint64_t> (consumed - 1), std::memory_order_relaxed);
@@ -275,7 +306,21 @@ private:
         double maximumFrequencyHz = 0.0;
         FrequencyScale frequencyScale = FrequencyScale::linear;
         bool reduced = false;
+        SpectrumCaptureFrameStatus capture;
     };
+
+    static bool captureStatusIsValid (const SpectrumCaptureFrameStatus& value) noexcept
+    {
+        if (value.product == SpectrumFrameProduct::live)
+            return value.captureId == 0 && value.includedWindowCount == 0
+                   && value.targetWindowCount == 0;
+        if (value.captureId == 0 || value.targetWindowCount == 0
+            || value.includedWindowCount == 0
+            || value.includedWindowCount > value.targetWindowCount)
+            return false;
+        return value.product != SpectrumFrameProduct::captureComplete
+               || value.includedWindowCount == value.targetWindowCount;
+    }
 
     static std::vector<std::string> normaliseUnits (std::vector<std::string> units,
                                                     std::size_t numChannels)

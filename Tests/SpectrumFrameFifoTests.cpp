@@ -98,6 +98,52 @@ TEST (SpectrumFrameFifoTests, PublishesReducedMeansPeaksFrequenciesAndUnits)
                    (std::vector<float> { 14, 15, 16 })); }));
 }
 
+TEST (SpectrumFrameFifoTests, PublishesCaptureProgressMetadata)
+{
+    SpectrumFrameFifo fifo (1, 3, 2, makeDescriptor (3), { 7 }, { "uV" });
+    const float means[] { 1.0f, 2.0f, 3.0f };
+    const float peaks[] { 1.5f, 2.5f, 3.5f };
+    const float frequencies[] { 0.5f, 1.5f, 2.5f };
+    spectrumviewer::SpectrumCaptureFrameStatus status;
+    status.product = spectrumviewer::SpectrumFrameProduct::captureProgress;
+    status.captureId = 12;
+    status.includedWindowCount = 2;
+    status.targetWindowCount = 5;
+    status.lastSampleExclusive = 900;
+    status.shedWindowCount = 1;
+    ASSERT_TRUE (fifo.tryPushReduced (means, peaks, frequencies, 1, 3, 100, 8,
+                                      spectrumviewer::FrequencyScale::linear,
+                                      0.0, 4.0, status));
+
+    ASSERT_TRUE (fifo.tryPopLatest ([] (const auto& frame)
+    {
+        EXPECT_EQ (frame.capture.product,
+                   spectrumviewer::SpectrumFrameProduct::captureProgress);
+        EXPECT_EQ (frame.capture.captureId, 12u);
+        EXPECT_EQ (frame.capture.includedWindowCount, 2u);
+        EXPECT_EQ (frame.capture.targetWindowCount, 5u);
+        EXPECT_EQ (frame.capture.lastSampleExclusive, 900);
+        EXPECT_EQ (frame.capture.shedWindowCount, 1u);
+        EXPECT_TRUE (frame.capture.hasQualityWarning());
+    }));
+}
+
+TEST (SpectrumFrameFifoTests, RejectsIncoherentCaptureMetadata)
+{
+    SpectrumFrameFifo fifo (1, 3, 1, makeDescriptor (3));
+    const float means[] { 1.0f, 2.0f, 3.0f };
+    const float frequencies[] { 0.5f, 1.5f, 2.5f };
+    spectrumviewer::SpectrumCaptureFrameStatus status;
+    status.product = spectrumviewer::SpectrumFrameProduct::captureComplete;
+    status.captureId = 1;
+    status.includedWindowCount = 1;
+    status.targetWindowCount = 2;
+    EXPECT_FALSE (fifo.tryPushReduced (means, means, frequencies, 1, 3, 0, 0,
+                                       spectrumviewer::FrequencyScale::linear,
+                                       0.0, 4.0, status));
+    EXPECT_EQ (fifo.getRejectedFrameCount(), 1u);
+}
+
 TEST (SpectrumFrameFifoTests, DrainsStaleFramesAndReturnsOnlyNewest)
 {
     SpectrumFrameFifo fifo (1, 1, 3, makeDescriptor (1));

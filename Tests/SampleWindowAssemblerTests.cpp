@@ -285,6 +285,29 @@ TEST (SampleWindowAssemblerTests, CallbackPartitioningDoesNotChangeWindows)
     }
 }
 
+TEST (SampleWindowAssemblerTests, BoundedConsumptionLeavesLaterWindowsReady)
+{
+    SampleWindowAssembler assembler (1, 4, 2, 8);
+    const std::array<float, 8> samples { 0, 1, 2, 3, 4, 5, 6, 7 };
+    const float* channels[] { samples.data() };
+    const auto appended = assembler.appendBlock (channels, 1, samples.size(), 0);
+    ASSERT_TRUE (appended.accepted);
+    EXPECT_EQ (appended.windowsReady, 3u);
+
+    std::vector<std::int64_t> positions;
+    EXPECT_EQ (assembler.consumeReadyWindows (
+                   [&positions] (const auto& window)
+                   { positions.push_back (window.firstSample); },
+                   1),
+               1u);
+    EXPECT_EQ (positions, (std::vector<std::int64_t> { 0 }));
+    EXPECT_EQ (assembler.consumeReadyWindows (
+                   [&positions] (const auto& window)
+                   { positions.push_back (window.firstSample); }),
+               2u);
+    EXPECT_EQ (positions, (std::vector<std::int64_t> { 0, 2, 4 }));
+}
+
 TEST (SampleWindowAssemblerTests, DiscontinuityDiscardsPartialWindow)
 {
     SampleWindowAssembler assembler (1, 4, 2, 6);

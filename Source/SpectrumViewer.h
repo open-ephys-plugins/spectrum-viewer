@@ -70,6 +70,16 @@ enum class SpectrumAmplitudeDisplay
     asd = 2
 };
 
+enum class SpectrumCaptureState
+{
+    live,
+    preparing,
+    capturing,
+    frozen,
+    restoringLive,
+    failed
+};
+
 /*
 
 	Compute and display power spectra for incoming
@@ -151,6 +161,57 @@ public:
 
     /** Selects and asynchronously prepares an analysis profile. */
     void setAnalysisProfile (SpectrumAnalysisProfile profile);
+
+    /** Asynchronously starts a non-overlapping Fine-profile capture. */
+    bool startSpectrumCapture (double durationSeconds);
+    void cancelSpectrumCapture();
+    void returnToLive() { cancelSpectrumCapture(); }
+
+    SpectrumCaptureState getCaptureState() const noexcept
+    {
+        return captureState.load (std::memory_order_acquire);
+    }
+
+    std::size_t getCaptureIncludedWindowCount() const noexcept
+    {
+        return captureIncludedWindows.load (std::memory_order_relaxed);
+    }
+
+    std::size_t getCaptureTargetWindowCount() const noexcept
+    {
+        return captureTargetWindows.load (std::memory_order_relaxed);
+    }
+
+    double getCaptureAnalyzedSeconds() const noexcept
+    {
+        return static_cast<double> (getCaptureIncludedWindowCount())
+               * captureWindowSeconds.load (std::memory_order_relaxed);
+    }
+
+    double getCaptureWallSpanSeconds() const noexcept
+    {
+        return captureWallSpanSeconds.load (std::memory_order_relaxed);
+    }
+
+    std::uint64_t getCaptureFailedWindowCount() const noexcept
+    {
+        return captureFailedWindows.load (std::memory_order_relaxed);
+    }
+
+    std::uint64_t getCaptureShedWindowCount() const noexcept
+    {
+        return captureShedWindows.load (std::memory_order_relaxed);
+    }
+
+    std::uint64_t getCaptureDiscontinuityCount() const noexcept
+    {
+        return captureDiscontinuities.load (std::memory_order_relaxed);
+    }
+
+    std::uint64_t getCaptureId() const noexcept
+    {
+        return requestedCaptureId.load (std::memory_order_relaxed);
+    }
 
     SpectrumAnalysisProfile getAnalysisProfile() const noexcept
     {
@@ -254,6 +315,7 @@ public:
 private:
     struct DisplaySettings
     {
+        std::uint64_t sequence = 0;
         std::size_t columnCount = 1;
         spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
         double minimumFrequencyHz = 0.0;
@@ -272,8 +334,9 @@ private:
 
     DisplaySettings readDisplaySettings() const noexcept;
 
-    void requestAnalysisConfiguration();
+    void requestAnalysisConfiguration (bool forCapture = false);
     void adoptPreparedAnalysis();
+    bool publishCapturedSpectrum (bool complete) noexcept;
     std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> tryGetDisplayAnalysis() const noexcept
     {
         std::unique_lock<std::mutex> lock (displayAnalysisMutex, std::try_to_lock);
@@ -326,6 +389,24 @@ private:
     std::atomic<std::uint64_t> unconfiguredInputSamples { 0 };
     std::atomic<std::uint64_t> staleConfigurationBlocks { 0 };
     std::atomic<std::uint64_t> configurationFailures { 0 };
+    std::atomic<SpectrumCaptureState> captureState { SpectrumCaptureState::live };
+    std::atomic<std::uint64_t> requestedCaptureId { 0 };
+    std::atomic<std::size_t> captureTargetWindows { 0 };
+    std::atomic<std::size_t> captureIncludedWindows { 0 };
+    std::atomic<double> captureWindowSeconds { 0.0 };
+    std::atomic<double> captureWallSpanSeconds { 0.0 };
+    std::atomic<std::uint64_t> captureFailedWindows { 0 };
+    std::atomic<std::uint64_t> captureShedWindows { 0 };
+    std::atomic<std::uint64_t> captureDiscontinuities { 0 };
+    std::uint64_t nextCaptureId = 1;
+
+    // The following capture fields are owned exclusively by the worker thread.
+    std::int64_t captureFirstSample = 0;
+    std::int64_t captureLastSampleExclusive = 0;
+    std::uint64_t captureLastFrameSequence = 0;
+    std::uint64_t captureLastPublishedDisplaySettings = 0;
+    bool captureHasFirstSample = false;
+    bool captureCompletionPending = false;
 
     //int bufferSize;
     //int stepSize;

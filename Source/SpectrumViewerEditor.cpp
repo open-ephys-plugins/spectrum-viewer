@@ -144,9 +144,32 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     automaticRangeLabel->setBounds (15, 228, 200, 18);
     addAndMakeVisible (automaticRangeLabel.get());
 
+    captureDuration = std::make_unique<ComboBox> ("CaptureDuration");
+    captureDuration->setBounds (15, 278, 100, 18);
+    captureDuration->addItemList ({ "10 s", "30 s", "60 s" }, 1);
+    captureDuration->setSelectedId (1, dontSendNotification);
+    captureDuration->setTooltip (
+        "Averages non-overlapping two-second Fine spectra in linear power");
+    addAndMakeVisible (captureDuration.get());
+
+    captureDurationLabel = std::make_unique<Label> ("CaptureDurationLabel", "Capture Length");
+    captureDurationLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    captureDurationLabel->setBounds (123, 278, 110, 18);
+    addAndMakeVisible (captureDurationLabel.get());
+
+    captureAction = std::make_unique<UtilityButton> ("Capture");
+    captureAction->setBounds (15, 303, 100, 20);
+    captureAction->addListener (this);
+    addAndMakeVisible (captureAction.get());
+
+    captureStatusLabel = std::make_unique<Label> ("CaptureStatus", "Live");
+    captureStatusLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
+    captureStatusLabel->setBounds (123, 303, 135, 20);
+    addAndMakeVisible (captureStatusLabel.get());
+
     readinessLabel = std::make_unique<Label> ("AnalysisReadiness", "Stopped");
     readinessLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
-    readinessLabel->setBounds (15, 278, 220, 18);
+    readinessLabel->setBounds (15, 328, 240, 18);
     addAndMakeVisible (readinessLabel.get());
     updateAmplitudeRangeControls();
     startTimerHz (4);
@@ -255,6 +278,34 @@ void SpectrumViewerEditor::sliderValueChanged (Slider* slider)
     applyAmplitudeRangeToCanvas();
 }
 
+void SpectrumViewerEditor::buttonClicked (Button* button)
+{
+    if (button != captureAction.get())
+        return;
+
+    auto* processor = static_cast<SpectrumViewer*> (getProcessor());
+    switch (processor->getCaptureState())
+    {
+        case SpectrumCaptureState::live:
+        case SpectrumCaptureState::failed:
+        {
+            constexpr double durations[] { 10.0, 30.0, 60.0 };
+            const auto index = jlimit (0, 2, captureDuration->getSelectedItemIndex());
+            processor->startSpectrumCapture (durations[index]);
+            break;
+        }
+        case SpectrumCaptureState::preparing:
+        case SpectrumCaptureState::capturing:
+            processor->cancelSpectrumCapture();
+            break;
+        case SpectrumCaptureState::frozen:
+            processor->returnToLive();
+            break;
+        case SpectrumCaptureState::restoringLive:
+            break;
+    }
+}
+
 void SpectrumViewerEditor::updateAmplitudeRangeControls()
 {
     const auto fixed = amplitudeRangeMode->getSelectedId() == 2;
@@ -283,6 +334,68 @@ void SpectrumViewerEditor::applyAmplitudeRangeToCanvas()
 void SpectrumViewerEditor::timerCallback()
 {
     auto processor = static_cast<SpectrumViewer*> (getProcessor());
+    const auto capture = processor->getCaptureState();
+    captureStatusLabel->setTooltip ({});
+    captureDuration->setEnabled (capture == SpectrumCaptureState::live
+                                 || capture == SpectrumCaptureState::failed);
+    analysisProfile->setEnabled (capture == SpectrumCaptureState::live
+                                 || capture == SpectrumCaptureState::failed);
+    captureAction->setEnabled (
+        processor->getAnalysisReadiness() != SpectrumAnalysisReadiness::stopped
+        && capture != SpectrumCaptureState::restoringLive);
+    switch (capture)
+    {
+        case SpectrumCaptureState::preparing:
+            captureAction->setButtonText ("Cancel");
+            captureStatusLabel->setText ("Preparing Fine...", dontSendNotification);
+            captureStatusLabel->setTooltip (
+                "Preparing 2 s, NW=3, K=5 non-overlapping Fine analysis");
+            break;
+        case SpectrumCaptureState::capturing:
+            captureAction->setButtonText ("Cancel");
+            captureStatusLabel->setText (
+                "Fine " + String (processor->getCaptureIncludedWindowCount()) + "/"
+                    + String (processor->getCaptureTargetWindowCount()) + " ("
+                    + String (processor->getCaptureAnalyzedSeconds(), 0) + " s)",
+                dontSendNotification);
+            captureStatusLabel->setTooltip (
+                "2 s, NW=3, K=5 non-overlapping Fine spectra");
+            break;
+        case SpectrumCaptureState::frozen:
+        {
+            captureAction->setButtonText ("Live");
+            const auto warning = processor->getCaptureFailedWindowCount()
+                                     + processor->getCaptureShedWindowCount()
+                                     + processor->getCaptureDiscontinuityCount()
+                                 > 0;
+            captureStatusLabel->setText (
+                "Frozen " + String (processor->getCaptureAnalyzedSeconds(), 0)
+                    + "/" + String (processor->getCaptureWallSpanSeconds(), 0)
+                    + " s" + (warning ? " !" : ""),
+                dontSendNotification);
+            captureStatusLabel->setTooltip (
+                "2 s, NW=3, K=5; analyzed / wall-span seconds; failed "
+                + String (processor->getCaptureFailedWindowCount()) + ", shed "
+                + String (processor->getCaptureShedWindowCount())
+                + ", discontinuities "
+                + String (processor->getCaptureDiscontinuityCount()));
+            break;
+        }
+        case SpectrumCaptureState::restoringLive:
+            captureAction->setButtonText ("Restoring...");
+            captureStatusLabel->setText ("Frozen", dontSendNotification);
+            break;
+        case SpectrumCaptureState::failed:
+            captureAction->setButtonText ("Retry");
+            captureStatusLabel->setText ("Capture failed", dontSendNotification);
+            break;
+        case SpectrumCaptureState::live:
+        default:
+            captureAction->setButtonText ("Capture");
+            captureStatusLabel->setText ("Live", dontSendNotification);
+            break;
+    }
+
     String text;
     switch (processor->getAnalysisReadiness())
     {
@@ -365,6 +478,7 @@ void SpectrumViewerEditor::saveVisualizerEditorParameters (XmlElement* xml)
     xml->setAttribute ("amplitude_range_mode", amplitudeRangeMode->getSelectedId());
     xml->setAttribute ("minimum_db", minimumDb->getValue());
     xml->setAttribute ("maximum_db", maximumDb->getValue());
+    xml->setAttribute ("capture_duration", captureDuration->getSelectedId());
 }
 
 void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
@@ -393,4 +507,7 @@ void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
     }
     amplitudeRangeMode->setSelectedId (
         xml->getIntAttribute ("amplitude_range_mode", 2), sendNotification);
+    captureDuration->setSelectedId (
+        jlimit (1, 3, xml->getIntAttribute ("capture_duration", 1)),
+        dontSendNotification);
 }

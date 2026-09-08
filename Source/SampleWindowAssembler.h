@@ -155,10 +155,12 @@ public:
     }
 
     template <typename Consumer>
-    std::size_t consumeReadyWindows (Consumer&& consumer)
+    std::size_t consumeReadyWindows (
+        Consumer&& consumer,
+        std::size_t maximumWindowCount = std::numeric_limits<std::size_t>::max())
     {
         std::size_t consumed = 0;
-        while (hasReadyWindow())
+        while (consumed < maximumWindowCount && hasReadyWindow())
         {
             const auto samplesBehindWrite = static_cast<std::size_t> (
                 nextExpectedSample - nextWindowFirstSample);

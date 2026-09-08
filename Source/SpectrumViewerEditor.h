@@ -29,6 +29,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 class SpectrumViewerEditor : public VisualizerEditor,
                              public ComboBox::Listener,
                              public Slider::Listener,
+                             public Button::Listener,
                              private Timer
 {
     friend class SpectrumCanvas;
@@ -50,6 +51,8 @@ public:
     void comboBoxChanged (ComboBox* comboBox);
 
     void sliderValueChanged (Slider* slider) override;
+
+    void buttonClicked (Button* button) override;
 
     /** Creates the canvas */
     Visualizer* createNewCanvas();
@@ -85,6 +88,10 @@ private:
     std::unique_ptr<Label> maximumDbLabel;
     std::unique_ptr<Slider> maximumDb;
     std::unique_ptr<Label> automaticRangeLabel;
+    std::unique_ptr<Label> captureDurationLabel;
+    std::unique_ptr<ComboBox> captureDuration;
+    std::unique_ptr<UtilityButton> captureAction;
+    std::unique_ptr<Label> captureStatusLabel;
     std::unique_ptr<Label> readinessLabel;
 
     Array<Range<int>> freqRanges;

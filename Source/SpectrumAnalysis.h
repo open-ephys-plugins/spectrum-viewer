@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -110,7 +111,9 @@ public:
                               std::uint64_t configurationGeneration);
 
     template <typename Consumer>
-    std::size_t consumeReadyFrames (Consumer&& consumer)
+    std::size_t consumeReadyFrames (
+        Consumer&& consumer,
+        std::size_t maximumFrameCount = std::numeric_limits<std::size_t>::max())
     {
         std::size_t completed = 0;
         const auto processWindow = [&] (const auto& window)
@@ -141,7 +144,7 @@ public:
             consumer (frame);
             ++completed;
         };
-        assembler.consumeReadyWindows (processWindow);
+        assembler.consumeReadyWindows (processWindow, maximumFrameCount);
         return completed;
     }
 
