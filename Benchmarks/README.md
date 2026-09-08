@@ -3,8 +3,8 @@
 These opt-in benchmarks compare full-window materialization, per-taper fusion,
 cache-tiled materialization, raw FFTW plans, and the allocation-free float
 single- and equal-weighted multitaper estimators. They are informational and
-are not CTest pass/fail gates. See `RESULTS.md` for measurements and their
-limitations.
+are not CTest pass/fail gates. Record the machine, build options, benchmark
+filter, repetition count, and summary statistics when reporting measurements.
 
 Configure and run locally:
 
