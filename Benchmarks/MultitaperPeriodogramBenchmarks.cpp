@@ -255,9 +255,9 @@ void addDisplayPipelineCases (benchmark::internal::Benchmark* benchmark)
     for (const auto& profile : {
              std::vector<std::int64_t> { 7500, 3, 4 },
              std::vector<std::int64_t> { 15000, 4, 5 },
-             std::vector<std::int64_t> { 60000, 5, 6 } })
+             std::vector<std::int64_t> { 60000, 4, 6 } })
         for (const auto scale : { 0, 1 })
-            benchmark->Args ({ profile[0], profile[1], profile[2], 8, 2, scale });
+            benchmark->Args ({ profile[0], profile[1], profile[2], 8, 1, scale });
 
     benchmark->ArgNames ({ "N", "K", "2NW", "channels", "detrend", "log_axis" })
         ->Unit (benchmark::kMicrosecond)

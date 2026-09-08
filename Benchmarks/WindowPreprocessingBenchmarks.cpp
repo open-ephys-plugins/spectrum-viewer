@@ -390,13 +390,13 @@ void addCases (benchmark::internal::Benchmark* benchmark,
 
 void addLowRateCases (benchmark::internal::Benchmark* benchmark)
 {
-    constexpr std::int64_t profiles[][2] { { 500, 3 }, { 1000, 4 }, { 4000, 5 } };
+    constexpr std::int64_t profiles[][2] { { 500, 3 }, { 1000, 4 }, { 4000, 4 } };
     addCases (benchmark, profiles);
 }
 
 void addHighRateCases (benchmark::internal::Benchmark* benchmark)
 {
-    constexpr std::int64_t profiles[][2] { { 7500, 3 }, { 15000, 4 }, { 60000, 5 } };
+    constexpr std::int64_t profiles[][2] { { 7500, 3 }, { 15000, 4 }, { 60000, 4 } };
     addCases (benchmark, profiles);
 }
 

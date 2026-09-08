@@ -407,7 +407,7 @@ void SpectrumViewerEditor::timerCallback()
             captureAction->setButtonText ("Cancel");
             captureStatusLabel->setText ("Preparing Fine...", dontSendNotification);
             captureStatusLabel->setTooltip (
-                "Preparing 2 s, NW=3, K=5 non-overlapping Fine analysis");
+                "Preparing 2 s, NW=3, K=4 non-overlapping Fine analysis");
             break;
         case SpectrumCaptureState::capturing:
             captureAction->setButtonText ("Cancel");
@@ -417,7 +417,7 @@ void SpectrumViewerEditor::timerCallback()
                     + String (processor->getCaptureAnalyzedSeconds(), 0) + " s)",
                 dontSendNotification);
             captureStatusLabel->setTooltip (
-                "2 s, NW=3, K=5 non-overlapping Fine spectra");
+                "2 s, NW=3, K=4 non-overlapping Fine spectra");
             break;
         case SpectrumCaptureState::frozen:
         {
@@ -432,7 +432,7 @@ void SpectrumViewerEditor::timerCallback()
                     + " s" + (warning ? " !" : ""),
                 dontSendNotification);
             captureStatusLabel->setTooltip (
-                "2 s, NW=3, K=5; analyzed / wall-span seconds; failed "
+                "2 s, NW=3, K=4; analyzed / wall-span seconds; failed "
                 + String (processor->getCaptureFailedWindowCount()) + ", shed "
                 + String (processor->getCaptureShedWindowCount())
                 + ", discontinuities "

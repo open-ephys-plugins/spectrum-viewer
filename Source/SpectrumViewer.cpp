@@ -46,7 +46,7 @@ ProfileSettings getProfileSettings (SpectrumAnalysisProfile profile)
         case SpectrumAnalysisProfile::balanced:
             return { 0.5, 0.25, 2.5, 4 };
         case SpectrumAnalysisProfile::fine:
-            return { 2.0, 0.5, 3.0, 5 };
+            return { 2.0, 0.5, 3.0, 4 };
         case SpectrumAnalysisProfile::fast:
         default:
             return { 0.25, 0.125, 2.0, 3 };

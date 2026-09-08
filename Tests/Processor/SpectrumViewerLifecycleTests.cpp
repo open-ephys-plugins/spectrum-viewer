@@ -221,7 +221,20 @@ TEST_F (SpectrumViewerLifecycleTests, RapidProfileChangesCoalesceToNewestRequest
     {
         return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
     }));
-    ASSERT_TRUE (waitUntil ([this] { return consumeWindowSize() == 160u; }));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool matched = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            matched = frame.descriptor.windowSampleCount == 160u;
+            if (matched)
+            {
+                EXPECT_DOUBLE_EQ (frame.descriptor.timeHalfBandwidth, 3.0);
+                EXPECT_EQ (frame.descriptor.taperCount, 4u);
+            }
+        });
+        return matched;
+    }));
 }
 
 TEST_F (SpectrumViewerLifecycleTests, FailedReplacementKeepsCurrentRuntimeLive)
@@ -437,6 +450,8 @@ TEST_F (SpectrumViewerLifecycleTests, CapturesNonOverlappingFineWindowsAndReturn
             {
                 EXPECT_EQ (frame.descriptor.windowSampleCount, 160u);
                 EXPECT_EQ (frame.descriptor.hopSampleCount, 160u);
+                EXPECT_DOUBLE_EQ (frame.descriptor.timeHalfBandwidth, 3.0);
+                EXPECT_EQ (frame.descriptor.taperCount, 4u);
                 EXPECT_EQ (frame.capture.includedWindowCount, 1u);
                 EXPECT_EQ (frame.capture.targetWindowCount, 2u);
             }

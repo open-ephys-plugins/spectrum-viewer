@@ -257,12 +257,12 @@ void addFftCases (benchmark::internal::Benchmark* benchmark)
     for (const auto sizeAndTapers : { std::pair<int, int> { 500, 3 },
                                       std::pair<int, int> { 1000, 4 },
                                       std::pair<int, int> { 1024, 4 },
-                                      std::pair<int, int> { 4000, 5 },
+                                      std::pair<int, int> { 4000, 4 },
                                       std::pair<int, int> { 7500, 3 },
                                       std::pair<int, int> { 15000, 4 },
                                       std::pair<int, int> { 16384, 4 },
-                                      std::pair<int, int> { 60000, 5 },
-                                      std::pair<int, int> { 65536, 5 } })
+                                      std::pair<int, int> { 60000, 4 },
+                                      std::pair<int, int> { 65536, 4 } })
     {
         for (const auto channels : { 1, 8 })
             benchmark->Args ({ sizeAndTapers.first, sizeAndTapers.second * channels });
