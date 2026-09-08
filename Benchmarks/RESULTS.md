@@ -73,20 +73,21 @@ Repeating the eight-channel, N=60,000, NW=3, linear-detrend benchmark with
 different retained taper counts gave five-repetition medians of 3.43 ms for
 K=3, 4.47 ms for K=4, and 5.35 ms for K=5. CPU frequency scaling was enabled.
 K=4 is therefore about 17% faster than the former K=5 setting, although leakage
-and variance—not this already-small worker cost—select the policy. The validated
-Fine profile now uses K=4.
+and variance—not this already-small worker cost—select the policy. The current
+interim raw Fine estimator uses K=4; this does not select the candidate-bank
+size or post-line-removal background estimator.
 
 ## Worker pipeline follow-up
 
 The worker-side pipeline benchmark adds the circular-history copy and window
-assembly needed for production. With the selected Fine dimensions (N=60,000,
-K=4, NW=3, 15,000-sample/0.5 s hop), eight channels, and the production mean
-detrend, its five-repetition median was 4.31 ms (0.65% coefficient of
-variation). DPSS generation and FFTW planning occurred before timing. The
-input-FIFO publication copy and display-frame copy remain outside this
-measurement; both are bounded planar copies covered by transport tests. This
-is still local throughput, not a target-rig p99 result. The earlier K=5 linear-
-detrend measurement was 5.46 ms.
+assembly needed for production. With the current interim Fine dimensions
+(N=60,000, K=4, NW=3, 15,000-sample/0.5 s hop), eight channels, and the
+production mean detrend, its five-repetition median was 4.31 ms (0.65%
+coefficient of variation). DPSS generation and FFTW planning occurred before
+timing. The input-FIFO publication copy and display-frame copy remain outside
+this measurement; both are bounded planar copies covered by transport tests.
+This is still local throughput, not a target-rig p99 result. The earlier K=5
+linear-detrend measurement was 5.46 ms.
 
 ## Worker-to-display follow-up
 
@@ -95,7 +96,7 @@ display columns and copies area-weighted means, peak envelopes, and frequency
 coordinates into simulated publication storage. Five-repetition medians for
 eight channels with linear detrending were 0.453/0.470 ms (Fast linear/log),
 1.063/1.077 ms (Balanced), and 6.126/6.150 ms for the former K=5 Fine
-configuration. The selected mean-detrended K=4 Fine profile measured
+configuration. The current mean-detrended K=4 raw Fine profile measured
 4.673/4.736 ms. Frequency mapping is a small part of total worker cost. CPU
 scaling was enabled, so these measurements are informational. They exclude the
 input FIFO copy, FIFO index publication, GUI-thread model copy and JUCE paint;
@@ -124,7 +125,7 @@ new spectral frames, never for repaint-only callbacks.
 
 The earlier matching worker-to-display p50/p99 was 0.451/0.457 ms Fast,
 1.043/1.063 ms Balanced, and 5.673/5.893 ms for K=5 Fine on a linear axis. The
-selected mean-detrended K=4 Fine profile measured 4.673/4.774 ms. Actual display
+current mean-detrended K=4 raw Fine profile measured 4.673/4.774 ms. Actual display
 latency also includes FIFO publication, GUI refresh/model conversion,
 compositor work, and scheduling.
 
