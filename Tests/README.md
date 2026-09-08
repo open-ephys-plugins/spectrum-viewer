@@ -44,7 +44,7 @@ integrated-power conservation, flat-noise level, narrow-line preservation, and
 monotonic linear/log frequency coordinates. Log display excludes DC because
 zero has no logarithmic coordinate; the underlying full PSD remains unchanged.
 
-`SpectrumAmplitudeRange` defaults to a fixed -120 to 20 dB display and rejects
+`SpectrumAmplitudeRange` defaults to a fixed -60 to 60 dB display and rejects
 fixed spans narrower than 20 dB. Its optional auto mode fits the lower bound
 from a robust mean-PSD percentile, retains the strongest peak-envelope value,
 and follows targets using signal time rather than repaint cadence. Tests pin

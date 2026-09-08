@@ -14,8 +14,8 @@ TEST (SpectrumAmplitudeRangeTests, FixedRangeIsDefaultAndNeverTracksFrames)
 {
     SpectrumAmplitudeRange range;
     EXPECT_EQ (range.getMode(), AmplitudeRangeMode::fixed);
-    EXPECT_FLOAT_EQ (range.getCurrentRange().minimum, -120.0f);
-    EXPECT_FLOAT_EQ (range.getCurrentRange().maximum, 20.0f);
+    EXPECT_FLOAT_EQ (range.getCurrentRange().minimum, -60.0f);
+    EXPECT_FLOAT_EQ (range.getCurrentRange().maximum, 60.0f);
     ASSERT_TRUE (range.setFixedRange (-90.0f, 10.0f));
 
     const std::vector<std::vector<float>> mean { { -40.0f, -30.0f } };
@@ -32,8 +32,8 @@ TEST (SpectrumAmplitudeRangeTests, RejectsInvalidOrTooNarrowFixedRanges)
     EXPECT_FALSE (range.setFixedRange (-10.0f, 9.0f));
     EXPECT_FALSE (range.setFixedRange (
         std::numeric_limits<float>::quiet_NaN(), 20.0f));
-    EXPECT_FLOAT_EQ (range.getFixedRange().minimum, -120.0f);
-    EXPECT_FLOAT_EQ (range.getFixedRange().maximum, 20.0f);
+    EXPECT_FLOAT_EQ (range.getFixedRange().minimum, -60.0f);
+    EXPECT_FLOAT_EQ (range.getFixedRange().maximum, 60.0f);
 }
 
 TEST (SpectrumAmplitudeRangeTests, AutoFitRejectsLowOutlierAndIncludesPeakEnvelope)

@@ -179,8 +179,8 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
     EXPECT_EQ (plot->getPeakTraceForTesting (3).size(),
                plot->getFrequencyCountForTesting());
     const auto fixedLinearRange = plot->getPlotRangeForTesting();
-    EXPECT_FLOAT_EQ (fixedLinearRange.ymin, -120.0f);
-    EXPECT_FLOAT_EQ (fixedLinearRange.ymax, 20.0f);
+    EXPECT_FLOAT_EQ (fixedLinearRange.ymin, -60.0f);
+    EXPECT_FLOAT_EQ (fixedLinearRange.ymax, 60.0f);
 
     bool foundPreservedPeak = false;
     for (std::size_t column = 0; column < plot->getFrequencyCountForTesting(); ++column)
@@ -235,8 +235,10 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
         const auto minimum = *std::min_element (dbTrace.begin(), dbTrace.end());
         const auto maximum = *std::max_element (dbTrace.begin(), dbTrace.end());
         EXPECT_LT (minimum, maximum);
-        EXPECT_GT (minimum, logRange.ymin);
-        EXPECT_LT (maximum, logRange.ymax);
+        // Fixed display bounds intentionally need not contain every raw value;
+        // the renderer clips traces at the plot boundary.
+        EXPECT_TRUE (std::isfinite (minimum));
+        EXPECT_TRUE (std::isfinite (maximum));
     }
     MessageManager::getInstance()->runDispatchLoopUntil (20);
 

@@ -23,8 +23,8 @@ enum class AmplitudeRangeMode
 
 struct DecibelRange
 {
-    float minimum = -120.0f;
-    float maximum = 20.0f;
+    float minimum = -60.0f;
+    float maximum = 60.0f;
 };
 
 /**

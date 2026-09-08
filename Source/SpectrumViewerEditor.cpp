@@ -113,7 +113,7 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
 
     minimumDb = std::make_unique<Slider> ("MinimumDb");
     minimumDb->setRange (-240.0, 100.0, 1.0);
-    minimumDb->setValue (-120.0, dontSendNotification);
+    minimumDb->setValue (-60.0, dontSendNotification);
     minimumDb->setSliderStyle (Slider::LinearHorizontal);
     minimumDb->setTextBoxStyle (Slider::TextBoxLeft, false, 55, 18);
     minimumDb->setBounds (15, 228, 100, 18);
@@ -127,7 +127,7 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
 
     maximumDb = std::make_unique<Slider> ("MaximumDb");
     maximumDb->setRange (-220.0, 120.0, 1.0);
-    maximumDb->setValue (20.0, dontSendNotification);
+    maximumDb->setValue (60.0, dontSendNotification);
     maximumDb->setSliderStyle (Slider::LinearHorizontal);
     maximumDb->setTextBoxStyle (Slider::TextBoxLeft, false, 55, 18);
     maximumDb->setBounds (15, 253, 100, 18);
@@ -382,14 +382,14 @@ void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
         xml->getIntAttribute ("frequency_scale", 1), sendNotification);
     amplitudeDisplay->setSelectedId (
         xml->getIntAttribute ("amplitude_display", 1), sendNotification);
-    minimumDb->setValue (xml->getDoubleAttribute ("minimum_db", -120.0),
+    minimumDb->setValue (xml->getDoubleAttribute ("minimum_db", -60.0),
                          dontSendNotification);
-    maximumDb->setValue (xml->getDoubleAttribute ("maximum_db", 20.0),
+    maximumDb->setValue (xml->getDoubleAttribute ("maximum_db", 60.0),
                          dontSendNotification);
     if (maximumDb->getValue() - minimumDb->getValue() < 20.0)
     {
-        minimumDb->setValue (-120.0, dontSendNotification);
-        maximumDb->setValue (20.0, dontSendNotification);
+        minimumDb->setValue (-60.0, dontSendNotification);
+        maximumDb->setValue (60.0, dontSendNotification);
     }
     amplitudeRangeMode->setSelectedId (
         xml->getIntAttribute ("amplitude_range_mode", 2), sendNotification);
