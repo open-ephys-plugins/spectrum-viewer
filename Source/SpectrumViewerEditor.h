@@ -92,6 +92,11 @@ private:
     std::unique_ptr<ComboBox> captureDuration;
     std::unique_ptr<UtilityButton> captureAction;
     std::unique_ptr<Label> captureStatusLabel;
+    std::unique_ptr<ComboBox> comparisonMode;
+    std::unique_ptr<Label> comparisonModeLabel;
+    std::unique_ptr<UtilityButton> setReferenceAction;
+    std::unique_ptr<UtilityButton> clearReferenceAction;
+    std::unique_ptr<Label> referenceStatusLabel;
     std::unique_ptr<Label> readinessLabel;
 
     Array<Range<int>> freqRanges;

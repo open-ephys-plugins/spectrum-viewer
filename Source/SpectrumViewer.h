@@ -213,6 +213,36 @@ public:
         return requestedCaptureId.load (std::memory_order_relaxed);
     }
 
+    /** Marks the completed frozen capture as the session-local reference. */
+    bool setCurrentCaptureAsReference() noexcept;
+    void clearSpectrumReference() noexcept;
+    void setSpectrumComparisonMode (spectrumviewer::SpectrumComparisonMode mode) noexcept;
+
+    spectrumviewer::SpectrumComparisonMode getSpectrumComparisonMode() const noexcept
+    {
+        return comparisonMode.load (std::memory_order_relaxed);
+    }
+
+    spectrumviewer::SpectrumReferenceCompatibility getReferenceCompatibility() const noexcept
+    {
+        return referenceCompatibility.load (std::memory_order_acquire);
+    }
+
+    bool hasSpectrumReference() const noexcept
+    {
+        return referenceCaptureId.load (std::memory_order_acquire) != 0;
+    }
+
+    std::uint64_t getReferenceCaptureId() const noexcept
+    {
+        return referenceCaptureId.load (std::memory_order_relaxed);
+    }
+
+    std::int64_t getReferenceCapturedAtMilliseconds() const noexcept
+    {
+        return referenceCapturedAtMilliseconds.load (std::memory_order_relaxed);
+    }
+
     SpectrumAnalysisProfile getAnalysisProfile() const noexcept
     {
         return analysisProfile.load (std::memory_order_relaxed);
@@ -336,7 +366,16 @@ private:
 
     void requestAnalysisConfiguration (bool forCapture = false);
     void adoptPreparedAnalysis();
+    void applyReferenceRequest() noexcept;
+    void finalizeCapturedSpectrum();
     bool publishCapturedSpectrum (bool complete) noexcept;
+    bool publishReducedSpectrum (const float* planarPsd,
+                                 std::size_t channelCount,
+                                 std::size_t binCount,
+                                 const spectrumviewer::SpectrumFrameDescriptor& descriptor,
+                                 std::int64_t firstSample,
+                                 std::uint64_t sequence,
+                                 spectrumviewer::SpectrumCaptureFrameStatus capture = {}) noexcept;
     std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> tryGetDisplayAnalysis() const noexcept
     {
         std::unique_lock<std::mutex> lock (displayAnalysisMutex, std::try_to_lock);
@@ -405,8 +444,26 @@ private:
     std::int64_t captureLastSampleExclusive = 0;
     std::uint64_t captureLastFrameSequence = 0;
     std::uint64_t captureLastPublishedDisplaySettings = 0;
+    std::uint64_t captureLastPublishedComparisonSettings = 0;
     bool captureHasFirstSample = false;
     bool captureCompletionPending = false;
+
+    // Reference commands are published by the message thread and applied by
+    // the spectrum worker. Spectral arrays remain worker-owned and immutable.
+    static constexpr std::uint64_t CLEAR_REFERENCE_REQUEST =
+        std::numeric_limits<std::uint64_t>::max();
+    std::atomic<std::uint64_t> referenceRequest { 0 };
+    std::atomic<std::uint64_t> comparisonSettingsSequence { 0 };
+    std::atomic<spectrumviewer::SpectrumComparisonMode> comparisonMode {
+        spectrumviewer::SpectrumComparisonMode::absolute
+    };
+    std::atomic<spectrumviewer::SpectrumReferenceCompatibility> referenceCompatibility {
+        spectrumviewer::SpectrumReferenceCompatibility::noReference
+    };
+    std::atomic<std::uint64_t> referenceCaptureId { 0 };
+    std::atomic<std::int64_t> referenceCapturedAtMilliseconds { 0 };
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> completedCapture;
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> spectrumReference;
 
     //int bufferSize;
     //int stepSize;

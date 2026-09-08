@@ -107,7 +107,9 @@ public:
                               spectrumviewer::FrequencyScale scale,
                               double minimumFrequencyHz,
                               double maximumFrequencyHz,
-                              int channelIndex);
+                              int channelIndex,
+                              const float* comparisonData = nullptr,
+                              spectrumviewer::SpectrumComparisonFrameStatus comparison = {});
 
     void setAmplitudeDisplay (SpectrumAmplitudeDisplay display);
 
@@ -156,6 +158,14 @@ public:
     {
         return currPower.at (channel);
     }
+    const std::vector<float>& getComparisonTraceForTesting (std::size_t channel) const
+    {
+        return currComparison.at (channel);
+    }
+    spectrumviewer::SpectrumComparisonMode getComparisonModeForTesting() const noexcept
+    {
+        return comparisonStatus.mode;
+    }
     float getMinimumFrequencyForTesting() const noexcept { return displayMinimumFrequencyHz; }
     float getMaximumFrequencyForTesting() const noexcept { return displayMaximumFrequencyHz; }
     spectrumviewer::FrequencyScale getFrequencyScaleForTesting() const noexcept
@@ -201,9 +211,11 @@ private:
     std::vector<std::vector<float>> currPeakPower;
     std::vector<std::vector<float>> currLinearPower;
     std::vector<std::vector<float>> currLinearPeakPower;
+    std::vector<std::vector<float>> currComparison;
     std::vector<String> channelUnits;
     spectrumviewer::SpectrumAmplitudeRange amplitudeRange;
     bool amplitudeUnitsChanged = false;
+    spectrumviewer::SpectrumComparisonFrameStatus comparisonStatus;
 
     std::vector<float> xvalues;
 

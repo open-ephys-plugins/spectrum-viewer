@@ -128,6 +128,45 @@ TEST (SpectrumFrameFifoTests, PublishesCaptureProgressMetadata)
     }));
 }
 
+TEST (SpectrumFrameFifoTests, PublishesReferenceComparisonAsPartOfCompleteFrame)
+{
+    SpectrumFrameFifo fifo (1, 3, 2, makeDescriptor (3), { 7 }, { "uV" });
+    const float means[] { 2.0f, 4.0f, 8.0f };
+    const float peaks[] { 3.0f, 5.0f, 9.0f };
+    const float delta[] { 3.0103f, 6.0206f, -3.0103f };
+    const float frequencies[] { 0.5f, 1.5f, 2.5f };
+    spectrumviewer::SpectrumComparisonFrameStatus comparison;
+    comparison.mode = spectrumviewer::SpectrumComparisonMode::deltaDb;
+    comparison.compatibility = spectrumviewer::SpectrumReferenceCompatibility::compatible;
+    comparison.referenceCaptureId = 12;
+    ASSERT_TRUE (fifo.tryPushReduced (means, peaks, frequencies, 1, 3, 100, 8,
+                                      spectrumviewer::FrequencyScale::linear,
+                                      0.0, 4.0, {}, delta, comparison));
+
+    ASSERT_TRUE (fifo.tryPopLatest ([] (const auto& frame)
+    {
+        EXPECT_EQ (frame.comparison.mode,
+                   spectrumviewer::SpectrumComparisonMode::deltaDb);
+        EXPECT_EQ (frame.comparison.referenceCaptureId, 12u);
+        ASSERT_NE (frame.getChannelComparisonData (0), nullptr);
+        EXPECT_FLOAT_EQ (frame.getChannelComparisonData (0)[1], 6.0206f);
+    }));
+}
+
+TEST (SpectrumFrameFifoTests, RejectsComparisonMetadataWithoutRequiredPayload)
+{
+    SpectrumFrameFifo fifo (1, 3, 1, makeDescriptor (3));
+    const float values[] { 1.0f, 2.0f, 3.0f };
+    const float frequencies[] { 0.5f, 1.5f, 2.5f };
+    spectrumviewer::SpectrumComparisonFrameStatus comparison;
+    comparison.mode = spectrumviewer::SpectrumComparisonMode::overlay;
+    comparison.compatibility = spectrumviewer::SpectrumReferenceCompatibility::compatible;
+    comparison.referenceCaptureId = 1;
+    EXPECT_FALSE (fifo.tryPushReduced (values, values, frequencies, 1, 3, 0, 0,
+                                       spectrumviewer::FrequencyScale::linear,
+                                       0.0, 4.0, {}, nullptr, comparison));
+}
+
 TEST (SpectrumFrameFifoTests, RejectsIncoherentCaptureMetadata)
 {
     SpectrumFrameFifo fifo (1, 3, 1, makeDescriptor (3));

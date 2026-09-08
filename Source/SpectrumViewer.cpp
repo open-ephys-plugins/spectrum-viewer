@@ -196,6 +196,197 @@ SpectrumViewer::DisplaySettings SpectrumViewer::readDisplaySettings() const noex
     }
 }
 
+void SpectrumViewer::applyReferenceRequest() noexcept
+{
+    const auto request = referenceRequest.exchange (0, std::memory_order_acq_rel);
+    if (request == 0)
+        return;
+
+    if (request == CLEAR_REFERENCE_REQUEST)
+    {
+        spectrumReference.reset();
+        referenceCapturedAtMilliseconds.store (0, std::memory_order_relaxed);
+        referenceCompatibility.store (
+            spectrumviewer::SpectrumReferenceCompatibility::noReference,
+            std::memory_order_relaxed);
+        referenceCaptureId.store (0, std::memory_order_release);
+    }
+    else if (completedCapture != nullptr
+             && completedCapture->getCaptureId() == request)
+    {
+        spectrumReference = completedCapture;
+        referenceCapturedAtMilliseconds.store (
+            completedCapture->getCapturedAtUnixMilliseconds(),
+            std::memory_order_relaxed);
+        referenceCompatibility.store (
+            spectrumviewer::SpectrumReferenceCompatibility::compatible,
+            std::memory_order_relaxed);
+        referenceCaptureId.store (request, std::memory_order_release);
+    }
+
+    captureCompletionPending = captureState.load (std::memory_order_relaxed)
+                               == SpectrumCaptureState::frozen;
+}
+
+void SpectrumViewer::finalizeCapturedSpectrum()
+{
+    if (activeAnalysis == nullptr || ! activeAnalysis->isCaptureRuntime()
+        || completedCapture != nullptr)
+        return;
+
+    auto* accumulator = activeAnalysis->getCaptureAccumulator();
+    if (accumulator == nullptr || ! accumulator->isComplete())
+        return;
+
+    try
+    {
+        const auto valueCount = accumulator->getChannelCount()
+                                * accumulator->getBinCount();
+        std::vector<float> mean (accumulator->getPlanarMean(),
+                                 accumulator->getPlanarMean() + valueCount);
+        std::vector<float> variance (valueCount);
+        for (std::size_t channel = 0; channel < accumulator->getChannelCount(); ++channel)
+            for (std::size_t bin = 0; bin < accumulator->getBinCount(); ++bin)
+                variance[channel * accumulator->getBinCount() + bin]
+                    = accumulator->getSampleVariance (channel, bin);
+
+        const auto& pipeline = activeAnalysis->getPipeline();
+        spectrumviewer::SpectrumCaptureQuality quality;
+        quality.includedWindowCount = accumulator->getIncludedWindowCount();
+        quality.targetWindowCount = accumulator->getTargetWindowCount();
+        quality.firstSample = captureFirstSample;
+        quality.lastSampleExclusive = captureLastSampleExclusive;
+        quality.failedWindowCount = pipeline.getFailedWindowCount()
+                                    + accumulator->getRejectedWindowCount();
+        quality.shedWindowCount = pipeline.getShedWindowCount();
+        quality.discontinuityCount = pipeline.getDiscontinuityCount();
+
+        const auto& frameFifo = activeAnalysis->getFrameFifo();
+        completedCapture = std::make_shared<const spectrumviewer::CapturedSpectrum> (
+            activeAnalysis->getCaptureId(),
+            Time::currentTimeMillis(),
+            activeAnalysis->getConfiguration().getFrameDescriptor(),
+            frameFifo.getSourceChannelIndices(),
+            frameFifo.getSourceChannelUnits(),
+            std::move (mean),
+            std::move (variance),
+            quality);
+    }
+    catch (const std::exception& error)
+    {
+        LOGE ("Unable to retain completed spectrum capture: ", error.what());
+    }
+}
+
+bool SpectrumViewer::publishReducedSpectrum (
+    const float* planarPsd,
+    std::size_t channelCount,
+    std::size_t binCount,
+    const spectrumviewer::SpectrumFrameDescriptor& descriptor,
+    std::int64_t firstSample,
+    std::uint64_t sequence,
+    spectrumviewer::SpectrumCaptureFrameStatus capture) noexcept
+{
+    if (activeAnalysis == nullptr)
+        return false;
+    auto& frameFifo = activeAnalysis->getFrameFifo();
+    if (frameFifo.getNumReady() >= frameFifo.getCapacity())
+        return false;
+
+    const auto settings = readDisplaySettings();
+    auto maximumHz = settings.maximumFrequencyHz;
+    if (maximumHz <= 0.0)
+        maximumHz = descriptor.sampleRateHz * 0.5;
+
+    auto& reducer = activeAnalysis->getDisplayReducer();
+    if (! reducer.reduce (planarPsd,
+                          channelCount,
+                          binCount,
+                          descriptor.sampleRateHz,
+                          descriptor.windowSampleCount,
+                          settings.columnCount,
+                          settings.frequencyScale,
+                          settings.minimumFrequencyHz,
+                          maximumHz))
+        return false;
+
+    spectrumviewer::SpectrumComparisonFrameStatus comparison;
+    const float* comparisonData = nullptr;
+    const auto requestedMode = comparisonMode.load (std::memory_order_acquire);
+    if (spectrumReference == nullptr)
+    {
+        referenceCompatibility.store (
+            spectrumviewer::SpectrumReferenceCompatibility::noReference,
+            std::memory_order_release);
+    }
+    else
+    {
+        const auto compatible = spectrumReference->isCompatibleWith (
+            descriptor,
+            frameFifo.getSourceChannelIndices(),
+            frameFifo.getSourceChannelUnits());
+        referenceCompatibility.store (
+            compatible ? spectrumviewer::SpectrumReferenceCompatibility::compatible
+                       : spectrumviewer::SpectrumReferenceCompatibility::incompatible,
+            std::memory_order_release);
+
+        if (requestedMode != spectrumviewer::SpectrumComparisonMode::absolute)
+        {
+            comparison.mode = requestedMode;
+            comparison.referenceCaptureId = spectrumReference->getCaptureId();
+            comparison.compatibility = compatible
+                                           ? spectrumviewer::SpectrumReferenceCompatibility::compatible
+                                           : spectrumviewer::SpectrumReferenceCompatibility::incompatible;
+            if (compatible)
+            {
+                auto& referenceReducer = activeAnalysis->getReferenceDisplayReducer();
+                if (! referenceReducer.reduce (
+                        spectrumReference->getPlanarMeanPsd(),
+                        spectrumReference->getChannelCount(),
+                        spectrumReference->getBinCount(),
+                        descriptor.sampleRateHz,
+                        descriptor.windowSampleCount,
+                        settings.columnCount,
+                        settings.frequencyScale,
+                        settings.minimumFrequencyHz,
+                        maximumHz))
+                    return false;
+
+                const auto& current = reducer.getView();
+                const auto& reference = referenceReducer.getView();
+                if (requestedMode == spectrumviewer::SpectrumComparisonMode::overlay)
+                    comparisonData = reference.getChannelMean (0);
+                else
+                {
+                    auto* delta = activeAnalysis->getComparisonScratch();
+                    const auto count = current.numChannels * current.numColumns;
+                    spectrumviewer::computeDecibelDelta (
+                        current.getChannelMean (0),
+                        reference.getChannelMean (0),
+                        delta,
+                        count);
+                    comparisonData = delta;
+                }
+            }
+        }
+    }
+
+    const auto& reduced = reducer.getView();
+    return frameFifo.tryPushReduced (reduced.getChannelMean (0),
+                                     reduced.getChannelPeak (0),
+                                     reduced.frequenciesHz,
+                                     reduced.numChannels,
+                                     reduced.numColumns,
+                                     firstSample,
+                                     sequence,
+                                     reduced.frequencyScale,
+                                     reduced.minimumFrequencyHz,
+                                     reduced.maximumFrequencyHz,
+                                     capture,
+                                     comparisonData,
+                                     comparison);
+}
+
 bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
 {
     if (activeAnalysis == nullptr || ! activeAnalysis->isCaptureRuntime())
@@ -204,27 +395,7 @@ bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
     if (accumulator == nullptr || accumulator->getIncludedWindowCount() == 0
         || ! captureHasFirstSample)
         return false;
-    auto& frameFifo = activeAnalysis->getFrameFifo();
-    if (frameFifo.getNumReady() >= frameFifo.getCapacity())
-        return false;
-
-    const auto settings = readDisplaySettings();
-    auto maximumHz = settings.maximumFrequencyHz;
     const auto& descriptor = activeAnalysis->getConfiguration().getFrameDescriptor();
-    if (maximumHz <= 0.0)
-        maximumHz = descriptor.sampleRateHz * 0.5;
-
-    auto& reducer = activeAnalysis->getDisplayReducer();
-    if (! reducer.reduce (accumulator->getPlanarMean(),
-                          accumulator->getChannelCount(),
-                          accumulator->getBinCount(),
-                          descriptor.sampleRateHz,
-                          descriptor.windowSampleCount,
-                          settings.columnCount,
-                          settings.frequencyScale,
-                          settings.minimumFrequencyHz,
-                          maximumHz))
-        return false;
 
     spectrumviewer::SpectrumCaptureFrameStatus status;
     status.product = complete ? spectrumviewer::SpectrumFrameProduct::captureComplete
@@ -239,21 +410,21 @@ bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
     status.shedWindowCount = pipeline.getShedWindowCount();
     status.discontinuityCount = pipeline.getDiscontinuityCount();
 
-    const auto& reduced = reducer.getView();
-    const auto published = frameFifo.tryPushReduced (
-        reduced.getChannelMean (0),
-        reduced.getChannelPeak (0),
-        reduced.frequenciesHz,
-        reduced.numChannels,
-        reduced.numColumns,
+    const auto published = publishReducedSpectrum (
+        accumulator->getPlanarMean(),
+        accumulator->getChannelCount(),
+        accumulator->getBinCount(),
+        descriptor,
         captureFirstSample,
         captureLastFrameSequence,
-        reduced.frequencyScale,
-        reduced.minimumFrequencyHz,
-        reduced.maximumFrequencyHz,
         status);
     if (published)
+    {
+        const auto settings = readDisplaySettings();
         captureLastPublishedDisplaySettings = settings.sequence;
+        captureLastPublishedComparisonSettings = comparisonSettingsSequence.load (
+            std::memory_order_acquire);
+    }
     return published;
 }
 
@@ -304,15 +475,19 @@ void SpectrumViewer::run()
     while (! threadShouldExit())
     {
         adoptPreparedAnalysis();
+        applyReferenceRequest();
         if (activeAnalysis != nullptr && activeAnalysis->isCaptureRuntime()
             && captureState.load (std::memory_order_acquire)
                    == SpectrumCaptureState::frozen)
         {
             const auto displayVersion = displaySettingsSequence.load (std::memory_order_acquire);
+            const auto comparisonVersion = comparisonSettingsSequence.load (
+                std::memory_order_acquire);
             const auto& frameFifo = activeAnalysis->getFrameFifo();
             if ((displayVersion & 1u) == 0u
                 && (captureCompletionPending
-                    || displayVersion != captureLastPublishedDisplaySettings)
+                    || displayVersion != captureLastPublishedDisplaySettings
+                    || comparisonVersion != captureLastPublishedComparisonSettings)
                 && frameFifo.getNumReady() < frameFifo.getCapacity())
                 captureCompletionPending = ! publishCapturedSpectrum (true);
         }
@@ -400,9 +575,7 @@ void SpectrumViewer::run()
                         continue;
                 }
 
-                auto* outputFifo = &activeAnalysis->getFrameFifo();
-                auto* reducer = &activeAnalysis->getDisplayReducer();
-                const auto publishFrame = [this, outputFifo, reducer] (const auto& frame)
+                const auto publishFrame = [this] (const auto& frame)
                 {
                     if (activeAnalysis->isCaptureRuntime())
                     {
@@ -425,6 +598,8 @@ void SpectrumViewer::run()
                                 / frame.descriptor.sampleRateHz,
                             std::memory_order_relaxed);
                         const auto complete = accumulator->isComplete();
+                        if (complete)
+                            finalizeCapturedSpectrum();
                         const auto published = publishCapturedSpectrum (complete);
                         if (complete)
                         {
@@ -435,33 +610,12 @@ void SpectrumViewer::run()
                         return;
                     }
 
-                    const auto settings = readDisplaySettings();
-                    auto maximumHz = settings.maximumFrequencyHz;
-                    if (maximumHz <= 0.0)
-                        maximumHz = frame.descriptor.sampleRateHz * 0.5;
-                    if (reducer->reduce (
-                            frame.getChannelData (0),
-                            frame.numChannels,
-                            frame.numBins,
-                            frame.descriptor.sampleRateHz,
-                            frame.descriptor.windowSampleCount,
-                            settings.columnCount,
-                            settings.frequencyScale,
-                            settings.minimumFrequencyHz,
-                            maximumHz))
-                    {
-                        const auto& reduced = reducer->getView();
-                        outputFifo->tryPushReduced (reduced.getChannelMean (0),
-                                                    reduced.getChannelPeak (0),
-                                                    reduced.frequenciesHz,
-                                                    reduced.numChannels,
-                                                    reduced.numColumns,
-                                                    frame.firstSample,
-                                                    frame.sequence,
-                                                    reduced.frequencyScale,
-                                                    reduced.minimumFrequencyHz,
-                                                    reduced.maximumFrequencyHz);
-                    }
+                    publishReducedSpectrum (frame.getChannelData (0),
+                                            frame.numChannels,
+                                            frame.numBins,
+                                            frame.descriptor,
+                                            frame.firstSample,
+                                            frame.sequence);
                 };
                 auto maximumFrames = std::numeric_limits<std::size_t>::max();
                 if (activeAnalysis->isCaptureRuntime())
@@ -562,6 +716,8 @@ void SpectrumViewer::adoptPreparedAnalysis()
     captureLastSampleExclusive = 0;
     captureLastFrameSequence = 0;
     captureLastPublishedDisplaySettings = displaySettingsSequence.load (std::memory_order_acquire);
+    captureLastPublishedComparisonSettings = comparisonSettingsSequence.load (
+        std::memory_order_acquire);
     captureIncludedWindows.store (0, std::memory_order_release);
     captureWallSpanSeconds.store (0.0, std::memory_order_relaxed);
     captureFailedWindows.store (0, std::memory_order_relaxed);
@@ -569,6 +725,7 @@ void SpectrumViewer::adoptPreparedAnalysis()
     captureDiscontinuities.store (0, std::memory_order_relaxed);
     if (activeAnalysis->isCaptureRuntime())
     {
+        completedCapture.reset();
         const auto& descriptor = activeAnalysis->getConfiguration().getFrameDescriptor();
         captureWindowSeconds.store (
             static_cast<double> (descriptor.windowSampleCount)
@@ -678,6 +835,14 @@ bool SpectrumViewer::startAcquisition()
         captureShedWindows.store (0, std::memory_order_relaxed);
         captureDiscontinuities.store (0, std::memory_order_relaxed);
         captureState.store (SpectrumCaptureState::live, std::memory_order_release);
+        referenceRequest.store (0, std::memory_order_relaxed);
+        referenceCaptureId.store (0, std::memory_order_relaxed);
+        referenceCapturedAtMilliseconds.store (0, std::memory_order_relaxed);
+        referenceCompatibility.store (
+            spectrumviewer::SpectrumReferenceCompatibility::noReference,
+            std::memory_order_relaxed);
+        completedCapture.reset();
+        spectrumReference.reset();
         warmupSampleCount.store (0, std::memory_order_relaxed);
         warmupTargetSampleCount.store (0, std::memory_order_relaxed);
         analysisReadiness.store (SpectrumAnalysisReadiness::preparing, std::memory_order_release);
@@ -714,6 +879,14 @@ bool SpectrumViewer::stopAcquisition()
     captureShedWindows.store (0, std::memory_order_relaxed);
     captureDiscontinuities.store (0, std::memory_order_relaxed);
     captureState.store (SpectrumCaptureState::live, std::memory_order_release);
+    referenceRequest.store (0, std::memory_order_relaxed);
+    referenceCaptureId.store (0, std::memory_order_relaxed);
+    referenceCapturedAtMilliseconds.store (0, std::memory_order_relaxed);
+    referenceCompatibility.store (
+        spectrumviewer::SpectrumReferenceCompatibility::noReference,
+        std::memory_order_relaxed);
+    completedCapture.reset();
+    spectrumReference.reset();
     analysisReadiness.store (SpectrumAnalysisReadiness::stopped, std::memory_order_release);
     return true;
 }
@@ -762,6 +935,35 @@ bool SpectrumViewer::startSpectrumCapture (double durationSeconds)
     captureState.store (SpectrumCaptureState::preparing, std::memory_order_release);
     requestAnalysisConfiguration (true);
     return true;
+}
+
+bool SpectrumViewer::setCurrentCaptureAsReference() noexcept
+{
+    if (captureState.load (std::memory_order_acquire) != SpectrumCaptureState::frozen)
+        return false;
+    const auto captureId = requestedCaptureId.load (std::memory_order_acquire);
+    if (captureId == 0)
+        return false;
+    referenceRequest.store (captureId, std::memory_order_release);
+    comparisonSettingsSequence.fetch_add (1, std::memory_order_release);
+    return true;
+}
+
+void SpectrumViewer::clearSpectrumReference() noexcept
+{
+    referenceRequest.store (CLEAR_REFERENCE_REQUEST, std::memory_order_release);
+    comparisonSettingsSequence.fetch_add (1, std::memory_order_release);
+}
+
+void SpectrumViewer::setSpectrumComparisonMode (
+    spectrumviewer::SpectrumComparisonMode mode) noexcept
+{
+    if (mode != spectrumviewer::SpectrumComparisonMode::absolute
+        && mode != spectrumviewer::SpectrumComparisonMode::overlay
+        && mode != spectrumviewer::SpectrumComparisonMode::deltaDb)
+        return;
+    comparisonMode.store (mode, std::memory_order_release);
+    comparisonSettingsSequence.fetch_add (1, std::memory_order_release);
 }
 
 void SpectrumViewer::cancelSpectrumCapture()

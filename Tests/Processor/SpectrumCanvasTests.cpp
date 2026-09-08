@@ -263,4 +263,34 @@ TEST_F (SpectrumCanvasTests, SpectralSequenceGapsAdvanceAutoRangeUsingSignalTime
     plot->beginSpectrumFrame (8, 2, 8, 0.125);
     EXPECT_DOUBLE_EQ (plot->getPendingRangeElapsedSecondsForTesting(), 0.125);
 }
+
+TEST_F (SpectrumCanvasTests, DeltaComparisonUsesSymmetricRangeAndReferenceLabel)
+{
+    auto* plot = canvas->getPlotPtr();
+    const float mean[] { 1.0f, 2.0f, 4.0f };
+    const float peak[] { 1.5f, 2.5f, 4.5f };
+    const float delta[] { -3.0f, 0.0f, 6.0f };
+    const float frequencies[] { 10.0f, 100.0f, 1000.0f };
+    spectrumviewer::SpectrumComparisonFrameStatus comparison;
+    comparison.mode = spectrumviewer::SpectrumComparisonMode::deltaDb;
+    comparison.compatibility = spectrumviewer::SpectrumReferenceCompatibility::compatible;
+    comparison.referenceCaptureId = 9;
+
+    plot->beginSpectrumFrame (1, 1, 1, 0.5);
+    plot->updatePowerSpectrum (mean, peak, 3, frequencies, "uV",
+                               spectrumviewer::FrequencyScale::logarithmic,
+                               10.0, 1000.0, 0, delta, comparison);
+    plot->plotPowerSpectrum();
+
+    EXPECT_EQ (plot->getComparisonModeForTesting(),
+               spectrumviewer::SpectrumComparisonMode::deltaDb);
+    EXPECT_EQ (plot->getComparisonTraceForTesting (0),
+               (std::vector<float> { -3.0f, 0.0f, 6.0f }));
+    EXPECT_FLOAT_EQ (plot->getPlotRangeForTesting().ymin, -12.0f);
+    EXPECT_FLOAT_EQ (plot->getPlotRangeForTesting().ymax, 12.0f);
+    EXPECT_EQ (plot->getYAxisLabelForTesting(), "Difference (dB re reference)");
+    const auto image = renderCanvas();
+    EXPECT_NE (imageHash (image), 0u);
+    optionallyWriteImage (image, "spectrum-delta-reference.png");
+}
 } // namespace

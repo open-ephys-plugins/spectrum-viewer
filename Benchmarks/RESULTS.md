@@ -124,3 +124,13 @@ in 6.58 ms median, or approximately 0.22 ms per accepted two-second window.
 This local 30-repetition run had 1.64% coefficient of variation with CPU
 scaling enabled. It excludes the multitaper estimate and display reduction,
 which are reported separately above.
+
+## Session reference comparison
+
+For eight Fine-profile channels at 30 kHz, reducing both current and reference
+30,001-bin PSDs to 800 logarithmic display columns and computing all 6,400 dB
+deltas took 0.780 ms median over five repetitions (0.43% coefficient of
+variation). CPU scaling was enabled. This measures the complete comparison
+reduction; relative to the ordinary display path, only the second reduction and
+dB subtraction are additional work. It remains far below the 500 ms Fine live
+hop and two-second capture hop, but target-rig repaint and p99 validation remain.

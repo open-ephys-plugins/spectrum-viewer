@@ -104,9 +104,14 @@ protected:
 
     void writeBlocks (int count)
     {
+        writeBlocksScaled (count, 1.0f);
+    }
+
+    void writeBlocksScaled (int count, float scale)
+    {
         AudioBuffer<float> buffer (1, blockSize);
         for (int sample = 0; sample < blockSize; ++sample)
-            buffer.setSample (0, sample, static_cast<float> (sample + 1));
+            buffer.setSample (0, sample, scale * static_cast<float> (sample + 1));
 
         for (int block = 0; block < count; ++block)
         {
@@ -623,7 +628,11 @@ TEST_F (SpectrumViewerLifecycleTests, CaptureReportsInputGapWithoutMixingWindowH
     {
         return processor->getInputDiscontinuityCount() > 0;
     }));
-    writeBlocks (32);
+    for (int block = 0;
+         block < 96
+         && processor->getCaptureState() != SpectrumCaptureState::frozen;
+         ++block)
+        writeBlocks (1);
     ASSERT_TRUE (waitUntil ([this]
     {
         return processor->getCaptureState() == SpectrumCaptureState::frozen;
@@ -715,6 +724,145 @@ TEST_F (SpectrumViewerLifecycleTests, RetriesCompletedCaptureAfterDisplayQueuePr
                        == spectrumviewer::SpectrumFrameProduct::captureComplete;
         });
         return complete;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, CompletedCaptureBecomesImmutableReferenceAndReportsCompatibility)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    ASSERT_TRUE (processor->startSpectrumCapture (2.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+    writeBlocks (32);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+
+    ASSERT_TRUE (processor->setCurrentCaptureAsReference());
+    processor->setSpectrumComparisonMode (
+        spectrumviewer::SpectrumComparisonMode::overlay);
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasSpectrumReference(); }));
+    EXPECT_GT (processor->getReferenceCapturedAtMilliseconds(), 0);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool matched = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            matched = frame.comparison.mode
+                          == spectrumviewer::SpectrumComparisonMode::overlay
+                      && frame.comparison.compatibility
+                             == spectrumviewer::SpectrumReferenceCompatibility::compatible
+                      && frame.getChannelComparisonData (0) != nullptr;
+            if (matched)
+                for (std::size_t bin = 0; bin < frame.numBins; ++bin)
+                    EXPECT_FLOAT_EQ (frame.getChannelComparisonData (0)[bin],
+                                     frame.getChannelData (0)[bin]);
+        });
+        return matched;
+    }));
+
+    processor->returnToLive();
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::live;
+    }));
+    EXPECT_TRUE (processor->hasSpectrumReference());
+    writeBlocks (4);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool incompatible = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            incompatible = frame.comparison.compatibility
+                               == spectrumviewer::SpectrumReferenceCompatibility::incompatible
+                           && frame.getChannelComparisonData (0) == nullptr;
+        });
+        return incompatible;
+    }));
+
+    processor->clearSpectrumReference();
+    ASSERT_TRUE (waitUntil ([this] { return ! processor->hasSpectrumReference(); }));
+    EXPECT_EQ (processor->getReferenceCompatibility(),
+               spectrumviewer::SpectrumReferenceCompatibility::noReference);
+    EXPECT_EQ (processor->getReferenceCapturedAtMilliseconds(), 0);
+    writeBlocks (4);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool absolute = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            absolute = frame.comparison.mode
+                           == spectrumviewer::SpectrumComparisonMode::absolute
+                       && frame.getChannelComparisonData (0) == nullptr;
+        });
+        return absolute;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, DeltaComparesAreaWeightedLinearPower)
+{
+    createProcessor();
+    processor->setAnalysisProfile (SpectrumAnalysisProfile::fine);
+    processor->setDisplayColumnCount (16);
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+
+    ASSERT_TRUE (processor->startSpectrumCapture (2.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+    writeBlocksScaled (32, 1.0f);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+    ASSERT_TRUE (processor->setCurrentCaptureAsReference());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasSpectrumReference(); }));
+
+    processor->setSpectrumComparisonMode (
+        spectrumviewer::SpectrumComparisonMode::deltaDb);
+    processor->returnToLive();
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::live;
+    }));
+    ASSERT_TRUE (processor->startSpectrumCapture (2.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+    writeBlocksScaled (32, 2.0f);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        bool checked = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            if (frame.comparison.mode
+                    != spectrumviewer::SpectrumComparisonMode::deltaDb
+                || frame.getChannelComparisonData (0) == nullptr)
+                return;
+            for (std::size_t bin = 0; bin < frame.numBins; ++bin)
+            {
+                const auto delta = frame.getChannelComparisonData (0)[bin];
+                if (std::isfinite (delta))
+                {
+                    EXPECT_NEAR (delta, 10.0 * std::log10 (4.0), 0.02);
+                    checked = true;
+                }
+            }
+        });
+        return checked;
     }));
 }
 } // namespace

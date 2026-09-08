@@ -171,6 +171,33 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     readinessLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
     readinessLabel->setBounds (15, 328, 240, 18);
     addAndMakeVisible (readinessLabel.get());
+
+    comparisonMode = std::make_unique<ComboBox> ("SpectrumComparisonMode");
+    comparisonMode->setBounds (15, 353, 100, 18);
+    comparisonMode->addItemList ({ "Absolute", "Overlay", "Delta" }, 1);
+    comparisonMode->setSelectedId (1, dontSendNotification);
+    comparisonMode->addListener (this);
+    addAndMakeVisible (comparisonMode.get());
+
+    comparisonModeLabel = std::make_unique<Label> ("SpectrumComparisonModeLabel", "Comparison");
+    comparisonModeLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    comparisonModeLabel->setBounds (123, 353, 100, 18);
+    addAndMakeVisible (comparisonModeLabel.get());
+
+    setReferenceAction = std::make_unique<UtilityButton> ("Set Reference");
+    setReferenceAction->setBounds (15, 378, 100, 20);
+    setReferenceAction->addListener (this);
+    addAndMakeVisible (setReferenceAction.get());
+
+    clearReferenceAction = std::make_unique<UtilityButton> ("Clear Ref");
+    clearReferenceAction->setBounds (123, 378, 100, 20);
+    clearReferenceAction->addListener (this);
+    addAndMakeVisible (clearReferenceAction.get());
+
+    referenceStatusLabel = std::make_unique<Label> ("SpectrumReferenceStatus", "No reference");
+    referenceStatusLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
+    referenceStatusLabel->setBounds (15, 403, 230, 18);
+    addAndMakeVisible (referenceStatusLabel.get());
     updateAmplitudeRangeControls();
     startTimerHz (4);
 }
@@ -262,6 +289,13 @@ void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
         updateAmplitudeRangeControls();
         applyAmplitudeRangeToCanvas();
     }
+    else if (cb == comparisonMode.get())
+    {
+        static_cast<SpectrumViewer*> (getProcessor())->setSpectrumComparisonMode (
+            static_cast<spectrumviewer::SpectrumComparisonMode> (
+                comparisonMode->getSelectedId()));
+        updateAmplitudeRangeControls();
+    }
 }
 
 void SpectrumViewerEditor::sliderValueChanged (Slider* slider)
@@ -280,10 +314,25 @@ void SpectrumViewerEditor::sliderValueChanged (Slider* slider)
 
 void SpectrumViewerEditor::buttonClicked (Button* button)
 {
+    auto* processor = static_cast<SpectrumViewer*> (getProcessor());
+    if (button == setReferenceAction.get())
+    {
+        if (processor->setCurrentCaptureAsReference())
+        {
+            comparisonMode->setSelectedId (
+                static_cast<int> (spectrumviewer::SpectrumComparisonMode::overlay),
+                sendNotification);
+        }
+        return;
+    }
+    if (button == clearReferenceAction.get())
+    {
+        processor->clearSpectrumReference();
+        return;
+    }
     if (button != captureAction.get())
         return;
 
-    auto* processor = static_cast<SpectrumViewer*> (getProcessor());
     switch (processor->getCaptureState())
     {
         case SpectrumCaptureState::live:
@@ -308,7 +357,16 @@ void SpectrumViewerEditor::buttonClicked (Button* button)
 
 void SpectrumViewerEditor::updateAmplitudeRangeControls()
 {
-    const auto fixed = amplitudeRangeMode->getSelectedId() == 2;
+    const auto* processor = static_cast<SpectrumViewer*> (getProcessor());
+    const auto delta = comparisonMode != nullptr
+                       && comparisonMode->getSelectedId()
+                              == static_cast<int> (
+                                  spectrumviewer::SpectrumComparisonMode::deltaDb)
+                       && processor->hasSpectrumReference()
+                       && processor->getReferenceCompatibility()
+                              == spectrumviewer::SpectrumReferenceCompatibility::compatible;
+    const auto fixed = amplitudeRangeMode->getSelectedId() == 2 && ! delta;
+    amplitudeRangeMode->setEnabled (! delta);
     minimumDb->setEnabled (fixed);
     maximumDb->setEnabled (fixed);
     minimumDb->setVisible (fixed);
@@ -423,6 +481,30 @@ void SpectrumViewerEditor::timerCallback()
             break;
     }
     readinessLabel->setText (text, dontSendNotification);
+
+    setReferenceAction->setEnabled (capture == SpectrumCaptureState::frozen);
+    clearReferenceAction->setEnabled (processor->hasSpectrumReference());
+    comparisonMode->setEnabled (processor->hasSpectrumReference());
+    if (! processor->hasSpectrumReference())
+        referenceStatusLabel->setText ("No reference", dontSendNotification);
+    else
+    {
+        const auto compatibility = processor->getReferenceCompatibility();
+        referenceStatusLabel->setText (
+            "Ref "
+                + Time (processor->getReferenceCapturedAtMilliseconds())
+                      .formatted ("%H:%M:%S")
+                + (compatibility
+                           == spectrumviewer::SpectrumReferenceCompatibility::incompatible
+                       ? " (incompatible)"
+                       : ""),
+            dontSendNotification);
+        referenceStatusLabel->setTooltip (
+            compatibility == spectrumviewer::SpectrumReferenceCompatibility::incompatible
+                ? "Select Fine analysis with the same channels, units, sample rate, detrending, NW, and K"
+                : "Session-local immutable capture reference");
+    }
+    updateAmplitudeRangeControls();
     auto* spectrumCanvas = static_cast<SpectrumCanvas*> (canvas.get());
     if (spectrumCanvas != nullptr && amplitudeRangeMode->getSelectedId() == 1)
     {
@@ -479,6 +561,7 @@ void SpectrumViewerEditor::saveVisualizerEditorParameters (XmlElement* xml)
     xml->setAttribute ("minimum_db", minimumDb->getValue());
     xml->setAttribute ("maximum_db", maximumDb->getValue());
     xml->setAttribute ("capture_duration", captureDuration->getSelectedId());
+    xml->setAttribute ("comparison_mode", comparisonMode->getSelectedId());
 }
 
 void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
@@ -510,4 +593,7 @@ void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
     captureDuration->setSelectedId (
         jlimit (1, 3, xml->getIntAttribute ("capture_duration", 1)),
         dontSendNotification);
+    comparisonMode->setSelectedId (
+        jlimit (1, 3, xml->getIntAttribute ("comparison_mode", 1)),
+        sendNotification);
 }

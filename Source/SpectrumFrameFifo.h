@@ -22,6 +22,7 @@
 
 #include "SpectrumDisplayReducer.h"
 #include "SpectrumEstimation.h"
+#include "SpectrumReference.h"
 
 #include <atomic>
 #include <cmath>
@@ -61,6 +62,19 @@ struct SpectrumCaptureFrameStatus
     }
 };
 
+struct SpectrumComparisonFrameStatus
+{
+    SpectrumComparisonMode mode = SpectrumComparisonMode::absolute;
+    SpectrumReferenceCompatibility compatibility = SpectrumReferenceCompatibility::noReference;
+    std::uint64_t referenceCaptureId = 0;
+
+    bool hasComparisonData() const noexcept
+    {
+        return mode != SpectrumComparisonMode::absolute
+               && compatibility == SpectrumReferenceCompatibility::compatible;
+    }
+};
+
 /**
     Publishes complete planar spectrum frames from one worker to one UI thread.
 
@@ -87,6 +101,14 @@ public:
             return channel < numChannels ? peakData + channel * binStride : nullptr;
         }
 
+        /** Reference PSD for overlay, or worker-computed dB delta for delta mode. */
+        const float* getChannelComparisonData (std::size_t channel) const noexcept
+        {
+            return comparison.hasComparisonData() && channel < numChannels
+                       ? comparisonData + channel * binStride
+                       : nullptr;
+        }
+
         const char* getSourceChannelUnit (std::size_t channel) const noexcept
         {
             return channel < numChannels ? sourceChannelUnits[channel].c_str() : "";
@@ -109,11 +131,13 @@ public:
         FrequencyScale frequencyScale = FrequencyScale::linear;
         bool reducedForDisplay = false;
         SpectrumCaptureFrameStatus capture;
+        SpectrumComparisonFrameStatus comparison;
 
     private:
         friend class SpectrumFrameFifo;
         const float* data = nullptr;
         const float* peakData = nullptr;
+        const float* comparisonData = nullptr;
         const int* sourceChannelIndices = nullptr;
         const std::string* sourceChannelUnits = nullptr;
         std::size_t binStride = 0;
@@ -147,6 +171,7 @@ public:
           metadata (capacity + 1),
           powers (checkedPowerCount (numChannels, numBins, capacity + 1)),
           peakPowers (checkedPowerCount (numChannels, numBins, capacity + 1)),
+          comparisonValues (checkedPowerCount (numChannels, numBins, capacity + 1)),
           frequencyCoordinates (checkedFrequencyCount (numBins, capacity + 1))
     {
         if (numChannels == 0 || numBins == 0
@@ -166,7 +191,9 @@ public:
                          FrequencyScale scale,
                          double minimumFrequencyHz,
                          double maximumFrequencyHz,
-                         SpectrumCaptureFrameStatus capture = {}) noexcept
+                         SpectrumCaptureFrameStatus capture = {},
+                         const float* planarComparison = nullptr,
+                         SpectrumComparisonFrameStatus comparison = {}) noexcept
     {
         if (planarMeans == nullptr || planarPeaks == nullptr || frequenciesHz == nullptr
             || numChannels != channelCount || numColumns == 0 || numColumns > binCount
@@ -176,6 +203,7 @@ public:
             || (scale == FrequencyScale::logarithmic && minimumFrequencyHz <= 0.0)
             || ! frequenciesAreValid (frequenciesHz, numColumns, minimumFrequencyHz, maximumFrequencyHz)
             || ! captureStatusIsValid (capture)
+            || ! comparisonStatusIsValid (comparison, planarComparison)
             || (capture.product != SpectrumFrameProduct::live
                 && capture.lastSampleExclusive <= firstSample))
         {
@@ -199,11 +227,24 @@ public:
             std::memcpy (peakPowers.data() + (slot * channelCount + channel) * binCount,
                          planarPeaks + channel * numColumns,
                          numColumns * sizeof (float));
+            if (comparison.hasComparisonData())
+                std::memcpy (comparisonValues.data()
+                                 + (slot * channelCount + channel) * binCount,
+                             planarComparison + channel * numColumns,
+                             numColumns * sizeof (float));
         }
         std::memcpy (frequencyCoordinates.data() + slot * binCount,
                      frequenciesHz,
                      numColumns * sizeof (float));
-        metadata[slot] = { firstSample, sequence, numColumns, minimumFrequencyHz, maximumFrequencyHz, scale, true, capture };
+        metadata[slot] = { firstSample,
+                           sequence,
+                           numColumns,
+                           minimumFrequencyHz,
+                           maximumFrequencyHz,
+                           scale,
+                           true,
+                           capture,
+                           comparison };
         return true;
     }
 
@@ -230,7 +271,15 @@ public:
         std::memcpy (powers.data() + slot * channelCount * binCount,
                      planarPowers,
                      channelCount * binCount * sizeof (float));
-        metadata[slot] = { firstSample, sequence, binCount, 0.0, descriptor.sampleRateHz * 0.5, FrequencyScale::linear, false, {} };
+        metadata[slot] = { firstSample,
+                           sequence,
+                           binCount,
+                           0.0,
+                           descriptor.sampleRateHz * 0.5,
+                           FrequencyScale::linear,
+                           false,
+                           {},
+                           {} };
         return true;
     }
 
@@ -256,6 +305,10 @@ public:
         view.peakData = frameMetadata.reduced
                             ? peakPowers.data() + slot * channelCount * binCount
                             : view.data;
+        view.comparisonData = frameMetadata.comparison.hasComparisonData()
+                                  ? comparisonValues.data()
+                                        + slot * channelCount * binCount
+                                  : nullptr;
         view.sourceChannelIndices = sourceChannelIndices.data();
         view.sourceChannelUnits = sourceChannelUnits.data();
         view.binStride = binCount;
@@ -273,6 +326,7 @@ public:
         view.frequencyScale = frameMetadata.frequencyScale;
         view.reducedForDisplay = frameMetadata.reduced;
         view.capture = frameMetadata.capture;
+        view.comparison = frameMetadata.comparison;
         consumer (view);
 
         staleFrames.fetch_add (static_cast<std::uint64_t> (consumed - 1), std::memory_order_relaxed);
@@ -295,6 +349,8 @@ public:
     std::uint64_t getDroppedFrameCount() const noexcept { return droppedFrames.load (std::memory_order_relaxed); }
     std::uint64_t getRejectedFrameCount() const noexcept { return rejectedFrames.load (std::memory_order_relaxed); }
     std::uint64_t getStaleFrameCount() const noexcept { return staleFrames.load (std::memory_order_relaxed); }
+    const std::vector<int>& getSourceChannelIndices() const noexcept { return sourceChannelIndices; }
+    const std::vector<std::string>& getSourceChannelUnits() const noexcept { return sourceChannelUnits; }
 
 private:
     struct Metadata
@@ -307,6 +363,7 @@ private:
         FrequencyScale frequencyScale = FrequencyScale::linear;
         bool reduced = false;
         SpectrumCaptureFrameStatus capture;
+        SpectrumComparisonFrameStatus comparison;
     };
 
     static bool captureStatusIsValid (const SpectrumCaptureFrameStatus& value) noexcept
@@ -320,6 +377,26 @@ private:
             return false;
         return value.product != SpectrumFrameProduct::captureComplete
                || value.includedWindowCount == value.targetWindowCount;
+    }
+
+    static bool comparisonStatusIsValid (
+        const SpectrumComparisonFrameStatus& value,
+        const float* data) noexcept
+    {
+        if (value.mode != SpectrumComparisonMode::absolute
+            && value.mode != SpectrumComparisonMode::overlay
+            && value.mode != SpectrumComparisonMode::deltaDb)
+            return false;
+        if (value.mode == SpectrumComparisonMode::absolute)
+            return value.referenceCaptureId == 0
+                   && value.compatibility == SpectrumReferenceCompatibility::noReference
+                   && data == nullptr;
+        if (value.referenceCaptureId == 0
+            || value.compatibility == SpectrumReferenceCompatibility::noReference)
+            return false;
+        return value.compatibility == SpectrumReferenceCompatibility::compatible
+                   ? data != nullptr
+                   : data == nullptr;
     }
 
     static std::vector<std::string> normaliseUnits (std::vector<std::string> units,
@@ -416,6 +493,7 @@ private:
     std::vector<Metadata> metadata;
     std::vector<float> powers;
     std::vector<float> peakPowers;
+    std::vector<float> comparisonValues;
     std::vector<float> frequencyCoordinates;
     std::atomic<std::uint64_t> droppedFrames { 0 };
     std::atomic<std::uint64_t> rejectedFrames { 0 };

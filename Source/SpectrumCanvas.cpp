@@ -249,7 +249,9 @@ void SpectrumCanvas::refresh()
                                                  frame.frequencyScale,
                                                  frame.minimumFrequencyHz,
                                                  frame.maximumFrequencyHz,
-                                                 static_cast<int> (channel));
+                                                 static_cast<int> (channel),
+                                                 frame.getChannelComparisonData (channel),
+                                                 frame.comparison);
             }
             else if (channel == 0)
                 canvasPlot->drawSpectrogram (
@@ -316,6 +318,7 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
     currPeakPower.resize (MAX_CHANS);
     currLinearPower.resize (MAX_CHANS);
     currLinearPeakPower.resize (MAX_CHANS);
+    currComparison.resize (MAX_CHANS);
     channelUnits.resize (MAX_CHANS);
 
     for (int ch = 0; ch < MAX_CHANS; ch++)
@@ -324,6 +327,7 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
         currPeakPower[ch].clear();
         currLinearPower[ch].clear();
         currLinearPeakPower[ch].clear();
+        currComparison[ch].clear();
     }
 
     for (int i = 0; i < nFreqs; i++)
@@ -382,6 +386,7 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
         currPeakPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
         currLinearPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
         currLinearPeakPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
+        currComparison[ch].clear();
     }
 }
 
@@ -417,10 +422,27 @@ void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
     updateAmplitudeAxisLabel();
 
     const auto plotFrequencies = plt->transformFrequencies (xvalues, frequencyScale);
+    const auto showingDelta = comparisonStatus.mode
+                                  == spectrumviewer::SpectrumComparisonMode::deltaDb
+                              && comparisonStatus.hasComparisonData();
+    if (showingDelta)
+        plt->plot (plotFrequencies,
+                   std::vector<float> (xvalues.size(), 0.0f),
+                   findColour (ThemeColours::controlPanelText),
+                   1.0f,
+                   0.5f);
     for (int i = 0; i < activeChannels.size(); i++)
     {
-        plt->plot (plotFrequencies, currPeakPower[i], chanColors[i], 1.0f, 0.35f);
-        plt->plot (plotFrequencies, currPower[i], chanColors[i], 1.5f);
+        if (showingDelta)
+            plt->plot (plotFrequencies, currComparison[i], chanColors[i], 1.5f);
+        else
+        {
+            if (comparisonStatus.mode == spectrumviewer::SpectrumComparisonMode::overlay
+                && comparisonStatus.hasComparisonData())
+                plt->plot (plotFrequencies, currComparison[i], chanColors[i], 1.0f, 0.55f);
+            plt->plot (plotFrequencies, currPeakPower[i], chanColors[i], 1.0f, 0.35f);
+            plt->plot (plotFrequencies, currPower[i], chanColors[i], 1.5f);
+        }
     }
 
     if (! xvalues.empty())
@@ -430,12 +452,14 @@ void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
             amplitudeRange.resetAutomatic();
             amplitudeUnitsChanged = false;
         }
-        const auto range = updateAutomaticRange
-                               ? amplitudeRange.update (currPower,
-                                                        currPeakPower,
-                                                        frameChannelCount,
-                                                        pendingRangeElapsedSeconds)
-                               : amplitudeRange.getCurrentRange();
+        const auto range = showingDelta
+                               ? spectrumviewer::DecibelRange { -12.0f, 12.0f }
+                               : updateAutomaticRange
+                                     ? amplitudeRange.update (currPower,
+                                                              currPeakPower,
+                                                              frameChannelCount,
+                                                              pendingRangeElapsedSeconds)
+                                     : amplitudeRange.getCurrentRange();
         if (updateAutomaticRange)
             pendingRangeElapsedSeconds = 0.0;
         plt->setFrequencyAxis (frequencyScale,
@@ -454,12 +478,15 @@ void CanvasPlot::updatePowerSpectrum (const float* meanPsd,
                                       spectrumviewer::FrequencyScale scale,
                                       double minimumFrequencyHz,
                                       double maximumFrequencyHz,
-                                      int channelIndex)
+                                      int channelIndex,
+                                      const float* comparisonData,
+                                      spectrumviewer::SpectrumComparisonFrameStatus comparison)
 {
     if (channelIndex < 0 || channelIndex >= static_cast<int> (currPower.size())
         || meanPsd == nullptr || peakPsd == nullptr || frequenciesHz == nullptr)
         return;
     frequencyScale = scale;
+    comparisonStatus = comparison;
     displayMinimumFrequencyHz = static_cast<float> (minimumFrequencyHz);
     displayMaximumFrequencyHz = static_cast<float> (maximumFrequencyHz);
     if (channelIndex == 0)
@@ -472,10 +499,26 @@ void CanvasPlot::updatePowerSpectrum (const float* meanPsd,
     auto& peakDestination = currPeakPower[static_cast<std::size_t> (channelIndex)];
     auto& linearDestination = currLinearPower[static_cast<std::size_t> (channelIndex)];
     auto& linearPeakDestination = currLinearPeakPower[static_cast<std::size_t> (channelIndex)];
+    auto& comparisonDestination = currComparison[static_cast<std::size_t> (channelIndex)];
     destination.resize (valueCount);
     peakDestination.resize (valueCount);
     linearDestination.assign (meanPsd, meanPsd + valueCount);
     linearPeakDestination.assign (peakPsd, peakPsd + valueCount);
+    comparisonDestination.clear();
+    if (comparison.hasComparisonData() && comparisonData != nullptr)
+    {
+        comparisonDestination.resize (valueCount);
+        if (comparison.mode == spectrumviewer::SpectrumComparisonMode::deltaDb)
+            std::copy (comparisonData,
+                       comparisonData + valueCount,
+                       comparisonDestination.begin());
+        else
+            for (std::size_t n = 0; n < valueCount; ++n)
+                comparisonDestination[n] = std::isfinite (comparisonData[n])
+                                                   && comparisonData[n] > 0.0f
+                                               ? 10.0f * std::log10 (comparisonData[n])
+                                               : std::numeric_limits<float>::quiet_NaN();
+    }
     for (std::size_t n = 0; n < valueCount; ++n)
     {
         const auto power = meanPsd[n];
@@ -546,6 +589,12 @@ void CanvasPlot::beginSpectrumFrame (std::uint64_t configurationGeneration,
 
 void CanvasPlot::updateAmplitudeAxisLabel()
 {
+    if (comparisonStatus.mode == spectrumviewer::SpectrumComparisonMode::deltaDb
+        && comparisonStatus.hasComparisonData())
+    {
+        plt->ylabel ("Difference (dB re reference)");
+        return;
+    }
     String commonUnit;
     auto hasCommonUnit = false;
     for (int index = 0; index < activeChannels.size(); ++index)
@@ -610,6 +659,34 @@ void CanvasPlot::mouseMove (const MouseEvent& event)
     const auto channel = activeChannels.isEmpty()
                              ? String ("Channel")
                              : processor->getChanName (activeChannels[0]);
+    if (comparisonStatus.hasComparisonData()
+        && currComparison[0].size() > index && power > 0.0f
+        && std::isfinite (currComparison[0][index]))
+    {
+        if (comparisonStatus.mode == spectrumviewer::SpectrumComparisonMode::deltaDb)
+        {
+            const auto delta = currComparison[0][index];
+            const auto referencePower = std::isfinite (delta)
+                                            ? power / std::pow (10.0f, delta / 10.0f)
+                                            : std::numeric_limits<float>::quiet_NaN();
+            cursorLabel->setText (channel + ": " + String (xvalues[index], 2)
+                                      + " Hz, current " + String (10.0f * std::log10 (power), 2)
+                                      + " dB, reference "
+                                      + String (10.0f * std::log10 (referencePower), 2)
+                                      + " dB, delta " + String (delta, 2) + " dB",
+                                  dontSendNotification);
+            return;
+        }
+        if (comparisonStatus.mode == spectrumviewer::SpectrumComparisonMode::overlay)
+        {
+            const auto referenceDb = currComparison[0][index];
+            cursorLabel->setText (channel + ": " + String (xvalues[index], 2)
+                                      + " Hz, current " + String (10.0f * std::log10 (power), 2)
+                                      + " dB, reference " + String (referenceDb, 2) + " dB",
+                                  dontSendNotification);
+            return;
+        }
+    }
     cursorLabel->setText (channel + ": " + String (xvalues[index], 2)
                               + " Hz, mean " + String (shown, 4)
                               + ", peak " + String (shownPeak, 4) + " " + unit
@@ -751,7 +828,10 @@ void CanvasPlot::clear()
         currPeakPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
         currLinearPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
         currLinearPeakPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
+        currComparison[ch].clear();
     }
+
+    comparisonStatus = {};
 
     spectrogramImg->clear (spectrogramImg->getBounds());
     plt->clear();

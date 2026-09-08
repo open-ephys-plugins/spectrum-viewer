@@ -46,6 +46,8 @@ public:
     SpectrumAnalysisPipeline& getPipeline() noexcept { return pipeline; }
     SpectrumFrameFifo& getFrameFifo() noexcept { return frameFifo; }
     SpectrumDisplayReducer& getDisplayReducer() noexcept { return displayReducer; }
+    SpectrumDisplayReducer& getReferenceDisplayReducer() noexcept { return referenceDisplayReducer; }
+    float* getComparisonScratch() noexcept { return comparisonScratch.data(); }
     const SpectrumAnalysisConfiguration& getConfiguration() const noexcept { return *configuration; }
     SpectrumCaptureAccumulator* getCaptureAccumulator() noexcept { return captureAccumulator.get(); }
     bool isCaptureRuntime() const noexcept { return captureAccumulator != nullptr; }
@@ -55,6 +57,8 @@ private:
     std::shared_ptr<const SpectrumAnalysisConfiguration> configuration;
     SpectrumAnalysisPipeline pipeline;
     SpectrumDisplayReducer displayReducer;
+    SpectrumDisplayReducer referenceDisplayReducer;
+    std::vector<float> comparisonScratch;
     SpectrumFrameFifo frameFifo;
     std::unique_ptr<SpectrumCaptureAccumulator> captureAccumulator;
     std::uint64_t captureIdentifier = 0;

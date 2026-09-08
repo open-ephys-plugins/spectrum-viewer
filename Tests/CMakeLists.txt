@@ -55,6 +55,7 @@ add_executable(
 	../Source/SpectrumAmplitudeRange.cpp
 	../Source/SpectrumCaptureAccumulator.cpp
 	../Source/SpectrumDisplayReducer.cpp
+	../Source/SpectrumReference.cpp
 	AsyncSpectrumAnalysisTests.cpp
 	BacklogSheddingPolicyTests.cpp
 	JuceCore.cpp
@@ -69,7 +70,8 @@ add_executable(
 	SpectrumAmplitudeRangeTests.cpp
 	SpectrumCaptureAccumulatorTests.cpp
 	SpectrumDisplayReducerTests.cpp
-	SpectrumFrameFifoTests.cpp)
+	SpectrumFrameFifoTests.cpp
+	SpectrumReferenceTests.cpp)
 
 target_compile_features(spectrum_viewer_tests PRIVATE cxx_std_17)
 if(MSVC)

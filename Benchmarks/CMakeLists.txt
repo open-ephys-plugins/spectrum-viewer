@@ -14,10 +14,12 @@ add_executable(
 	spectrum_viewer_benchmarks
 	AmplitudeRangeBenchmarks.cpp
 	CaptureAccumulatorBenchmarks.cpp
+	ReferenceComparisonBenchmarks.cpp
 	WindowPreprocessingBenchmarks.cpp
 	../Source/SpectrumAmplitudeRange.cpp
 	../Source/SpectrumCaptureAccumulator.cpp
-	../Source/SpectrumDisplayReducer.cpp)
+	../Source/SpectrumDisplayReducer.cpp
+	../Source/SpectrumReference.cpp)
 
 target_compile_features(spectrum_viewer_benchmarks PRIVATE cxx_std_17)
 
