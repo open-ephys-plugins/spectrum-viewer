@@ -366,6 +366,8 @@ private:
 
     void requestAnalysisConfiguration (bool forCapture = false);
     void adoptPreparedAnalysis();
+    void clearAcquisitionState();
+    bool stopWorkerSafely (int timeoutMilliseconds) noexcept;
     void applyReferenceRequest() noexcept;
     void finalizeCapturedSpectrum();
     bool publishCapturedSpectrum (bool complete) noexcept;
@@ -416,6 +418,7 @@ private:
     std::atomic<SpectrumAnalysisReadiness> analysisReadiness { SpectrumAnalysisReadiness::stopped };
     std::atomic<bool> configurationPending { false };
     std::atomic<bool> acquisitionRunning { false };
+    std::atomic<std::size_t> activeAudioCallbacks { 0 };
     std::atomic<std::size_t> warmupSampleCount { 0 };
     std::atomic<std::size_t> warmupTargetSampleCount { 0 };
     std::atomic<std::uint64_t> droppedInputBlocks { 0 };

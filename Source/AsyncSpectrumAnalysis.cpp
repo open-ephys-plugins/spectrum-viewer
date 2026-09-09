@@ -60,7 +60,9 @@ AsyncSpectrumAnalysis::AsyncSpectrumAnalysis (Builder newBuilder)
 
 AsyncSpectrumAnalysis::~AsyncSpectrumAnalysis()
 {
-    stopThread (5000);
+    signalThreadShouldExit();
+    notify();
+    waitForThreadToExit (-1);
 }
 
 void AsyncSpectrumAnalysis::request (SpectrumAnalysisPreparationRequest request)

@@ -52,6 +52,24 @@ ProfileSettings getProfileSettings (SpectrumAnalysisProfile profile)
             return { 0.25, 0.125, 2.0, 3 };
     }
 }
+
+class ScopedAudioCallback final
+{
+public:
+    explicit ScopedAudioCallback (std::atomic<std::size_t>& callbackCount) noexcept
+        : count (callbackCount)
+    {
+        count.fetch_add (1, std::memory_order_acq_rel);
+    }
+
+    ~ScopedAudioCallback()
+    {
+        count.fetch_sub (1, std::memory_order_release);
+    }
+
+private:
+    std::atomic<std::size_t>& count;
+};
 } // namespace
 
 #define MS_FROM_START Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - start) * 1000
@@ -81,7 +99,16 @@ SpectrumViewer::~SpectrumViewer()
     acquisitionRunning.store (false, std::memory_order_release);
     activeConfigurationGeneration.store (0, std::memory_order_release);
     activeBinWidthHz.store (0.0f, std::memory_order_release);
-    stopThread (1000);
+
+    // Destruction cannot continue while a callback or worker may still refer
+    // to member storage. Unlike stopThread(timeout), this never force-kills a
+    // thread that may own locks or partially updated state.
+    while (activeAudioCallbacks.load (std::memory_order_acquire) != 0)
+        Thread::sleep (1);
+    signalThreadShouldExit();
+    notify();
+    waitForThreadToExit (-1);
+
     if (activeAnalysis != nullptr)
         asynchronousAnalysis.retire (activeAnalysis);
     {
@@ -430,9 +457,12 @@ bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
 
 void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
 {
+    ScopedAudioCallback callback (activeAudioCallbacks);
+    if (! acquisitionRunning.load (std::memory_order_acquire))
+        return;
+
     auto* fifo = inputFifo.get();
-    if (fifo == nullptr || acquisitionChannelCount == 0
-        || ! acquisitionRunning.load (std::memory_order_acquire))
+    if (fifo == nullptr || acquisitionChannelCount == 0)
         return;
 
     const auto incomingSampleCount = static_cast<std::size_t> (getNumSamplesInBlock (activeStream));
@@ -775,6 +805,18 @@ bool SpectrumViewer::startAcquisition()
 {
     if (isEnabled)
     {
+        if (isThreadRunning()
+            || activeAudioCallbacks.load (std::memory_order_acquire) != 0)
+        {
+            analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+                                     std::memory_order_release);
+            LOGE ("Unable to start Spectrum Viewer while its previous worker or callback is active");
+            return false;
+        }
+
+        if (inputFifo != nullptr || activeAnalysis != nullptr)
+            clearAcquisitionState();
+
         acquisitionChannelCount = static_cast<std::size_t> (std::min (channels.size(), MAX_CHANS));
         const auto maximumInputBlockSamples = getBlockSize();
         const auto sampleRate = static_cast<double> (tfrParams.Fs);
@@ -847,7 +889,15 @@ bool SpectrumViewer::startAcquisition()
         warmupTargetSampleCount.store (0, std::memory_order_relaxed);
         analysisReadiness.store (SpectrumAnalysisReadiness::preparing, std::memory_order_release);
         acquisitionRunning.store (true, std::memory_order_release);
-        startThread (Thread::Priority::normal);
+        if (! startThread (Thread::Priority::normal))
+        {
+            acquisitionRunning.store (false, std::memory_order_release);
+            clearAcquisitionState();
+            analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+                                     std::memory_order_release);
+            LOGE ("Unable to start Spectrum Viewer analysis worker");
+            return false;
+        }
         requestAnalysisConfiguration();
     }
     return isEnabled;
@@ -858,7 +908,39 @@ bool SpectrumViewer::stopAcquisition()
     acquisitionRunning.store (false, std::memory_order_release);
     activeConfigurationGeneration.store (0, std::memory_order_release);
     activeBinWidthHz.store (0.0f, std::memory_order_release);
-    stopThread (1000);
+
+    // A callback that begins after the release-store above returns before
+    // touching the FIFO. A nonzero count therefore identifies an older
+    // callback that may still own a raw pointer into the current FIFO.
+    if (activeAudioCallbacks.load (std::memory_order_acquire) != 0)
+    {
+        analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+                                 std::memory_order_release);
+        LOGE ("Spectrum Viewer retained acquisition state because an audio callback was still active");
+        return false;
+    }
+
+    if (! stopWorkerSafely (1000))
+    {
+        analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+                                 std::memory_order_release);
+        LOGE ("Spectrum Viewer retained acquisition state because its worker did not stop in time");
+        return false;
+    }
+
+    clearAcquisitionState();
+    return true;
+}
+
+bool SpectrumViewer::stopWorkerSafely (int timeoutMilliseconds) noexcept
+{
+    signalThreadShouldExit();
+    notify();
+    return waitForThreadToExit (timeoutMilliseconds);
+}
+
+void SpectrumViewer::clearAcquisitionState()
+{
     if (activeAnalysis != nullptr)
         asynchronousAnalysis.retire (activeAnalysis);
     {
@@ -888,7 +970,6 @@ bool SpectrumViewer::stopAcquisition()
     completedCapture.reset();
     spectrumReference.reset();
     analysisReadiness.store (SpectrumAnalysisReadiness::stopped, std::memory_order_release);
-    return true;
 }
 
 void SpectrumViewer::setAnalysisProfile (SpectrumAnalysisProfile profile)

@@ -181,6 +181,19 @@ TEST_F (SpectrumViewerLifecycleTests, StartPreparesWarmsAndBecomesLive)
     ASSERT_TRUE (waitUntil ([this] { return consumeWindowSize() == 20u; }));
 }
 
+TEST_F (SpectrumViewerLifecycleTests, StartFailsWithoutReplacingAnActiveWorker)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startThread (juce::Thread::Priority::normal));
+
+    EXPECT_FALSE (processor->startAcquisition());
+    EXPECT_EQ (processor->getAnalysisReadiness(),
+               SpectrumAnalysisReadiness::configurationFailed);
+
+    EXPECT_TRUE (processor->stopAcquisition());
+    EXPECT_EQ (processor->getAnalysisReadiness(), SpectrumAnalysisReadiness::stopped);
+}
+
 TEST_F (SpectrumViewerLifecycleTests, RapidProfileChangesCoalesceToNewestRequest)
 {
     auto secondBuildGate = std::make_shared<BuildGate>();
