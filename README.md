@@ -30,6 +30,12 @@ First, follow the instructions on [this page](https://open-ephys.github.io/gui-d
 
 This plugin depends on the `main` branch of the [OpenEphysFFTW](https://github.com/open-ephys-plugins/OpenEphysFFTW/tree/main) library, which must be built and installed first.
 
+Spectrum Viewer builds a pinned, static, single-threaded OpenBLAS subset for
+DPSS taper generation. CMake downloads it by default. For an offline build, set
+`SPECTRUM_VIEWER_OPENBLAS_SOURCE_DIR` to an existing OpenBLAS source checkout
+and set `SPECTRUM_VIEWER_FETCH_OPENBLAS=OFF`. OpenBLAS remains private to the
+plugin and is never called from the acquisition thread.
+
 Be sure to the `OpenEphysFFTW` and `spectrum-viewer` repositories into a directory at the same level as the `plugin-GUI`, e.g.:
  
 ```

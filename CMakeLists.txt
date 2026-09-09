@@ -22,6 +22,8 @@ option(BUILD_PROCESSOR_TESTS "Build Spectrum Viewer processor lifecycle tests" O
 option(BUILD_BENCHMARKS "Build Spectrum Viewer performance benchmarks" OFF)
 option(BENCHMARK_NATIVE_ARCH "Compile benchmarks for the build machine's CPU" OFF)
 
+include(cmake/ConfigureOpenBlas.cmake)
+
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 	set(LINUX 1)
@@ -111,7 +113,10 @@ endforeach()
 # Open Ephys common libraries
 include(link_open_ephys_lib.cmake)
 link_open_ephys_lib(${PLUGIN_NAME} OpenEphysFFTW)
-link_open_ephys_lib(${PLUGIN_NAME} OpenEphysNumerics)
+target_link_libraries(${PLUGIN_NAME} openblas)
+if(UNIX AND NOT APPLE)
+	target_link_options(${PLUGIN_NAME} PRIVATE "LINKER:--exclude-libs,ALL")
+endif()
 
 if(BUILD_TESTS)
 	enable_testing()

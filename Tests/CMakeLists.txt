@@ -16,25 +16,16 @@ if(NOT EXISTS "${OPENEPHYS_FFTW_SOURCE_DIR}/Source/OpenEphysFFTWBatch.cpp")
 	message(FATAL_ERROR "Tests require the matching OpenEphysFFTW batch source checkout")
 endif()
 
-set(OPENEPHYS_NUMERICS_SOURCE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysNumerics"
-    CACHE PATH "Path to the matching OpenEphysNumerics source checkout")
-if(NOT EXISTS "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source/OpenEphysNumerics.h")
-    message(FATAL_ERROR "Tests require the matching OpenEphysNumerics source checkout")
-endif()
-find_library(TEST_OPENEPHYS_NUMERICS_LIBRARY NAMES OpenEphysNumerics
-    HINTS "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build"
-          "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build/Release"
-          "${GUI_COMMONLIB_DIR}/Release/lib/x64")
-if(NOT TEST_OPENEPHYS_NUMERICS_LIBRARY)
-    message(FATAL_ERROR
-        "Tests require a built OpenEphysNumerics library; build that sibling repository first")
-endif()
-
 find_library(TEST_FFTW_DOUBLE_LIBRARY NAMES libfftw3-3 fftw3 fftw3-3
-	HINTS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/linux/lib
+	HINTS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/linux/lib
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/macos/lib
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/windows/lib/x64
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/linux/lib
 	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/lib)
-find_library(TEST_FFTW_FLOAT_LIBRARY NAMES libfftw3f-3 fftw3f fftw3f-3)
+find_library(TEST_FFTW_FLOAT_LIBRARY NAMES libfftw3f-3 fftw3f fftw3f-3
+	HINTS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/linux/lib
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/macos/lib
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/windows/lib/x64)
 if(UNIX AND NOT TEST_FFTW_FLOAT_LIBRARY)
 	find_file(TEST_FFTW_FLOAT_LIBRARY NAMES libfftw3f.so.3
 		PATHS /usr/lib /usr/lib64 /lib /lib64)
@@ -47,6 +38,7 @@ add_executable(
 	spectrum_viewer_tests
 	${OPENEPHYS_FFTW_SOURCE_DIR}/Source/OpenEphysFFTWBatch.cpp
 	../Source/DpssTapers.cpp
+	../Source/Numerics/SelectedTridiagonalEigensolver.cpp
 	../Source/AsyncSpectrumAnalysis.cpp
 	../Source/MultitaperPeriodogram.cpp
 	../Source/ReferencePeriodogram.cpp
@@ -61,6 +53,7 @@ add_executable(
 	JuceCore.cpp
 	OpenEphysFFTWBatchTests.cpp
 	DpssTapersTests.cpp
+	SelectedTridiagonalEigensolverTests.cpp
 	MultitaperPeriodogramTests.cpp
 	ReferencePeriodogramTests.cpp
 	SampleBlockFifoTests.cpp
@@ -84,7 +77,9 @@ target_include_directories(
 	PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}/../Source
 		${OPENEPHYS_FFTW_SOURCE_DIR}/Source
-		${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source
+		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/linux/include
+		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/macos/include
+		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/windows/include
 		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/linux/include
 		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/include
 		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/windows/include
@@ -96,7 +91,7 @@ target_link_libraries(spectrum_viewer_tests PRIVATE
 	gtest_main
 	${TEST_FFTW_DOUBLE_LIBRARY}
 	${TEST_FFTW_FLOAT_LIBRARY}
-	${TEST_OPENEPHYS_NUMERICS_LIBRARY}
+	openblas
 	${CMAKE_DL_LIBS})
 
 if(LINUX)

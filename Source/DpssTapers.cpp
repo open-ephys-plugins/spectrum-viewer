@@ -13,9 +13,9 @@
 */
 
 #include "DpssTapers.h"
+#include "Numerics/SelectedTridiagonalEigensolver.h"
 
 #include <OpenEphysFFTWBatch.h>
-#include <OpenEphysNumerics.h>
 
 #include <algorithm>
 #include <cmath>
@@ -187,7 +187,7 @@ DpssTaperBank generateDpssTapers (std::size_t sampleCount,
                                   * (static_cast<double> (sampleCount) - oneBased) / 2.0;
         }
 
-        auto eigenpairs = OpenEphys::Numerics::findLargestSymmetricTridiagonalEigenpairs (
+        auto eigenpairs = numerics::findLargestSymmetricTridiagonalEigenpairs (
             diagonal, offDiagonal, taperCount);
         if (! eigenpairs.succeeded())
         {

@@ -59,7 +59,10 @@ else()
 endif()
 
 find_path(FFTW_BENCH_INCLUDE_DIR fftw3.h
-	HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/${CMAKE_SYSTEM_NAME}/include
+	HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/generated/linux/include
+	      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/generated/macos/include
+	      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/generated/windows/include
+	      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/${CMAKE_SYSTEM_NAME}/include
 	      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/linux/include
 	      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/macos/include
 	      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/windows/include)
@@ -78,9 +81,15 @@ if(FFTW_BENCH_SYSTEM_DOUBLE_LIBRARY AND FFTW_BENCH_SYSTEM_FLOAT_LIBRARY)
 	set(FFTW_BENCH_FLOAT_LIBRARY ${FFTW_BENCH_SYSTEM_FLOAT_LIBRARY})
 else()
 	find_library(FFTW_BENCH_DOUBLE_LIBRARY NAMES libfftw3-3 fftw3 fftw3-3
-		HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/linux/lib
+		HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/generated/linux/lib
+		      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/generated/macos/lib
+		      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/generated/windows/lib/x64
+		      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/linux/lib
 		      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/macos/lib)
-	find_library(FFTW_BENCH_FLOAT_LIBRARY NAMES libfftw3f-3 fftw3f fftw3f-3)
+	find_library(FFTW_BENCH_FLOAT_LIBRARY NAMES libfftw3f-3 fftw3f fftw3f-3
+		HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/generated/linux/lib
+		      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/generated/macos/lib
+		      ${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW/libs/generated/windows/lib/x64)
 endif()
 
 if(FFTW_BENCH_INCLUDE_DIR AND FFTW_BENCH_DOUBLE_LIBRARY AND FFTW_BENCH_FLOAT_LIBRARY)
@@ -100,27 +109,13 @@ if(FFTW_BENCH_INCLUDE_DIR AND FFTW_BENCH_DOUBLE_LIBRARY AND FFTW_BENCH_FLOAT_LIB
 		${FFTW_BENCH_DOUBLE_LIBRARY}
 		${FFTW_BENCH_FLOAT_LIBRARY})
 
-	set(OPENEPHYS_NUMERICS_SOURCE_DIR
-		"${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysNumerics"
-		CACHE PATH "Path to the matching OpenEphysNumerics source checkout")
-	find_library(BENCH_OPENEPHYS_NUMERICS_LIBRARY NAMES OpenEphysNumerics
-		HINTS "${GUI_COMMONLIB_DIR}/Release/lib/x64"
-		      "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build"
-		      "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Build/Release")
-	if(EXISTS "${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source/OpenEphysNumerics.h"
-	   AND BENCH_OPENEPHYS_NUMERICS_LIBRARY)
-		target_sources(spectrum_viewer_benchmarks PRIVATE
-			../Source/DpssTapers.cpp
-			../Source/MultitaperPeriodogram.cpp
-			../Source/SpectrumAnalysis.cpp
-			MultitaperPeriodogramBenchmarks.cpp)
-		target_include_directories(spectrum_viewer_benchmarks PRIVATE
-			${OPENEPHYS_NUMERICS_SOURCE_DIR}/Source)
-		target_link_libraries(spectrum_viewer_benchmarks PRIVATE
-			${BENCH_OPENEPHYS_NUMERICS_LIBRARY})
-	else()
-		message(STATUS "Skipping multitaper benchmark: OpenEphysNumerics is required")
-	endif()
+	target_sources(spectrum_viewer_benchmarks PRIVATE
+		../Source/DpssTapers.cpp
+		../Source/MultitaperPeriodogram.cpp
+		../Source/Numerics/SelectedTridiagonalEigensolver.cpp
+		../Source/SpectrumAnalysis.cpp
+		MultitaperPeriodogramBenchmarks.cpp)
+	target_link_libraries(spectrum_viewer_benchmarks PRIVATE openblas)
 	if(FFTW_BENCH_DOUBLE_THREADS_LIBRARY AND FFTW_BENCH_FLOAT_THREADS_LIBRARY)
 		target_compile_definitions(spectrum_viewer_benchmarks PRIVATE SPECTRUM_VIEWER_FFTW_THREADS=1)
 		target_link_libraries(spectrum_viewer_benchmarks PRIVATE
