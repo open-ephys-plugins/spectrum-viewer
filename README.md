@@ -36,7 +36,11 @@ DPSS taper generation. CMake downloads it by default. For an offline build, set
 and set `SPECTRUM_VIEWER_FETCH_OPENBLAS=OFF`. OpenBLAS remains private to the
 plugin and is never called from the acquisition thread.
 
-Be sure to the `OpenEphysFFTW` and `spectrum-viewer` repositories into a directory at the same level as the `plugin-GUI`, e.g.:
+Contributors should start with the [developer guide](DEVELOPMENT.md), which maps
+the runtime data flow, source files, thread boundaries, and real-time invariants.
+
+Clone the `OpenEphysFFTW` and `spectrum-viewer` repositories into a directory at
+the same level as `plugin-GUI`, e.g.:
  
 ```
 Code

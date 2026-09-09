@@ -27,9 +27,12 @@ and then resumes normal processing. This intentionally small interface is a
 candidate for reuse by other real-time Open Ephys plugins.
 
 `SampleBlockFifo` wraps `juce::AbstractFifo` with preallocated planar block
-storage. Its tests cover Spectrum Viewer policy: complete-block overflow,
-metadata and channel layout, wraparound, rejection, and quiescent reset. JUCE's
-own concurrent tests cover the FIFO primitive's SPSC publication semantics.
+storage sized for the plugin's maximum channel count. Each block records its
+actual stream route, channel count, sample position, and configuration
+generation. Its tests cover Spectrum Viewer policy: complete-block overflow,
+variable-channel metadata and layout, wraparound, rejection, and quiescent
+reset. JUCE's own concurrent tests cover the FIFO primitive's SPSC publication
+semantics.
 
 `SpectrumFrameFifo` publishes all selected channels as one planar display frame.
 Its tests cover coherent metadata and channel data, overflow, slot wraparound,
