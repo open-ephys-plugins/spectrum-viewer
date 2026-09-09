@@ -279,8 +279,12 @@ public:
     /** Returns input samples discarded as part of full-queue block drops. */
     std::uint64_t getDroppedInputSampleCount() const noexcept { return droppedInputSamples.load (std::memory_order_relaxed); }
 
-    /** Returns input blocks rejected because their shape exceeded the fixed configuration. */
-    std::uint64_t getRejectedInputBlockCount() const noexcept { return rejectedInputBlocks.load (std::memory_order_relaxed); }
+    /** Returns input blocks rejected because their shape or channel mapping was invalid. */
+    std::uint64_t getRejectedInputBlockCount() const noexcept
+    {
+        return rejectedInputBlocks.load (std::memory_order_relaxed)
+               + invalidMappedInputBlocks.load (std::memory_order_relaxed);
+    }
 
     /** Returns sample-index gaps or overlaps observed by the worker. */
     std::uint64_t getInputDiscontinuityCount() const noexcept { return inputDiscontinuities.load (std::memory_order_relaxed); }
@@ -397,8 +401,10 @@ private:
     mutable std::mutex displayAnalysisMutex;
     std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> displayAnalysis;
     std::array<int, MAX_CHANS> acquisitionChannels {};
+    std::array<int, MAX_CHANS> acquisitionGlobalChannels {};
     std::array<std::string, MAX_CHANS> acquisitionChannelUnits {};
     std::size_t acquisitionChannelCount = 0;
+    uint16 acquisitionStream = 0;
     std::size_t acquisitionMaximumInputBlockSamples = 0;
     double acquisitionSampleRateHz = 0.0;
     std::atomic<std::uint64_t> activeConfigurationGeneration { 0 };
@@ -424,6 +430,7 @@ private:
     std::atomic<std::uint64_t> droppedInputBlocks { 0 };
     std::atomic<std::uint64_t> droppedInputSamples { 0 };
     std::atomic<std::uint64_t> rejectedInputBlocks { 0 };
+    std::atomic<std::uint64_t> invalidMappedInputBlocks { 0 };
     std::atomic<std::uint64_t> inputDiscontinuities { 0 };
     std::atomic<std::uint64_t> failedSpectrumWindows { 0 };
     std::atomic<std::uint64_t> shedSpectrumWindows { 0 };

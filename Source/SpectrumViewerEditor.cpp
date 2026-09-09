@@ -252,7 +252,11 @@ void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
     }
     else if (cb == frequencyRange.get())
     {
-        Range<int> range = freqRanges[cb->getSelectedItemIndex()];
+        const auto selectedIndex = cb->getSelectedItemIndex();
+        if (! isPositiveAndBelow (selectedIndex, freqRanges.size()))
+            return;
+
+        Range<int> range = freqRanges[selectedIndex];
 
         // Send frequency range update to processor
         auto processor = static_cast<SpectrumViewer*> (getProcessor());

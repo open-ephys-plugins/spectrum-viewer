@@ -154,13 +154,20 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
 
         LOGC ("Setting active stream to: ", streamKey);
 
-        activeStream = getDataStream (streamKey)->getStreamId();
+        auto* stream = getDataStream (streamKey);
+        if (stream == nullptr)
+        {
+            LOGD ("Spectrum Viewer ignored unavailable stream: ", streamKey);
+            channels.clear();
+            return;
+        }
 
-        tfrParams.Fs = getDataStream (activeStream)->getSampleRate();
+        activeStream = stream->getStreamId();
+        tfrParams.Fs = stream->getSampleRate();
         tfrParams.freqStep = 1.0 / float (tfrParams.winLen * tfrParams.interpRatio);
         tfrParams.nFreqs = int ((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
-        SelectedChannelsParameter* p = (SelectedChannelsParameter*) getDataStream (activeStream)->getParameter ("Channels");
+        auto* p = dynamic_cast<SelectedChannelsParameter*> (stream->getParameter ("Channels"));
         if (p != nullptr)
         {
             channels = p->getArrayValue();
@@ -172,7 +179,9 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
     {
         channels.clear();
 
-        SelectedChannelsParameter* p = (SelectedChannelsParameter*) param;
+        auto* p = dynamic_cast<SelectedChannelsParameter*> (param);
+        if (p == nullptr)
+            return;
 
         channels = p->getArrayValue();
 
@@ -465,7 +474,8 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
     if (fifo == nullptr || acquisitionChannelCount == 0)
         return;
 
-    const auto incomingSampleCount = static_cast<std::size_t> (getNumSamplesInBlock (activeStream));
+    const auto incomingSampleCount = static_cast<std::size_t> (
+        getNumSamplesInBlock (acquisitionStream));
     if (incomingSampleCount == 0)
         return;
 
@@ -481,9 +491,12 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
 
     for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
     {
-        const auto globalChannel = getGlobalChannelIndex (activeStream, acquisitionChannels[channel]);
-        if (globalChannel < 0)
+        const auto globalChannel = acquisitionGlobalChannels[channel];
+        if (globalChannel < 0 || globalChannel >= continuousBuffer.getNumChannels())
+        {
+            invalidMappedInputBlocks.fetch_add (1, std::memory_order_relaxed);
             return;
+        }
 
         channelData[channel] = continuousBuffer.getReadPointer (globalChannel);
     }
@@ -491,7 +504,7 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
     if (! fifo->tryPush (channelData.data(),
                          acquisitionChannelCount,
                          incomingSampleCount,
-                         getFirstSampleNumberForBlock (activeStream),
+                         getFirstSampleNumberForBlock (acquisitionStream),
                          generation))
     {
         droppedInputBlocks.store (fifo->getDroppedBlockCount(), std::memory_order_relaxed);
@@ -783,12 +796,17 @@ void SpectrumViewer::updateSettings()
 {
     if (dataStreams.size() > 0)
     {
-        parameterValueChanged (getDataStream (activeStream)->getParameter ("Channels"));
+        if (auto* stream = getDataStream (activeStream))
+        {
+            if (auto* parameter = stream->getParameter ("Channels"))
+            {
+                parameterValueChanged (parameter);
+                return;
+            }
+        }
     }
-    else
-    {
-        channels.clear();
-    }
+
+    channels.clear();
 }
 
 Array<int> SpectrumViewer::getActiveChans()
@@ -798,7 +816,14 @@ Array<int> SpectrumViewer::getActiveChans()
 
 const String SpectrumViewer::getChanName (int localIdx)
 {
-    return getDataStream (activeStream)->getContinuousChannels()[localIdx]->getName();
+    auto* stream = getDataStream (activeStream);
+    if (stream == nullptr
+        || ! isPositiveAndBelow (localIdx, stream->getContinuousChannels().size()))
+        return "Channel " + String (localIdx + 1);
+
+    auto* channel = stream->getContinuousChannels()[localIdx];
+    return channel != nullptr ? channel->getName()
+                              : "Channel " + String (localIdx + 1);
 };
 
 bool SpectrumViewer::startAcquisition()
@@ -817,9 +842,19 @@ bool SpectrumViewer::startAcquisition()
         if (inputFifo != nullptr || activeAnalysis != nullptr)
             clearAcquisitionState();
 
+        auto* stream = getDataStream (activeStream);
+        if (stream == nullptr)
+        {
+            analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+                                     std::memory_order_release);
+            LOGE ("Unable to configure Spectrum Viewer without an active stream");
+            return false;
+        }
+
+        const auto& streamChannels = stream->getContinuousChannels();
         acquisitionChannelCount = static_cast<std::size_t> (std::min (channels.size(), MAX_CHANS));
         const auto maximumInputBlockSamples = getBlockSize();
-        const auto sampleRate = static_cast<double> (tfrParams.Fs);
+        const auto sampleRate = static_cast<double> (stream->getSampleRate());
         if (acquisitionChannelCount == 0 || maximumInputBlockSamples <= 0
             || ! std::isfinite (sampleRate) || sampleRate <= 0.0)
         {
@@ -830,11 +865,31 @@ bool SpectrumViewer::startAcquisition()
 
         for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
         {
-            acquisitionChannels[channel] = channels[static_cast<int> (channel)];
-            acquisitionChannelUnits[channel] = getDataStream (activeStream)
-                                                   ->getContinuousChannels()[acquisitionChannels[channel]]
-                                                   ->getUnits()
-                                                   .toStdString();
+            const auto localChannel = channels[static_cast<int> (channel)];
+            if (! isPositiveAndBelow (localChannel, streamChannels.size())
+                || streamChannels[localChannel] == nullptr)
+            {
+                acquisitionChannelCount = 0;
+                analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+                                         std::memory_order_release);
+                LOGE ("Unable to configure Spectrum Viewer with invalid channel index ",
+                      localChannel);
+                return false;
+            }
+
+            const auto globalChannel = getGlobalChannelIndex (activeStream, localChannel);
+            if (globalChannel < 0)
+            {
+                acquisitionChannelCount = 0;
+                analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+                                         std::memory_order_release);
+                LOGE ("Unable to map Spectrum Viewer channel ", localChannel);
+                return false;
+            }
+
+            acquisitionChannels[channel] = localChannel;
+            acquisitionGlobalChannels[channel] = globalChannel;
+            acquisitionChannelUnits[channel] = streamChannels[localChannel]->getUnits().toStdString();
         }
 
         try
@@ -856,11 +911,13 @@ bool SpectrumViewer::startAcquisition()
 
         acquisitionMaximumInputBlockSamples = static_cast<std::size_t> (maximumInputBlockSamples);
         acquisitionSampleRateHz = sampleRate;
+        acquisitionStream = activeStream;
         activeConfigurationGeneration.store (0, std::memory_order_release);
         activeBinWidthHz.store (0.0f, std::memory_order_release);
         droppedInputBlocks.store (0, std::memory_order_relaxed);
         droppedInputSamples.store (0, std::memory_order_relaxed);
         rejectedInputBlocks.store (0, std::memory_order_relaxed);
+        invalidMappedInputBlocks.store (0, std::memory_order_relaxed);
         inputDiscontinuities.store (0, std::memory_order_relaxed);
         failedSpectrumWindows.store (0, std::memory_order_relaxed);
         shedSpectrumWindows.store (0, std::memory_order_relaxed);
@@ -950,6 +1007,7 @@ void SpectrumViewer::clearAcquisitionState()
     activeAnalysis.reset();
     inputFifo.reset();
     acquisitionChannelCount = 0;
+    acquisitionStream = 0;
     acquisitionMaximumInputBlockSamples = 0;
     acquisitionSampleRateHz = 0.0;
     configurationPending.store (false, std::memory_order_release);

@@ -72,10 +72,11 @@ protected:
     static constexpr float sampleRate = 80.0f;
     static constexpr int blockSize = 5;
 
-    void createProcessor (spectrumviewer::AsyncSpectrumAnalysis::Builder builder = {})
+    void createProcessor (spectrumviewer::AsyncSpectrumAnalysis::Builder builder = {},
+                          int sourceChannelCount = 1)
     {
         tester = std::make_unique<ProcessorTester> (
-            TestSourceNodeBuilder (FakeSourceNodeParams { 1, sampleRate, 1.0f }));
+            TestSourceNodeBuilder (FakeSourceNodeParams { sourceChannelCount, sampleRate, 1.0f }));
         processor = tester->createProcessor<SpectrumViewer> (
             Plugin::Processor::SINK, std::move (builder));
         processor->setRateAndBufferSizeDetails (sampleRate, blockSize);
@@ -179,6 +180,29 @@ TEST_F (SpectrumViewerLifecycleTests, StartPreparesWarmsAndBecomesLive)
         return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
     }));
     ASSERT_TRUE (waitUntil ([this] { return consumeWindowSize() == 20u; }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, InvalidChannelNamesUseSafeFallbacks)
+{
+    createProcessor();
+
+    EXPECT_EQ (processor->getChanName (1), "Channel 2");
+    EXPECT_EQ (processor->getChanName (100), "Channel 101");
+}
+
+TEST_F (SpectrumViewerLifecycleTests, IncompleteHostBufferRejectsWholeInputBlock)
+{
+    createProcessor ({}, 2);
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+
+    AudioBuffer<float> incompleteBuffer (1, blockSize);
+    incompleteBuffer.clear();
+    tester->processBlock (processor, incompleteBuffer);
+
+    EXPECT_EQ (processor->getRejectedInputBlockCount(), 1u);
+    EXPECT_EQ (processor->getDroppedInputBlockCount(), 0u);
+    EXPECT_EQ (processor->getWarmupSampleCount(), 0u);
 }
 
 TEST_F (SpectrumViewerLifecycleTests, StartFailsWithoutReplacingAnActiveWorker)
