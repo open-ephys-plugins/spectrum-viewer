@@ -576,11 +576,10 @@ void CanvasPlot::beginSpectrumFrame (std::uint64_t configurationGeneration,
                                      std::size_t channelCount,
                                      double hopDurationSeconds,
                                      std::uint16_t sourceStreamId,
-                                     const int* sourceChannelIndices)
+    const int* sourceChannelIndices)
 {
     frameChannelCount = std::min (channelCount, currPower.size());
-    if (configurationGeneration != lastConfigurationGeneration
-        && sourceChannelIndices != nullptr)
+    if (sourceChannelIndices != nullptr)
     {
         activeChannels.clear();
         for (std::size_t channel = 0; channel < frameChannelCount; ++channel)

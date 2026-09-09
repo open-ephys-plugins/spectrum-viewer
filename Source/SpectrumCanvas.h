@@ -185,6 +185,8 @@ public:
     {
         return pendingRangeElapsedSeconds;
     }
+    Array<int> getActiveChannelsForTesting() const { return activeChannels; }
+    std::uint16_t getActiveStreamForTesting() const noexcept { return activeStreamId; }
 #endif
 
     int legendWidth = 150;

@@ -264,6 +264,23 @@ TEST_F (SpectrumCanvasTests, SpectralSequenceGapsAdvanceAutoRangeUsingSignalTime
     EXPECT_DOUBLE_EQ (plot->getPendingRangeElapsedSecondsForTesting(), 0.125);
 }
 
+TEST_F (SpectrumCanvasTests, FrameMetadataRefreshesChannelLegend)
+{
+    auto* plot = canvas->getPlotPtr();
+    const int initialChannels[] { 0, 2 };
+    plot->beginSpectrumFrame (7, 10, 2, 0.125, 11, initialChannels);
+    EXPECT_EQ (plot->getActiveChannelsForTesting(), Array<int> ({ 0, 2 }));
+    EXPECT_EQ (plot->getActiveStreamForTesting(), 11u);
+
+    // The editor can observe a new requested selection while the old runtime
+    // remains live. Each frame's immutable route must restore the legend that
+    // describes the data actually being drawn, even within one generation.
+    const int currentFrameChannels[] { 1, 3 };
+    plot->beginSpectrumFrame (7, 11, 2, 0.125, 12, currentFrameChannels);
+    EXPECT_EQ (plot->getActiveChannelsForTesting(), Array<int> ({ 1, 3 }));
+    EXPECT_EQ (plot->getActiveStreamForTesting(), 12u);
+}
+
 TEST_F (SpectrumCanvasTests, DeltaComparisonUsesSymmetricRangeAndReferenceLabel)
 {
     auto* plot = canvas->getPlotPtr();
