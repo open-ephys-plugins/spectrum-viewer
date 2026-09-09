@@ -49,12 +49,30 @@ if(SPECTRUM_VIEWER_OPENBLAS_SOURCE_DIR)
         "${CMAKE_CURRENT_BINARY_DIR}/openblas"
         EXCLUDE_FROM_ALL)
 elseif(SPECTRUM_VIEWER_FETCH_OPENBLAS)
-    FetchContent_Declare(
-        spectrum_viewer_openblas
+    set(_spectrum_viewer_openblas_content
         GIT_REPOSITORY https://github.com/OpenMathLib/OpenBLAS.git
         GIT_TAG e0166008be8e466242aa76b2ff75ce3f0fbf574a
         GIT_SHALLOW FALSE)
-    FetchContent_MakeAvailable(spectrum_viewer_openblas)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+        FetchContent_Declare(
+            spectrum_viewer_openblas
+            ${_spectrum_viewer_openblas_content}
+            EXCLUDE_FROM_ALL)
+        FetchContent_MakeAvailable(spectrum_viewer_openblas)
+    else()
+        FetchContent_Declare(
+            spectrum_viewer_openblas
+            ${_spectrum_viewer_openblas_content})
+        FetchContent_GetProperties(spectrum_viewer_openblas)
+        if(NOT spectrum_viewer_openblas_POPULATED)
+            FetchContent_Populate(spectrum_viewer_openblas)
+            add_subdirectory(
+                "${spectrum_viewer_openblas_SOURCE_DIR}"
+                "${spectrum_viewer_openblas_BINARY_DIR}"
+                EXCLUDE_FROM_ALL)
+        endif()
+    endif()
+    unset(_spectrum_viewer_openblas_content)
 else()
     message(FATAL_ERROR
         "Set SPECTRUM_VIEWER_OPENBLAS_SOURCE_DIR or enable "
