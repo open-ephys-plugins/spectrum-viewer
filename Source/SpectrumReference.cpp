@@ -57,7 +57,8 @@ CapturedSpectrum::CapturedSpectrum (
     std::vector<std::string> sourceChannelUnits,
     std::vector<float> planarMeanPsd,
     std::vector<float> planarSampleVariance,
-    SpectrumCaptureQuality quality)
+    SpectrumCaptureQuality quality,
+    std::uint16_t sourceStreamId)
     : identifier (captureId),
       capturedAtMilliseconds (capturedAtUnixMilliseconds),
       frameDescriptor (descriptor),
@@ -65,7 +66,8 @@ CapturedSpectrum::CapturedSpectrum (
       channelUnits (std::move (sourceChannelUnits)),
       meanPsd (std::move (planarMeanPsd)),
       sampleVariance (std::move (planarSampleVariance)),
-      captureQuality (quality)
+      captureQuality (quality),
+      streamId (sourceStreamId)
 {
     const auto bins = descriptor.windowSampleCount / 2 + 1;
     const auto valueCount = checkedValueCount (channelIndices.size(), bins);
@@ -90,12 +92,14 @@ CapturedSpectrum::CapturedSpectrum (
 bool CapturedSpectrum::isCompatibleWith (
     const SpectrumFrameDescriptor& candidate,
     const std::vector<int>& candidateChannelIndices,
-    const std::vector<std::string>& candidateChannelUnits) const noexcept
+    const std::vector<std::string>& candidateChannelUnits,
+    std::uint16_t candidateStreamId) const noexcept
 {
     // Hop and configuration generation describe scheduling, not the spectral
     // estimator. Capture windows may therefore be compared with overlapping
     // live Fine windows made by the same estimator.
-    return candidate.sampleRateHz == frameDescriptor.sampleRateHz
+    return candidateStreamId == streamId
+           && candidate.sampleRateHz == frameDescriptor.sampleRateHz
            && candidate.binWidthHz == frameDescriptor.binWidthHz
            && candidate.timeHalfBandwidth == frameDescriptor.timeHalfBandwidth
            && candidate.windowSampleCount == frameDescriptor.windowSampleCount

@@ -41,7 +41,9 @@ public:
                               std::size_t outputQueueCapacity,
                               std::vector<std::string> sourceChannelUnits = {},
                               std::uint64_t captureId = 0,
-                              std::size_t captureTargetWindowCount = 0);
+                              std::size_t captureTargetWindowCount = 0,
+                              std::uint16_t sourceStreamId = 0,
+                              std::vector<int> sourceGlobalChannelIndices = {});
 
     SpectrumAnalysisPipeline& getPipeline() noexcept { return pipeline; }
     SpectrumFrameFifo& getFrameFifo() noexcept { return frameFifo; }
@@ -52,6 +54,11 @@ public:
     SpectrumCaptureAccumulator* getCaptureAccumulator() noexcept { return captureAccumulator.get(); }
     bool isCaptureRuntime() const noexcept { return captureAccumulator != nullptr; }
     std::uint64_t getCaptureId() const noexcept { return captureIdentifier; }
+    std::uint16_t getSourceStreamId() const noexcept { return inputStreamId; }
+    const std::vector<int>& getSourceGlobalChannelIndices() const noexcept
+    {
+        return globalChannelIndices;
+    }
 
 private:
     std::shared_ptr<const SpectrumAnalysisConfiguration> configuration;
@@ -62,6 +69,8 @@ private:
     SpectrumFrameFifo frameFifo;
     std::unique_ptr<SpectrumCaptureAccumulator> captureAccumulator;
     std::uint64_t captureIdentifier = 0;
+    std::uint16_t inputStreamId = 0;
+    std::vector<int> globalChannelIndices;
 };
 
 struct SpectrumAnalysisPreparationRequest
@@ -69,6 +78,8 @@ struct SpectrumAnalysisPreparationRequest
     SpectrumAnalysisParameters parameters;
     std::vector<int> sourceChannelIndices;
     std::vector<std::string> sourceChannelUnits;
+    std::uint16_t sourceStreamId = 0;
+    std::vector<int> sourceGlobalChannelIndices;
     std::size_t outputQueueCapacity = 0;
     std::uint64_t captureId = 0;
     std::size_t captureTargetWindowCount = 0;

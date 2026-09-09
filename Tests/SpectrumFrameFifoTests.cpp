@@ -48,13 +48,14 @@ TEST (SpectrumFrameFifoTests, RejectsInvalidConfiguration)
 
 TEST (SpectrumFrameFifoTests, PublishesACompletePlanarFrame)
 {
-    SpectrumFrameFifo fifo (2, 3, 2, makeDescriptor (3, 7), { 4, 9 });
+    SpectrumFrameFifo fifo (2, 3, 2, makeDescriptor (3, 7), { 4, 9 }, {}, 12);
     const std::array<float, 6> powers { 1.0f, 2.0f, 3.0f, 11.0f, 12.0f, 13.0f };
     ASSERT_TRUE (fifo.tryPush (powers.data(), 2, 3, 42, 9));
 
     ASSERT_TRUE (fifo.tryPopLatest ([&] (const auto& frame)
                                     {
         EXPECT_EQ (frame.firstSample, 42);
+        EXPECT_EQ (frame.sourceStreamId, 12);
         EXPECT_EQ (frame.configurationGeneration, 7u);
         EXPECT_EQ (frame.sequence, 9u);
         EXPECT_EQ (frame.numChannels, 2u);

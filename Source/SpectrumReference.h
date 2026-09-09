@@ -61,7 +61,8 @@ public:
                       std::vector<std::string> sourceChannelUnits,
                       std::vector<float> planarMeanPsd,
                       std::vector<float> planarSampleVariance,
-                      SpectrumCaptureQuality quality);
+                      SpectrumCaptureQuality quality,
+                      std::uint16_t sourceStreamId = 0);
 
     std::uint64_t getCaptureId() const noexcept { return identifier; }
     std::int64_t getCapturedAtUnixMilliseconds() const noexcept { return capturedAtMilliseconds; }
@@ -73,10 +74,12 @@ public:
     std::size_t getChannelCount() const noexcept { return channelIndices.size(); }
     std::size_t getBinCount() const noexcept { return frameDescriptor.windowSampleCount / 2 + 1; }
     const SpectrumCaptureQuality& getQuality() const noexcept { return captureQuality; }
+    std::uint16_t getSourceStreamId() const noexcept { return streamId; }
 
     bool isCompatibleWith (const SpectrumFrameDescriptor& candidateDescriptor,
                            const std::vector<int>& candidateChannelIndices,
-                           const std::vector<std::string>& candidateChannelUnits) const noexcept;
+                           const std::vector<std::string>& candidateChannelUnits,
+                           std::uint16_t candidateStreamId = 0) const noexcept;
 
 private:
     std::uint64_t identifier;
@@ -87,6 +90,7 @@ private:
     std::vector<float> meanPsd;
     std::vector<float> sampleVariance;
     SpectrumCaptureQuality captureQuality;
+    std::uint16_t streamId = 0;
 };
 } // namespace spectrumviewer
 

@@ -235,7 +235,9 @@ void SpectrumCanvas::refresh()
             frame.sequence,
             frame.numChannels,
             static_cast<double> (frame.descriptor.hopSampleCount)
-                / frame.descriptor.sampleRateHz);
+                / frame.descriptor.sampleRateHz,
+            frame.sourceStreamId,
+            frame.getSourceChannelIndices());
         for (std::size_t channel = 0; channel < frame.numChannels; ++channel)
         {
             if (displayType == POWER_SPECTRUM)
@@ -572,9 +574,19 @@ bool CanvasPlot::hasAutomaticAmplitudeRange() const noexcept
 void CanvasPlot::beginSpectrumFrame (std::uint64_t configurationGeneration,
                                      std::uint64_t sequence,
                                      std::size_t channelCount,
-                                     double hopDurationSeconds)
+                                     double hopDurationSeconds,
+                                     std::uint16_t sourceStreamId,
+                                     const int* sourceChannelIndices)
 {
     frameChannelCount = std::min (channelCount, currPower.size());
+    if (configurationGeneration != lastConfigurationGeneration
+        && sourceChannelIndices != nullptr)
+    {
+        activeChannels.clear();
+        for (std::size_t channel = 0; channel < frameChannelCount; ++channel)
+            activeChannels.add (sourceChannelIndices[channel]);
+        activeStreamId = sourceStreamId;
+    }
     auto elapsedFrames = std::uint64_t { 1 };
     if (hasFrameTiming && configurationGeneration == lastConfigurationGeneration)
         elapsedFrames = sequence > lastFrameSequence
@@ -658,7 +670,10 @@ void CanvasPlot::mouseMove (const MouseEvent& event)
     const auto unit = channelUnits[0].isEmpty() ? String ("unit") : channelUnits[0];
     const auto channel = activeChannels.isEmpty()
                              ? String ("Channel")
-                             : processor->getChanName (activeChannels[0]);
+                             : hasFrameTiming
+                                   ? processor->getChanName (activeStreamId,
+                                                             activeChannels[0])
+                                   : processor->getChanName (activeChannels[0]);
     if (comparisonStatus.hasComparisonData()
         && currComparison[0].size() > index && power > 0.0f
         && std::isfinite (currComparison[0][index]))
@@ -754,7 +769,10 @@ void CanvasPlot::paint (Graphics& g)
             g.fillRect (left, top + 10, 30, 30);
 
             g.setColour (findColour (ThemeColours::controlPanelText));
-            String chan = processor->getChanName (activeChannels[i]);
+            String chan = hasFrameTiming
+                              ? processor->getChanName (activeStreamId,
+                                                        activeChannels[i])
+                              : processor->getChanName (activeChannels[i]);
             if (! channelUnits[static_cast<std::size_t> (i)].isEmpty())
                 chan += " [" + channelUnits[static_cast<std::size_t> (i)] + "]";
             g.drawFittedText (chan, left + 45, top + 10, (legendWidth - 20) / 2, 30, Justification::centredLeft, 1);

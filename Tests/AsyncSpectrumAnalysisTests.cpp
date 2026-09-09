@@ -38,6 +38,8 @@ SpectrumAnalysisPreparationRequest makeRequest (std::uint64_t generation)
     request.parameters.taperCount = 3;
     request.parameters.generation = generation;
     request.sourceChannelIndices = { 7 };
+    request.sourceStreamId = 2;
+    request.sourceGlobalChannelIndices = { 11 };
     request.outputQueueCapacity = 3;
     return request;
 }
@@ -64,7 +66,9 @@ std::shared_ptr<PreparedSpectrumAnalysis> build (
         request.outputQueueCapacity,
         std::move (request.sourceChannelUnits),
         request.captureId,
-        request.captureTargetWindowCount);
+        request.captureTargetWindowCount,
+        request.sourceStreamId,
+        std::move (request.sourceGlobalChannelIndices));
 }
 
 TEST (AsyncSpectrumAnalysisTests, BuildsACompleteRuntimeOffThread)
@@ -78,6 +82,10 @@ TEST (AsyncSpectrumAnalysisTests, BuildsACompleteRuntimeOffThread)
     EXPECT_EQ (result.generation, 4u);
     EXPECT_EQ (result.analysis->getConfiguration().getParameters().generation, 4u);
     EXPECT_EQ (result.analysis->getFrameFifo().getCapacity(), 3u);
+    EXPECT_EQ (result.analysis->getSourceStreamId(), 2);
+    EXPECT_EQ (result.analysis->getSourceGlobalChannelIndices(),
+               (std::vector<int> { 11 }));
+    EXPECT_EQ (result.analysis->getFrameFifo().getSourceStreamId(), 2);
 }
 
 TEST (AsyncSpectrumAnalysisTests, BuildsCaptureAccumulatorAsPartOfRuntime)

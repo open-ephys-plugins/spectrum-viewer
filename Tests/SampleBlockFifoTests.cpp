@@ -116,16 +116,30 @@ TEST (SampleBlockFifoTests, RejectsInvalidBlocksWithoutPublishingThem)
 {
     SampleBlockFifo fifo (2, 2, 2);
     const std::array<float, 3> oversized { 1.0f, 2.0f, 3.0f };
-    const float* oneChannel[] { oversized.data() };
     const float* nullChannel[] { oversized.data(), nullptr };
 
     EXPECT_FALSE (fifo.tryPush (nullptr, 2, 1, 0));
-    EXPECT_FALSE (fifo.tryPush (oneChannel, 1, 1, 0));
+    EXPECT_FALSE (fifo.tryPush (nullptr, 0, 1, 0));
     EXPECT_FALSE (fifo.tryPush (nullChannel, 2, 1, 0));
     EXPECT_FALSE (fifo.tryPush (nullChannel, 2, 3, 0));
     EXPECT_EQ (fifo.getRejectedBlockCount(), 4u);
     EXPECT_EQ (fifo.getDroppedBlockCount(), 0u);
     EXPECT_EQ (fifo.getNumReady(), 0u);
+}
+
+TEST (SampleBlockFifoTests, PreservesActualChannelCountWithinCapacity)
+{
+    SampleBlockFifo fifo (3, 2, 2);
+    const std::array<float, 2> channel0 { 1.0f, 2.0f };
+    const float* channels[] { channel0.data() };
+
+    ASSERT_TRUE (fifo.tryPush (channels, 1, channel0.size(), 10, 4));
+    ASSERT_TRUE (fifo.tryPop ([&] (const auto& block)
+    {
+        EXPECT_EQ (block.numChannels, 1u);
+        EXPECT_EQ (block.numSamples, 2u);
+        EXPECT_EQ (block.getChannelData (0)[1], 2.0f);
+    }));
 }
 
 TEST (SampleBlockFifoTests, DroppedRangeBecomesAssemblerDiscontinuity)

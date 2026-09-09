@@ -37,7 +37,7 @@
 namespace spectrumviewer
 {
 /**
-    Transfers fixed-capacity planar sample blocks from one producer to one consumer.
+    Transfers bounded planar sample blocks from one producer to one consumer.
 
     Storage is allocated by the constructor. tryPush() and tryPop() neither allocate nor
     lock. The producer drops a whole block when the queue is full or the block exceeds
@@ -71,7 +71,7 @@ public:
     SampleBlockFifo (std::size_t numChannels,
                      std::size_t maxSamplesPerBlock,
                      std::size_t capacity)
-        : channelCount (numChannels),
+        : channelCapacity (numChannels),
           sampleCapacity (maxSamplesPerBlock),
           slotCapacity (capacity),
           fifo (checkedFifoSize (capacity)),
@@ -103,16 +103,16 @@ public:
         }
 
         const auto slot = static_cast<std::size_t> (writer.startIndex1);
-        auto* destination = samples.data() + slot * channelCount * sampleCapacity;
+        auto* destination = samples.data() + slot * channelCapacity * sampleCapacity;
 
-        for (std::size_t channel = 0; channel < channelCount; ++channel)
+        for (std::size_t channel = 0; channel < numChannels; ++channel)
         {
             std::memcpy (destination + channel * sampleCapacity,
                          source[channel],
                          numSamples * sizeof (float));
         }
 
-        metadata[slot] = { firstSample, configurationGeneration, numSamples };
+        metadata[slot] = { firstSample, configurationGeneration, numChannels, numSamples };
         return true;
     }
 
@@ -126,11 +126,11 @@ public:
         const auto slot = static_cast<std::size_t> (reader.startIndex1);
         const auto& slotMetadata = metadata[slot];
         BlockView view;
-        view.data = samples.data() + slot * channelCount * sampleCapacity;
+        view.data = samples.data() + slot * channelCapacity * sampleCapacity;
         view.channelStride = sampleCapacity;
         view.firstSample = slotMetadata.firstSample;
         view.configurationGeneration = slotMetadata.configurationGeneration;
-        view.numChannels = channelCount;
+        view.numChannels = slotMetadata.numChannels;
         view.numSamples = slotMetadata.numSamples;
         consumer (view);
         return true;
@@ -145,7 +145,7 @@ public:
         rejectedBlocks.store (0, std::memory_order_relaxed);
     }
 
-    std::size_t getChannelCount() const noexcept { return channelCount; }
+    std::size_t getChannelCapacity() const noexcept { return channelCapacity; }
     std::size_t getMaxSamplesPerBlock() const noexcept { return sampleCapacity; }
     std::size_t getCapacity() const noexcept { return slotCapacity; }
     std::size_t getNumReady() const noexcept { return static_cast<std::size_t> (fifo.getNumReady()); }
@@ -158,6 +158,7 @@ private:
     {
         std::int64_t firstSample = 0;
         std::uint64_t configurationGeneration = 0;
+        std::size_t numChannels = 0;
         std::size_t numSamples = 0;
     };
 
@@ -187,18 +188,18 @@ private:
                        std::size_t numChannels,
                        std::size_t numSamples) const noexcept
     {
-        if (source == nullptr || numChannels != channelCount
+        if (source == nullptr || numChannels == 0 || numChannels > channelCapacity
             || numSamples == 0 || numSamples > sampleCapacity)
             return false;
 
-        for (std::size_t channel = 0; channel < channelCount; ++channel)
+        for (std::size_t channel = 0; channel < numChannels; ++channel)
             if (source[channel] == nullptr)
                 return false;
 
         return true;
     }
 
-    const std::size_t channelCount;
+    const std::size_t channelCapacity;
     const std::size_t sampleCapacity;
     const std::size_t slotCapacity;
     juce::AbstractFifo fifo;

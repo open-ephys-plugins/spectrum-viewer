@@ -35,7 +35,8 @@ spectrumviewer::CapturedSpectrum makeCapture()
              { "uV" },
              std::vector<float> (81, 4.0f),
              std::vector<float> (81, 0.25f),
-             quality };
+             quality,
+             5 };
 }
 
 TEST (SpectrumReferenceTests, RetainsFullResolutionCaptureAndQuality)
@@ -49,6 +50,7 @@ TEST (SpectrumReferenceTests, RetainsFullResolutionCaptureAndQuality)
     EXPECT_FLOAT_EQ (capture.getPlanarSampleVariance()[40], 0.25f);
     EXPECT_EQ (capture.getQuality().firstSample, 100);
     EXPECT_EQ (capture.getQuality().lastSampleExclusive, 420);
+    EXPECT_EQ (capture.getSourceStreamId(), 5);
 }
 
 TEST (SpectrumReferenceTests, CompatibilityIgnoresOnlySchedulingMetadata)
@@ -57,13 +59,14 @@ TEST (SpectrumReferenceTests, CompatibilityIgnoresOnlySchedulingMetadata)
     auto candidate = makeDescriptor();
     candidate.configurationGeneration = 99;
     candidate.hopSampleCount = 40;
-    EXPECT_TRUE (capture.isCompatibleWith (candidate, { 2 }, { "uV" }));
+    EXPECT_TRUE (capture.isCompatibleWith (candidate, { 2 }, { "uV" }, 5));
 
     candidate.taperCount = 4;
-    EXPECT_FALSE (capture.isCompatibleWith (candidate, { 2 }, { "uV" }));
+    EXPECT_FALSE (capture.isCompatibleWith (candidate, { 2 }, { "uV" }, 5));
     candidate = makeDescriptor();
-    EXPECT_FALSE (capture.isCompatibleWith (candidate, { 3 }, { "uV" }));
-    EXPECT_FALSE (capture.isCompatibleWith (candidate, { 2 }, { "mV" }));
+    EXPECT_FALSE (capture.isCompatibleWith (candidate, { 3 }, { "uV" }, 5));
+    EXPECT_FALSE (capture.isCompatibleWith (candidate, { 2 }, { "mV" }, 5));
+    EXPECT_FALSE (capture.isCompatibleWith (candidate, { 2 }, { "uV" }, 6));
 }
 
 TEST (SpectrumReferenceTests, RejectsIncompleteOrInvalidSnapshots)

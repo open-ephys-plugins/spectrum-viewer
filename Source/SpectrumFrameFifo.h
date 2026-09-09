@@ -119,7 +119,13 @@ public:
             return channel < numChannels ? sourceChannelIndices[channel] : -1;
         }
 
+        const int* getSourceChannelIndices() const noexcept
+        {
+            return sourceChannelIndices;
+        }
+
         std::int64_t firstSample = 0;
+        std::uint16_t sourceStreamId = 0;
         std::uint64_t configurationGeneration = 0;
         std::uint64_t sequence = 0;
         std::size_t numChannels = 0;
@@ -160,13 +166,15 @@ public:
                        std::size_t capacity,
                        SpectrumFrameDescriptor frameDescriptor,
                        std::vector<int> sourceChannels,
-                       std::vector<std::string> sourceUnits = {})
+                       std::vector<std::string> sourceUnits = {},
+                       std::uint16_t sourceStream = 0)
         : channelCount (numChannels),
           binCount (numBins),
           slotCapacity (capacity),
           descriptor (frameDescriptor),
           sourceChannelIndices (std::move (sourceChannels)),
           sourceChannelUnits (normaliseUnits (std::move (sourceUnits), numChannels)),
+          sourceStreamId (sourceStream),
           fifo (checkedFifoSize (capacity)),
           metadata (capacity + 1),
           powers (checkedPowerCount (numChannels, numBins, capacity + 1)),
@@ -313,6 +321,7 @@ public:
         view.sourceChannelUnits = sourceChannelUnits.data();
         view.binStride = binCount;
         view.firstSample = frameMetadata.firstSample;
+        view.sourceStreamId = sourceStreamId;
         view.configurationGeneration = descriptor.configurationGeneration;
         view.sequence = frameMetadata.sequence;
         view.numChannels = channelCount;
@@ -351,6 +360,7 @@ public:
     std::uint64_t getStaleFrameCount() const noexcept { return staleFrames.load (std::memory_order_relaxed); }
     const std::vector<int>& getSourceChannelIndices() const noexcept { return sourceChannelIndices; }
     const std::vector<std::string>& getSourceChannelUnits() const noexcept { return sourceChannelUnits; }
+    std::uint16_t getSourceStreamId() const noexcept { return sourceStreamId; }
 
 private:
     struct Metadata
@@ -489,6 +499,7 @@ private:
     const SpectrumFrameDescriptor descriptor;
     const std::vector<int> sourceChannelIndices;
     const std::vector<std::string> sourceChannelUnits;
+    const std::uint16_t sourceStreamId;
     juce::AbstractFifo fifo;
     std::vector<Metadata> metadata;
     std::vector<float> powers;

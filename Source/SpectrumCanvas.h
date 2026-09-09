@@ -122,7 +122,9 @@ public:
     void beginSpectrumFrame (std::uint64_t configurationGeneration,
                              std::uint64_t sequence,
                              std::size_t channelCount,
-                             double hopDurationSeconds);
+                             double hopDurationSeconds,
+                             std::uint16_t sourceStreamId = 0,
+                             const int* sourceChannelIndices = nullptr);
 
     void mouseMove (const MouseEvent& event) override;
 
@@ -228,6 +230,7 @@ private:
     int freqEnd;
 
     Array<int> activeChannels;
+    std::uint16_t activeStreamId = 0;
     SpectrumAmplitudeDisplay amplitudeDisplay = SpectrumAmplitudeDisplay::psd;
     spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
     float displayMinimumFrequencyHz = 0.0f;

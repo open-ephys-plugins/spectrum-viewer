@@ -22,7 +22,9 @@ PreparedSpectrumAnalysis::PreparedSpectrumAnalysis (
     std::size_t outputQueueCapacity,
     std::vector<std::string> sourceChannelUnits,
     std::uint64_t captureId,
-    std::size_t captureTargetWindowCount)
+    std::size_t captureTargetWindowCount,
+    std::uint16_t sourceStreamId,
+    std::vector<int> sourceGlobalChannelIndices)
     : configuration (std::make_shared<const SpectrumAnalysisConfiguration> (parameters)),
       pipeline (configuration),
       displayReducer (parameters.channelCount,
@@ -37,17 +39,25 @@ PreparedSpectrumAnalysis::PreparedSpectrumAnalysis (
                  outputQueueCapacity,
                  configuration->getFrameDescriptor(),
                  std::move (sourceChannelIndices),
-                 std::move (sourceChannelUnits)),
+                 std::move (sourceChannelUnits),
+                 sourceStreamId),
       captureAccumulator (captureTargetWindowCount > 0
                               ? std::make_unique<SpectrumCaptureAccumulator> (
                                     parameters.channelCount,
                                     configuration->getBinCount(),
                                     captureTargetWindowCount)
                               : nullptr),
-      captureIdentifier (captureId)
+      captureIdentifier (captureId),
+      inputStreamId (sourceStreamId),
+      globalChannelIndices (std::move (sourceGlobalChannelIndices))
 {
     if ((captureId == 0) != (captureTargetWindowCount == 0))
         throw std::invalid_argument ("Capture runtime metadata is incomplete");
+    if (globalChannelIndices.size() != parameters.channelCount
+        || std::any_of (globalChannelIndices.begin(),
+                        globalChannelIndices.end(),
+                        [] (int channel) { return channel < 0; }))
+        throw std::invalid_argument ("Spectrum input routing metadata is invalid");
 }
 
 AsyncSpectrumAnalysis::AsyncSpectrumAnalysis (Builder newBuilder)
@@ -107,7 +117,9 @@ std::shared_ptr<PreparedSpectrumAnalysis> AsyncSpectrumAnalysis::buildDefault (
         request.outputQueueCapacity,
         std::move (request.sourceChannelUnits),
         request.captureId,
-        request.captureTargetWindowCount);
+        request.captureTargetWindowCount,
+        request.sourceStreamId,
+        std::move (request.sourceGlobalChannelIndices));
 }
 
 void AsyncSpectrumAnalysis::run()

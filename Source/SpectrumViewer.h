@@ -125,6 +125,7 @@ public:
 
     /** Returns the name of the selected channel at a given index */
     const String getChanName (int localIdx);
+    const String getChanName (std::uint16_t streamId, int localIdx);
 
     /** Sets the min/max frequency range*/
     void setFrequencyRange (Range<int>);
@@ -368,8 +369,24 @@ private:
 
     DisplaySettings readDisplaySettings() const noexcept;
 
+    struct InputRouteSnapshot
+    {
+        std::uint16_t streamId = 0;
+        std::size_t channelCount = 0;
+        std::array<int, MAX_CHANS> globalChannelIndices {};
+        std::uint64_t generation = 0;
+    };
+
     void requestAnalysisConfiguration (bool forCapture = false);
     void adoptPreparedAnalysis();
+    bool updateRequestedInputRoute (DataStream* stream);
+    void requestInputRouteReplacement();
+    void rejectInputRouteReplacement() noexcept;
+    void publishInputRoute (std::uint16_t streamId,
+                            std::size_t channelCount,
+                            const int* globalChannelIndices,
+                            std::uint64_t generation) noexcept;
+    bool readInputRoute (InputRouteSnapshot& route) const noexcept;
     void clearAcquisitionState();
     bool stopWorkerSafely (int timeoutMilliseconds) noexcept;
     void applyReferenceRequest() noexcept;
@@ -407,6 +424,11 @@ private:
     uint16 acquisitionStream = 0;
     std::size_t acquisitionMaximumInputBlockSamples = 0;
     double acquisitionSampleRateHz = 0.0;
+    std::atomic<std::uint64_t> inputRouteSequence { 0 };
+    std::atomic<std::uint16_t> publishedInputStream { 0 };
+    std::atomic<std::size_t> publishedInputChannelCount { 0 };
+    std::array<std::atomic<int>, MAX_CHANS> publishedGlobalChannels {};
+    std::atomic<std::uint64_t> publishedInputGeneration { 0 };
     std::atomic<std::uint64_t> activeConfigurationGeneration { 0 };
     std::atomic<float> activeBinWidthHz { 0.0f };
     std::atomic<std::size_t> displayColumnCount { 800 };
@@ -439,6 +461,9 @@ private:
     std::atomic<std::uint64_t> staleConfigurationBlocks { 0 };
     std::atomic<std::uint64_t> configurationFailures { 0 };
     std::atomic<SpectrumCaptureState> captureState { SpectrumCaptureState::live };
+    std::atomic<SpectrumCaptureState> replacementFailureCaptureState {
+        SpectrumCaptureState::frozen
+    };
     std::atomic<std::uint64_t> requestedCaptureId { 0 };
     std::atomic<std::size_t> captureTargetWindows { 0 };
     std::atomic<std::size_t> captureIncludedWindows { 0 };

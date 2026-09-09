@@ -5,6 +5,7 @@
 #include "SpectrumViewer.h"
 #include <TestFixtures.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -30,7 +31,9 @@ std::shared_ptr<Runtime> buildRuntime (Request request)
                                       request.outputQueueCapacity,
                                       std::move (request.sourceChannelUnits),
                                       request.captureId,
-                                      request.captureTargetWindowCount);
+                                      request.captureTargetWindowCount,
+                                      request.sourceStreamId,
+                                      std::move (request.sourceGlobalChannelIndices));
 }
 
 struct BuildGate
@@ -73,10 +76,12 @@ protected:
     static constexpr int blockSize = 5;
 
     void createProcessor (spectrumviewer::AsyncSpectrumAnalysis::Builder builder = {},
-                          int sourceChannelCount = 1)
+                          int sourceChannelCount = 1,
+                          int sourceStreamCount = 1)
     {
         tester = std::make_unique<ProcessorTester> (
-            TestSourceNodeBuilder (FakeSourceNodeParams { sourceChannelCount, sampleRate, 1.0f }));
+            TestSourceNodeBuilder (FakeSourceNodeParams {
+                sourceChannelCount, sampleRate, 1.0f, sourceStreamCount }));
         processor = tester->createProcessor<SpectrumViewer> (
             Plugin::Processor::SINK, std::move (builder));
         processor->setRateAndBufferSizeDetails (sampleRate, blockSize);
@@ -139,6 +144,14 @@ protected:
         std::size_t result = 0;
         processor->consumeLatestSpectrumFrame (
             [&result] (const auto& frame) { result = frame.descriptor.windowSampleCount; });
+        return result;
+    }
+
+    std::uint16_t consumeStreamId()
+    {
+        auto result = std::numeric_limits<std::uint16_t>::max();
+        processor->consumeLatestSpectrumFrame (
+            [&result] (const auto& frame) { result = frame.sourceStreamId; });
         return result;
     }
 
@@ -271,6 +284,134 @@ TEST_F (SpectrumViewerLifecycleTests, RapidProfileChangesCoalesceToNewestRequest
             }
         });
         return matched;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, StreamChangePreparesThenAtomicallyReplacesRoute)
+{
+    auto replacementGate = std::make_shared<BuildGate>();
+    auto buildCount = std::make_shared<std::atomic<int>> (0);
+    auto requestedStream = std::make_shared<std::atomic<std::uint16_t>> (0);
+    auto requestedGlobalChannel = std::make_shared<std::atomic<int>> (-1);
+    createProcessor (
+        [replacementGate, buildCount, requestedStream, requestedGlobalChannel] (Request request)
+        {
+            const auto call = buildCount->fetch_add (1) + 1;
+            requestedStream->store (request.sourceStreamId);
+            requestedGlobalChannel->store (
+                request.sourceGlobalChannelIndices.empty()
+                    ? -1
+                    : request.sourceGlobalChannelIndices.front());
+            if (call == 2)
+                replacementGate->enterAndWait();
+            return buildRuntime (std::move (request));
+        },
+        1,
+        2);
+
+    ASSERT_EQ (processor->getDataStreams().size(), 2);
+    const auto firstStream = processor->getDataStreams()[0]->getStreamId();
+    const auto secondStream = processor->getDataStreams()[1]->getStreamId();
+    ASSERT_NE (firstStream, secondStream);
+
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+
+    AudioBuffer<float> buffer (2, blockSize);
+    for (int sample = 0; sample < blockSize; ++sample)
+    {
+        buffer.setSample (0, sample, 1.0f);
+        buffer.setSample (1, sample, sample % 2 == 0 ? 1.0f : -1.0f);
+    }
+    for (int block = 0; block < 4; ++block)
+        tester->processBlock (processor, buffer);
+    ASSERT_TRUE (waitUntil ([this, firstStream]
+    {
+        return consumeStreamId() == firstStream;
+    }));
+
+    auto* streamParameter = dynamic_cast<SelectedStreamParameter*> (
+        processor->getParameter ("active_stream"));
+    ASSERT_NE (streamParameter, nullptr);
+    EXPECT_FALSE (streamParameter->shouldDeactivateDuringAcquisition());
+    streamParameter->setNextValue (1, false);
+
+    const auto replacementEntered = replacementGate->waitUntilEntered();
+    if (! replacementEntered)
+        replacementGate->release();
+    ASSERT_TRUE (replacementEntered);
+    EXPECT_TRUE (processor->hasActiveAnalysis());
+    EXPECT_TRUE (processor->isAnalysisConfigurationPending());
+    EXPECT_EQ (processor->getAnalysisReadiness(), SpectrumAnalysisReadiness::live);
+    EXPECT_EQ (requestedStream->load(), secondStream);
+    EXPECT_EQ (requestedGlobalChannel->load(), 1);
+
+    replacementGate->release();
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::warmingUp;
+    }));
+    for (int block = 0; block < 4; ++block)
+        tester->processBlock (processor, buffer);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
+    }));
+    ASSERT_TRUE (waitUntil ([this, secondStream]
+    {
+        auto matched = false;
+        processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
+        {
+            if (frame.sourceStreamId != secondStream)
+                return;
+            matched = true;
+            EXPECT_GT (*std::max_element (frame.getChannelData (0),
+                                          frame.getChannelData (0) + frame.numBins),
+                       0.01f);
+        });
+        return matched;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, FailedStreamReplacementKeepsPreviousRouteLive)
+{
+    auto buildCount = std::make_shared<std::atomic<int>> (0);
+    createProcessor (
+        [buildCount] (Request request)
+        {
+            if (buildCount->fetch_add (1) == 1)
+                throw std::runtime_error ("deliberate stream replacement failure");
+            return buildRuntime (std::move (request));
+        },
+        1,
+        2);
+
+    const auto firstStream = processor->getDataStreams()[0]->getStreamId();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+
+    auto* streamParameter = dynamic_cast<SelectedStreamParameter*> (
+        processor->getParameter ("active_stream"));
+    ASSERT_NE (streamParameter, nullptr);
+    streamParameter->setNextValue (1, false);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness()
+               == SpectrumAnalysisReadiness::configurationFailed;
+    }));
+    EXPECT_TRUE (processor->hasActiveAnalysis());
+
+    AudioBuffer<float> buffer (2, blockSize);
+    for (int sample = 0; sample < blockSize; ++sample)
+    {
+        buffer.setSample (0, sample, static_cast<float> (sample + 1));
+        buffer.setSample (1, sample, static_cast<float> (20 + sample));
+    }
+    for (int block = 0; block < 4; ++block)
+        tester->processBlock (processor, buffer);
+    ASSERT_TRUE (waitUntil ([this, firstStream]
+    {
+        return consumeStreamId() == firstStream;
     }));
 }
 

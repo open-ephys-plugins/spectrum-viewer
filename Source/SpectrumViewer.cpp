@@ -127,7 +127,7 @@ void SpectrumViewer::registerParameters()
                                 {},
                                 0,
                                 true,
-                                true);
+                                false);
 
     addSelectedChannelsParameter (Parameter::STREAM_SCOPE,
                                   "Channels",
@@ -150,7 +150,11 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
         String streamKey = param->getValueAsString();
 
         if (streamKey.isEmpty())
+        {
+            if (acquisitionRunning.load (std::memory_order_acquire))
+                rejectInputRouteReplacement();
             return;
+        }
 
         LOGC ("Setting active stream to: ", streamKey);
 
@@ -159,6 +163,8 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
         {
             LOGD ("Spectrum Viewer ignored unavailable stream: ", streamKey);
             channels.clear();
+            if (acquisitionRunning.load (std::memory_order_acquire))
+                rejectInputRouteReplacement();
             return;
         }
 
@@ -168,11 +174,24 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
         tfrParams.nFreqs = int ((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
         auto* p = dynamic_cast<SelectedChannelsParameter*> (stream->getParameter ("Channels"));
-        if (p != nullptr)
+        if (p == nullptr)
         {
-            channels = p->getArrayValue();
-            if (auto* currentEditor = getEditor())
-                currentEditor->updateVisualizer();
+            if (acquisitionRunning.load (std::memory_order_acquire))
+                rejectInputRouteReplacement();
+            return;
+        }
+
+        channels = p->getArrayValue();
+        if (acquisitionRunning.load (std::memory_order_acquire))
+        {
+            if (updateRequestedInputRoute (stream))
+                requestInputRouteReplacement();
+            else
+                rejectInputRouteReplacement();
+        }
+        else if (auto* currentEditor = getEditor())
+        {
+            currentEditor->updateVisualizer();
         }
     }
     else if (param->getName() == "Channels")
@@ -185,8 +204,19 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
 
         channels = p->getArrayValue();
 
-        if (auto* currentEditor = getEditor())
-            currentEditor->updateVisualizer();
+        if (acquisitionRunning.load (std::memory_order_acquire))
+        {
+            if (updateRequestedInputRoute (getDataStream (activeStream)))
+                requestInputRouteReplacement();
+            else
+                rejectInputRouteReplacement();
+        }
+
+        if (! acquisitionRunning.load (std::memory_order_acquire))
+        {
+            if (auto* currentEditor = getEditor())
+                currentEditor->updateVisualizer();
+        }
     }
 }
 
@@ -230,6 +260,48 @@ SpectrumViewer::DisplaySettings SpectrumViewer::readDisplaySettings() const noex
             return settings;
         }
     }
+}
+
+void SpectrumViewer::publishInputRoute (std::uint16_t streamId,
+                                        std::size_t channelCount,
+                                        const int* globalChannelIndices,
+                                        std::uint64_t generation) noexcept
+{
+    inputRouteSequence.fetch_add (1, std::memory_order_acq_rel);
+    publishedInputStream.store (streamId, std::memory_order_relaxed);
+    publishedInputChannelCount.store (channelCount, std::memory_order_relaxed);
+    for (std::size_t channel = 0; channel < MAX_CHANS; ++channel)
+    {
+        const auto globalChannel = globalChannelIndices != nullptr && channel < channelCount
+                                       ? globalChannelIndices[channel]
+                                       : -1;
+        publishedGlobalChannels[channel].store (globalChannel,
+                                                std::memory_order_relaxed);
+    }
+    publishedInputGeneration.store (generation, std::memory_order_relaxed);
+    inputRouteSequence.fetch_add (1, std::memory_order_release);
+    activeConfigurationGeneration.store (generation, std::memory_order_release);
+}
+
+bool SpectrumViewer::readInputRoute (InputRouteSnapshot& route) const noexcept
+{
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        const auto before = inputRouteSequence.load (std::memory_order_acquire);
+        if ((before & 1u) != 0u)
+            continue;
+
+        route.streamId = publishedInputStream.load (std::memory_order_relaxed);
+        route.channelCount = publishedInputChannelCount.load (std::memory_order_relaxed);
+        for (std::size_t channel = 0; channel < MAX_CHANS; ++channel)
+            route.globalChannelIndices[channel] = publishedGlobalChannels[channel].load (
+                std::memory_order_relaxed);
+        route.generation = publishedInputGeneration.load (std::memory_order_relaxed);
+
+        if (inputRouteSequence.load (std::memory_order_acquire) == before)
+            return route.channelCount <= MAX_CHANS;
+    }
+    return false;
 }
 
 void SpectrumViewer::applyReferenceRequest() noexcept
@@ -306,7 +378,8 @@ void SpectrumViewer::finalizeCapturedSpectrum()
             frameFifo.getSourceChannelUnits(),
             std::move (mean),
             std::move (variance),
-            quality);
+            quality,
+            frameFifo.getSourceStreamId());
     }
     catch (const std::exception& error)
     {
@@ -360,7 +433,8 @@ bool SpectrumViewer::publishReducedSpectrum (
         const auto compatible = spectrumReference->isCompatibleWith (
             descriptor,
             frameFifo.getSourceChannelIndices(),
-            frameFifo.getSourceChannelUnits());
+            frameFifo.getSourceChannelUnits(),
+            frameFifo.getSourceStreamId());
         referenceCompatibility.store (
             compatible ? spectrumviewer::SpectrumReferenceCompatibility::compatible
                        : spectrumviewer::SpectrumReferenceCompatibility::incompatible,
@@ -471,16 +545,22 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
         return;
 
     auto* fifo = inputFifo.get();
-    if (fifo == nullptr || acquisitionChannelCount == 0)
+    if (fifo == nullptr)
         return;
 
+    InputRouteSnapshot route;
+    if (! readInputRoute (route) || route.channelCount == 0)
+    {
+        invalidMappedInputBlocks.fetch_add (1, std::memory_order_relaxed);
+        return;
+    }
+
     const auto incomingSampleCount = static_cast<std::size_t> (
-        getNumSamplesInBlock (acquisitionStream));
+        getNumSamplesInBlock (route.streamId));
     if (incomingSampleCount == 0)
         return;
 
-    const auto generation = activeConfigurationGeneration.load (std::memory_order_acquire);
-    if (generation == 0)
+    if (route.generation == 0)
     {
         unconfiguredInputBlocks.fetch_add (1, std::memory_order_relaxed);
         unconfiguredInputSamples.fetch_add (incomingSampleCount, std::memory_order_relaxed);
@@ -489,9 +569,9 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
 
     std::array<const float*, MAX_CHANS> channelData {};
 
-    for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
+    for (std::size_t channel = 0; channel < route.channelCount; ++channel)
     {
-        const auto globalChannel = acquisitionGlobalChannels[channel];
+        const auto globalChannel = route.globalChannelIndices[channel];
         if (globalChannel < 0 || globalChannel >= continuousBuffer.getNumChannels())
         {
             invalidMappedInputBlocks.fetch_add (1, std::memory_order_relaxed);
@@ -502,10 +582,10 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
     }
 
     if (! fifo->tryPush (channelData.data(),
-                         acquisitionChannelCount,
+                         route.channelCount,
                          incomingSampleCount,
-                         getFirstSampleNumberForBlock (acquisitionStream),
-                         generation))
+                         getFirstSampleNumberForBlock (route.streamId),
+                         route.generation))
     {
         droppedInputBlocks.store (fifo->getDroppedBlockCount(), std::memory_order_relaxed);
         droppedInputSamples.store (fifo->getDroppedSampleCount(), std::memory_order_relaxed);
@@ -726,7 +806,8 @@ void SpectrumViewer::adoptPreparedAnalysis()
         }
         else if (captureState.load (std::memory_order_relaxed)
                  == SpectrumCaptureState::restoringLive)
-            captureState.store (SpectrumCaptureState::frozen,
+            captureState.store (replacementFailureCaptureState.load (
+                                    std::memory_order_relaxed),
                                 std::memory_order_release);
         if (activeAnalysis == nullptr)
             activeConfigurationGeneration.store (0, std::memory_order_release);
@@ -789,7 +870,11 @@ void SpectrumViewer::adoptPreparedAnalysis()
     // Publication of the generation is the callback's permission to enqueue
     // blocks for this runtime. Older queued blocks are rejected at the worker
     // boundary instead of being mixed into the new history.
-    activeConfigurationGeneration.store (result.generation, std::memory_order_release);
+    const auto& globalChannels = activeAnalysis->getSourceGlobalChannelIndices();
+    publishInputRoute (activeAnalysis->getSourceStreamId(),
+                       globalChannels.size(),
+                       globalChannels.data(),
+                       result.generation);
 }
 
 void SpectrumViewer::updateSettings()
@@ -816,7 +901,12 @@ Array<int> SpectrumViewer::getActiveChans()
 
 const String SpectrumViewer::getChanName (int localIdx)
 {
-    auto* stream = getDataStream (activeStream);
+    return getChanName (activeStream, localIdx);
+};
+
+const String SpectrumViewer::getChanName (std::uint16_t streamId, int localIdx)
+{
+    auto* stream = getDataStream (streamId);
     if (stream == nullptr
         || ! isPositiveAndBelow (localIdx, stream->getContinuousChannels().size()))
         return "Channel " + String (localIdx + 1);
@@ -825,6 +915,83 @@ const String SpectrumViewer::getChanName (int localIdx)
     return channel != nullptr ? channel->getName()
                               : "Channel " + String (localIdx + 1);
 };
+
+bool SpectrumViewer::updateRequestedInputRoute (DataStream* stream)
+{
+    if (stream == nullptr)
+        return false;
+
+    const auto& streamChannels = stream->getContinuousChannels();
+    const auto channelCount = static_cast<std::size_t> (
+        std::min (channels.size(), MAX_CHANS));
+    const auto sampleRate = static_cast<double> (stream->getSampleRate());
+    if (channelCount == 0 || ! std::isfinite (sampleRate) || sampleRate <= 0.0)
+        return false;
+
+    std::array<int, MAX_CHANS> localChannels {};
+    std::array<int, MAX_CHANS> globalChannels {};
+    std::array<std::string, MAX_CHANS> channelUnits {};
+    for (std::size_t channel = 0; channel < channelCount; ++channel)
+    {
+        const auto localChannel = channels[static_cast<int> (channel)];
+        if (! isPositiveAndBelow (localChannel, streamChannels.size())
+            || streamChannels[localChannel] == nullptr)
+        {
+            LOGE ("Unable to configure Spectrum Viewer with invalid channel index ",
+                  localChannel);
+            return false;
+        }
+
+        const auto globalChannel = getGlobalChannelIndex (stream->getStreamId(),
+                                                          localChannel);
+        if (globalChannel < 0)
+        {
+            LOGE ("Unable to map Spectrum Viewer channel ", localChannel);
+            return false;
+        }
+
+        localChannels[channel] = localChannel;
+        globalChannels[channel] = globalChannel;
+        channelUnits[channel] = streamChannels[localChannel]->getUnits().toStdString();
+    }
+
+    acquisitionChannels = std::move (localChannels);
+    acquisitionGlobalChannels = std::move (globalChannels);
+    acquisitionChannelUnits = std::move (channelUnits);
+    acquisitionChannelCount = channelCount;
+    acquisitionStream = stream->getStreamId();
+    acquisitionSampleRateHz = sampleRate;
+    return true;
+}
+
+void SpectrumViewer::requestInputRouteReplacement()
+{
+    const auto state = captureState.load (std::memory_order_acquire);
+    if (state != SpectrumCaptureState::live
+        && state != SpectrumCaptureState::failed)
+    {
+        replacementFailureCaptureState.store (
+            state == SpectrumCaptureState::capturing
+                ? SpectrumCaptureState::capturing
+                : state == SpectrumCaptureState::frozen
+                      ? SpectrumCaptureState::frozen
+                      : SpectrumCaptureState::live,
+            std::memory_order_relaxed);
+        captureState.store (SpectrumCaptureState::restoringLive,
+                            std::memory_order_release);
+    }
+    requestAnalysisConfiguration (false);
+}
+
+void SpectrumViewer::rejectInputRouteReplacement() noexcept
+{
+    requestedConfigurationGeneration.store (nextConfigurationGeneration++,
+                                            std::memory_order_release);
+    configurationPending.store (false, std::memory_order_release);
+    configurationFailures.fetch_add (1, std::memory_order_relaxed);
+    analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+                             std::memory_order_release);
+}
 
 bool SpectrumViewer::startAcquisition()
 {
@@ -843,7 +1010,7 @@ bool SpectrumViewer::startAcquisition()
             clearAcquisitionState();
 
         auto* stream = getDataStream (activeStream);
-        if (stream == nullptr)
+        if (! updateRequestedInputRoute (stream))
         {
             analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
                                      std::memory_order_release);
@@ -851,51 +1018,20 @@ bool SpectrumViewer::startAcquisition()
             return false;
         }
 
-        const auto& streamChannels = stream->getContinuousChannels();
-        acquisitionChannelCount = static_cast<std::size_t> (std::min (channels.size(), MAX_CHANS));
         const auto maximumInputBlockSamples = getBlockSize();
-        const auto sampleRate = static_cast<double> (stream->getSampleRate());
         if (acquisitionChannelCount == 0 || maximumInputBlockSamples <= 0
-            || ! std::isfinite (sampleRate) || sampleRate <= 0.0)
+            || ! std::isfinite (acquisitionSampleRateHz)
+            || acquisitionSampleRateHz <= 0.0)
         {
             analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
                                      std::memory_order_release);
             return false;
         }
 
-        for (std::size_t channel = 0; channel < acquisitionChannelCount; ++channel)
-        {
-            const auto localChannel = channels[static_cast<int> (channel)];
-            if (! isPositiveAndBelow (localChannel, streamChannels.size())
-                || streamChannels[localChannel] == nullptr)
-            {
-                acquisitionChannelCount = 0;
-                analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
-                                         std::memory_order_release);
-                LOGE ("Unable to configure Spectrum Viewer with invalid channel index ",
-                      localChannel);
-                return false;
-            }
-
-            const auto globalChannel = getGlobalChannelIndex (activeStream, localChannel);
-            if (globalChannel < 0)
-            {
-                acquisitionChannelCount = 0;
-                analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
-                                         std::memory_order_release);
-                LOGE ("Unable to map Spectrum Viewer channel ", localChannel);
-                return false;
-            }
-
-            acquisitionChannels[channel] = localChannel;
-            acquisitionGlobalChannels[channel] = globalChannel;
-            acquisitionChannelUnits[channel] = streamChannels[localChannel]->getUnits().toStdString();
-        }
-
         try
         {
             inputFifo = std::make_unique<spectrumviewer::SampleBlockFifo> (
-                acquisitionChannelCount,
+                MAX_CHANS,
                 static_cast<std::size_t> (maximumInputBlockSamples),
                 INPUT_QUEUE_CAPACITY);
         }
@@ -910,8 +1046,10 @@ bool SpectrumViewer::startAcquisition()
         }
 
         acquisitionMaximumInputBlockSamples = static_cast<std::size_t> (maximumInputBlockSamples);
-        acquisitionSampleRateHz = sampleRate;
-        acquisitionStream = activeStream;
+        publishInputRoute (acquisitionStream,
+                           acquisitionChannelCount,
+                           acquisitionGlobalChannels.data(),
+                           0);
         activeConfigurationGeneration.store (0, std::memory_order_release);
         activeBinWidthHz.store (0.0f, std::memory_order_release);
         droppedInputBlocks.store (0, std::memory_order_relaxed);
@@ -1006,6 +1144,7 @@ void SpectrumViewer::clearAcquisitionState()
     }
     activeAnalysis.reset();
     inputFifo.reset();
+    publishInputRoute (0, 0, nullptr, 0);
     acquisitionChannelCount = 0;
     acquisitionStream = 0;
     acquisitionMaximumInputBlockSamples = 0;
@@ -1118,6 +1257,8 @@ void SpectrumViewer::cancelSpectrumCapture()
         return;
     }
 
+    replacementFailureCaptureState.store (SpectrumCaptureState::frozen,
+                                           std::memory_order_relaxed);
     captureState.store (SpectrumCaptureState::restoringLive,
                         std::memory_order_release);
     requestAnalysisConfiguration (false);
@@ -1178,6 +1319,10 @@ void SpectrumViewer::requestAnalysisConfiguration (bool forCapture)
     request.sourceChannelUnits.assign (
         acquisitionChannelUnits.begin(),
         acquisitionChannelUnits.begin() + static_cast<std::ptrdiff_t> (acquisitionChannelCount));
+    request.sourceStreamId = acquisitionStream;
+    request.sourceGlobalChannelIndices.assign (
+        acquisitionGlobalChannels.begin(),
+        acquisitionGlobalChannels.begin() + static_cast<std::ptrdiff_t> (acquisitionChannelCount));
 
     requestedConfigurationGeneration.store (request.parameters.generation,
                                             std::memory_order_release);
