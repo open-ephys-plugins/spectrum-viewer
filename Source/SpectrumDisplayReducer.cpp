@@ -79,7 +79,54 @@ bool SpectrumDisplayReducer::reduce (const float* planarPsd,
     if (! std::isfinite (lower) || ! std::isfinite (upper) || upper <= lower)
         return false;
 
-    const auto columns = std::min ({ requestedColumns, columnCapacity, numBins });
+    const auto firstCentreBin = std::min (
+        numBins - 1,
+        static_cast<std::size_t> (std::max (0.0, std::ceil (lower / binWidth))));
+    const auto lastCentreBin = std::min (
+        numBins - 1,
+        static_cast<std::size_t> (std::max (0.0, std::floor (upper / binWidth))));
+    const auto nativeBinCount = lastCentreBin >= firstCentreBin
+                                    ? lastCentreBin - firstCentreBin + 1
+                                    : 0;
+    const auto maximumOutputColumns = std::min (requestedColumns, columnCapacity);
+
+    // A display column narrower than one FFT bin contains no additional
+    // information. Publish the native bin centres directly instead of
+    // replicating a bin across several sub-bin columns, which renders as an
+    // artificial staircase when a narrow frequency range is selected.
+    if (nativeBinCount > 0 && nativeBinCount <= maximumOutputColumns)
+    {
+        for (std::size_t column = 0; column < nativeBinCount; ++column)
+        {
+            const auto bin = firstCentreBin + column;
+            frequencies[column] = static_cast<float> (
+                static_cast<double> (bin) * binWidth);
+
+            for (std::size_t channel = 0; channel < numChannels; ++channel)
+            {
+                const auto power = planarPsd[channel * numBins + bin];
+                const auto destination = channel * nativeBinCount + column;
+                const auto validPower = std::isfinite (power) && power >= 0.0f
+                                            ? power
+                                            : std::numeric_limits<float>::quiet_NaN();
+                means[destination] = validPower;
+                peaks[destination] = validPower;
+            }
+        }
+
+        view.frequenciesHz = frequencies.data();
+        view.means = means.data();
+        view.peaks = peaks.data();
+        view.columnStride = nativeBinCount;
+        view.numChannels = numChannels;
+        view.numColumns = nativeBinCount;
+        view.minimumFrequencyHz = lower;
+        view.maximumFrequencyHz = upper;
+        view.frequencyScale = scale;
+        return true;
+    }
+
+    const auto columns = std::min (maximumOutputColumns, numBins);
     const auto logLower = scale == FrequencyScale::logarithmic ? std::log (lower) : 0.0;
     const auto logUpper = scale == FrequencyScale::logarithmic ? std::log (upper) : 0.0;
 

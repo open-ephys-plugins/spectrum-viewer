@@ -55,6 +55,25 @@ TEST (SpectrumDisplayReducerTests, PeakEnvelopePreservesANarrowLine)
                      101.0f);
 }
 
+TEST (SpectrumDisplayReducerTests, NarrowRangePublishesEachNativeBinOnce)
+{
+    SpectrumDisplayReducer reducer (1, 9, 16);
+    const std::array<float, 9> psd {
+        1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f
+    };
+    ASSERT_TRUE (reducer.reduce (
+        psd.data(), 1, 9, 16.0, 16, 16, FrequencyScale::linear, 0.0, 3.0));
+
+    const auto& view = reducer.getView();
+    ASSERT_EQ (view.numColumns, 4u);
+    for (std::size_t column = 0; column < view.numColumns; ++column)
+    {
+        EXPECT_FLOAT_EQ (view.frequenciesHz[column], static_cast<float> (column));
+        EXPECT_FLOAT_EQ (view.getChannelMean (0)[column], psd[column]);
+        EXPECT_FLOAT_EQ (view.getChannelPeak (0)[column], psd[column]);
+    }
+}
+
 TEST (SpectrumDisplayReducerTests, LogarithmicColumnsAreMonotonicAndExcludeDc)
 {
     SpectrumDisplayReducer reducer (1, 9, 8);
