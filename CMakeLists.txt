@@ -75,7 +75,7 @@ if(MSVC)
 	if(NOT BUILD_PROCESSOR_TESTS)
 		target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/open-ephys.lib)
 	endif()
-	target_compile_options(${PLUGIN_NAME} PRIVATE /sdl- /W0)
+	target_compile_options(${PLUGIN_NAME} PRIVATE /EHsc /sdl- /W0)
 
 	install(TARGETS ${PLUGIN_NAME} RUNTIME DESTINATION ${GUI_BIN_DIR}/plugins)
 	install(FILES $<TARGET_PDB_FILE:${PLUGIN_NAME}> DESTINATION  ${GUI_BIN_DIR}/plugins OPTIONAL)
