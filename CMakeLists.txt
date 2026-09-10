@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5.0)
+cmake_minimum_required(VERSION 3.15)
 if (NOT DEFINED GUI_BASE_DIR)
 	if (DEFINED ENV{GUI_BASE_DIR})
 		set(GUI_BASE_DIR $ENV{GUI_BASE_DIR})
@@ -6,6 +6,8 @@ if (NOT DEFINED GUI_BASE_DIR)
 		set(GUI_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../plugin-GUI)
 	endif()
 endif()
+get_filename_component(GUI_BASE_DIR "${GUI_BASE_DIR}" ABSOLUTE
+                       BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
 get_filename_component(PROJECT_FOLDER ${CMAKE_CURRENT_SOURCE_DIR} ABSOLUTE)
 get_filename_component(PLUGIN_NAME ${PROJECT_FOLDER} NAME)
@@ -14,6 +16,14 @@ set(CMAKE_XCODE_GENERATE_SCHEME YES)
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architecture for Mac OS X" FORCE)
 
 project(OE_PLUGIN_${PLUGIN_NAME})
+
+option(BUILD_TESTS "Build Spectrum Viewer tests" OFF)
+option(BUILD_PROCESSOR_TESTS "Build Spectrum Viewer processor lifecycle tests" OFF)
+option(BUILD_BENCHMARKS "Build Spectrum Viewer performance benchmarks" OFF)
+option(BENCHMARK_NATIVE_ARCH "Compile benchmarks for the build machine's CPU" OFF)
+
+include(cmake/ConfigureOpenBlas.cmake)
+
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 	set(LINUX 1)
@@ -36,7 +46,7 @@ set(SOURCE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 file(GLOB_RECURSE SRC_FILES LIST_DIRECTORIES false "${SOURCE_PATH}/*.cpp" "${SOURCE_PATH}/*.h")
 set(GUI_COMMONLIB_DIR ${GUI_BASE_DIR}/installed_libs)
 
-if (APPLE)
+if (APPLE AND NOT BUILD_PROCESSOR_TESTS)
 	add_library(${PLUGIN_NAME} MODULE ${SRC_FILES})
 else()
 	add_library(${PLUGIN_NAME} SHARED ${SRC_FILES})
@@ -62,8 +72,10 @@ endif()
 
 #Libraries and compiler options
 if(MSVC)
-	target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/open-ephys.lib)
-	target_compile_options(${PLUGIN_NAME} PRIVATE /sdl- /W0)
+	if(NOT BUILD_PROCESSOR_TESTS)
+		target_link_libraries(${PLUGIN_NAME} ${GUI_BIN_DIR}/open-ephys.lib)
+	endif()
+	target_compile_options(${PLUGIN_NAME} PRIVATE /EHsc /sdl- /W0)
 
 	install(TARGETS ${PLUGIN_NAME} RUNTIME DESTINATION ${GUI_BIN_DIR}/plugins)
 	install(FILES $<TARGET_PDB_FILE:${PLUGIN_NAME}> DESTINATION  ${GUI_BIN_DIR}/plugins OPTIONAL)
@@ -101,3 +113,39 @@ endforeach()
 # Open Ephys common libraries
 include(link_open_ephys_lib.cmake)
 link_open_ephys_lib(${PLUGIN_NAME} OpenEphysFFTW)
+target_link_libraries(${PLUGIN_NAME} SpectrumViewer::OpenBLAS)
+if(UNIX AND NOT APPLE)
+	target_link_options(${PLUGIN_NAME} PRIVATE "LINKER:--exclude-libs,ALL")
+endif()
+if(MSVC)
+	install(FILES
+		$<TARGET_FILE:SpectrumViewerOpenBLAS>
+		DESTINATION ${GUI_BIN_DIR}/shared)
+endif()
+
+if(APPLE)
+	set(SPECTRUM_VIEWER_NOTICE_DESTINATION
+		"$ENV{HOME}/Library/Application Support/open-ephys/plugins-api10")
+else()
+	set(SPECTRUM_VIEWER_NOTICE_DESTINATION ${GUI_BIN_DIR}/shared)
+endif()
+install(FILES THIRD_PARTY_NOTICES.md
+	DESTINATION "${SPECTRUM_VIEWER_NOTICE_DESTINATION}"
+	RENAME SpectrumViewer-THIRD_PARTY_NOTICES.md)
+
+if(BUILD_TESTS)
+	enable_testing()
+	add_subdirectory(Tests)
+endif()
+
+if(BUILD_PROCESSOR_TESTS)
+	if(NOT BUILD_TESTS)
+		message(FATAL_ERROR "BUILD_PROCESSOR_TESTS requires BUILD_TESTS")
+	endif()
+	target_compile_definitions(${PLUGIN_NAME} PRIVATE BUILD_TESTS)
+	add_subdirectory(Tests/Processor)
+endif()
+
+if(BUILD_BENCHMARKS)
+	add_subdirectory(Benchmarks)
+endif()

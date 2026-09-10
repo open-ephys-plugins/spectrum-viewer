@@ -1,44 +1,87 @@
 name: linux
 
 on:
+  workflow_dispatch:
+    inputs:
+      fftw_ref:
+        description: OpenEphysFFTW branch, tag, or SHA to build against
+        required: false
+        default: float-batched-r2c
   push:
     branches:
-      - '**' # Runs on push to any branch
+      - main
     tags:
       - '*' # Runs on any tag push
   pull_request:
     branches:
       - main # Runs on pull requests targeting the main branch
 
+env:
+  # Restore this default to main after the prerequisite FFTW PR merges.
+  OPENEPHYS_FFTW_REF: ${{ inputs.fftw_ref || 'float-batched-r2c' }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
 
   build-linux:
 
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
     - name: setup
       run: |
         sudo apt update
         cd ../..
-        git clone https://github.com/open-ephys/plugin-GUI.git --branch main
+        git clone --depth 1 https://github.com/open-ephys/plugin-GUI.git --branch main
         sudo ./plugin-GUI/Resources/Scripts/install_linux_dependencies.sh
         cd plugin-GUI/Build && cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ..
         cd ../..
         mkdir OEPlugins && cd OEPlugins
-        git clone https://github.com/open-ephys-plugins/OpenEphysFFTW.git --branch main
+        git clone --depth 1 https://github.com/open-ephys-plugins/OpenEphysFFTW.git --branch "$OPENEPHYS_FFTW_REF"
         cd OpenEphysFFTW/Build
         cmake -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=Release ..
-        make install
+        cmake --build . --config Release --target install --parallel
     - name: build
       run: |
         cd Build
-        cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ..
-        make
-#    - name: test
-#      run: cd build && ctest
+        cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=../../../OEPlugins/OpenEphysFFTW ..
+        cmake --build . --config Release --parallel
+    - name: test
+      run: ctest --test-dir Build --output-on-failure
+    - name: validate
+      run: |
+        test -f Build/spectrum-viewer.so
+        test "$(find Build/_deps/openblas/stage -name MANIFEST.txt | wc -l)" -eq 1
+        if nm -D --defined-only Build/spectrum-viewer.so | grep -Eiq 'openblas|lapacke|dstevr'; then
+          echo "Spectrum Viewer exports private OpenBLAS symbols"
+          exit 1
+        fi
+        if ldd Build/spectrum-viewer.so | grep -Eiq 'openblas|lapack|gfortran|quadmath'; then
+          echo "Spectrum Viewer has an unexpected numerical-library dependency"
+          exit 1
+        fi
+    - name: package test artifact
+      run: |
+        mkdir -p ci-artifact/plugins ci-artifact/shared
+        cp Build/spectrum-viewer.so ci-artifact/plugins/
+        cp THIRD_PARTY_NOTICES.md ci-artifact/shared/SpectrumViewer-THIRD_PARTY_NOTICES.md
+    - name: upload test artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SpectrumViewer-linux-${{ github.sha }}
+        path: ci-artifact
+        if-no-files-found: error
+        retention-days: 14
     - name: deploy
       if: github.ref == 'refs/heads/main'
       env:
@@ -51,6 +94,8 @@ jobs:
         new_plugin_ver=$tag-API$plugin_api
         mkdir plugins 
         cp -r $build_dir/*.so plugins
+        mkdir shared
+        cp THIRD_PARTY_NOTICES.md shared/SpectrumViewer-THIRD_PARTY_NOTICES.md
         zipfile=${package}_${new_plugin_ver}.zip
-        zip -r -X $zipfile plugins
+        zip -r -X $zipfile plugins shared
         curl -H "X-JFrog-Art-Api:$ARTIFACTORY_ACCESS_TOKEN" -T $zipfile "https://openephys.jfrog.io/artifactory/SpectrumViewer-plugin/linux/$zipfile"

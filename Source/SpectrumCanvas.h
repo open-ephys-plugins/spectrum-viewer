@@ -26,15 +26,77 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <VisualizerWindowHeaders.h>
 
-#include "AtomicSynchronizer.h"
+#include "AperiodicSpectrumBaseline.h"
+#include "SpectrumAmplitudeRange.h"
 #include "SpectrumViewer.h"
 
-#include <DspLib.h>
+#include <cstdint>
 
 class SpectrumCanvas;
+class SpectrumViewerEditor;
 
 // Component for housing power spectrum & spectrograph plots
-class CanvasPlot : public Component, public Button::Listener
+class FrequencyPlot : public InteractivePlot
+{
+public:
+    FrequencyPlot();
+
+    void plot (std::vector<float> x,
+               std::vector<float> y,
+               Colour colour = Colours::white,
+               float width = 1.0f,
+               float opacity = 1.0f,
+               PlotType type = PlotType::LINE) override;
+    void clear();
+
+    void setFrequencyAxis (spectrumviewer::FrequencyScale scale,
+                           float minimumHz,
+                           float maximumHz,
+                           float minimumDb,
+                           float maximumDb);
+
+    static std::vector<float> transformFrequencies (
+        const std::vector<float>& frequencies,
+        spectrumviewer::FrequencyScale scale);
+    float frequencyAt (Point<int> point) const noexcept;
+    int getDrawingWidth() const noexcept { return drawComponent->getWidth(); }
+    void paintOverChildren (Graphics& graphics) override;
+    void resized() override;
+
+#if BUILD_TESTS
+    Rectangle<int> getDrawingBoundsForTesting() const { return drawComponent->getBounds(); }
+    String getXAxisLabelForTesting() const { return xLabel->getText(); }
+    String getYAxisLabelForTesting() const { return yLabel->getText(); }
+    XYRange getRangeForTesting()
+    {
+        XYRange range;
+        getRange (range);
+        return range;
+    }
+#endif
+
+private:
+    struct LineSeries
+    {
+        std::vector<float> x;
+        std::vector<float> y;
+        Colour colour;
+        float width = 1.0f;
+        float opacity = 1.0f;
+    };
+
+    std::vector<LineSeries> lineSeries;
+    spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
+    float minimumFrequencyHz = 0.0f;
+    float maximumFrequencyHz = 1.0f;
+    float minimumAmplitude = -60.0f;
+    float maximumAmplitude = 60.0f;
+    std::vector<float> logarithmicTickPositions;
+    std::vector<String> logarithmicTickLabels;
+};
+
+class CanvasPlot : public Component,
+                   public Button::Listener
 {
 public:
     /** Constructor */
@@ -56,11 +118,43 @@ public:
 
     void setFrequencyRange (int freqStart, int freqEnd, float freqStep);
 
-    void updatePowerSpectrum (std::vector<float> powerData, int channelIndex);
+    void setBinWidth (float newBinWidth);
 
-    void plotPowerSpectrum();
+    void updatePowerSpectrum (const float* meanPsd,
+                              const float* peakPsd,
+                              std::size_t valueCount,
+                              const float* frequenciesHz,
+                              const String& unit,
+                              spectrumviewer::FrequencyScale scale,
+                              double minimumFrequencyHz,
+                              double maximumFrequencyHz,
+                              int channelIndex,
+                              const float* baselineDb = nullptr,
+                              const float* comparisonData = nullptr,
+                              spectrumviewer::SpectrumComparisonFrameStatus comparison = {});
 
-    void drawSpectrogram (std::vector<float> powerData);
+    void setAmplitudeDisplay (SpectrumAmplitudeDisplay display);
+    void setAperiodicDisplayMode (spectrumviewer::AperiodicDisplayMode mode);
+    void setPeakEnvelopeVisible (bool shouldBeVisible);
+
+    void setAmplitudeRangeMode (spectrumviewer::AmplitudeRangeMode mode);
+    bool setFixedAmplitudeRange (float minimumDb, float maximumDb);
+    spectrumviewer::AmplitudeRangeMode getAmplitudeRangeMode() const noexcept;
+    spectrumviewer::DecibelRange getAmplitudeRange() const noexcept;
+    bool hasAutomaticAmplitudeRange() const noexcept;
+
+    void beginSpectrumFrame (std::uint64_t configurationGeneration,
+                             std::uint64_t sequence,
+                             std::size_t channelCount,
+                             double hopDurationSeconds,
+                             std::uint16_t sourceStreamId = 0,
+                             const int* sourceChannelIndices = nullptr);
+
+    void mouseMove (const MouseEvent& event) override;
+
+    void plotPowerSpectrum (bool updateAutomaticRange = false);
+
+    void drawSpectrogram();
 
     /** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
     void setDisplayType (DisplayType type);
@@ -71,11 +165,66 @@ public:
     /** Clears the plot */
     void clear();
 
+#if BUILD_TESTS
+    std::size_t getFrequencyCountForTesting() const noexcept { return xvalues.size(); }
+    const std::vector<float>& getFrequenciesForTesting() const noexcept { return xvalues; }
+    const std::vector<float>& getMeanTraceForTesting (std::size_t channel) const
+    {
+        return currLinearPower.at (channel);
+    }
+    const std::vector<float>& getPeakTraceForTesting (std::size_t channel) const
+    {
+        return currLinearPeakPower.at (channel);
+    }
+    std::vector<float> getPlottedFrequenciesForTesting() const
+    {
+        return FrequencyPlot::transformFrequencies (xvalues, frequencyScale);
+    }
+    const std::vector<float>& getDbMeanTraceForTesting (std::size_t channel) const
+    {
+        return currPower.at (channel);
+    }
+    const std::vector<float>& getDisplayedDbMeanTraceForTesting (std::size_t channel) const
+    {
+        return displayedPower.at (channel);
+    }
+    const std::vector<float>& getComparisonTraceForTesting (std::size_t channel) const
+    {
+        return currComparison.at (channel);
+    }
+    spectrumviewer::SpectrumComparisonMode getComparisonModeForTesting() const noexcept
+    {
+        return comparisonStatus.mode;
+    }
+    float getMinimumFrequencyForTesting() const noexcept { return displayMinimumFrequencyHz; }
+    float getMaximumFrequencyForTesting() const noexcept { return displayMaximumFrequencyHz; }
+    spectrumviewer::FrequencyScale getFrequencyScaleForTesting() const noexcept
+    {
+        return frequencyScale;
+    }
+    String getXAxisLabelForTesting() const { return plt->getXAxisLabelForTesting(); }
+    String getYAxisLabelForTesting() const { return plt->getYAxisLabelForTesting(); }
+    XYRange getPlotRangeForTesting() { return plt->getRangeForTesting(); }
+    Rectangle<int> getDrawingBoundsForTesting() const
+    {
+        return plt->getDrawingBoundsForTesting().translated (plt->getX(), plt->getY());
+    }
+    double getPendingRangeElapsedSecondsForTesting() const noexcept
+    {
+        return pendingRangeElapsedSeconds;
+    }
+    Array<int> getActiveChannelsForTesting() const { return activeChannels; }
+    std::uint16_t getActiveStreamForTesting() const noexcept { return activeStreamId; }
+#endif
+
     int legendWidth = 150;
 
     DisplayType displayType;
 
 private:
+    void updateAmplitudeAxisLabel();
+    void rebuildDisplayedTraces();
+
     std::vector<Colour> chanColors = { Colour (200, 200, 200),
                                        Colour (230, 159, 0),
                                        Colour (86, 180, 233),
@@ -91,24 +240,46 @@ private:
 
     int rowHeight = 50;
 
-    float maxPower = 0.0f;
-
     std::vector<std::vector<float>> currPower; // channels x freqs
+    std::vector<std::vector<float>> currPeakPower;
+    std::vector<std::vector<float>> currBaselineDb;
+    std::vector<std::vector<float>> displayedPower;
+    std::vector<std::vector<float>> displayedPeakPower;
+    std::vector<std::vector<float>> currLinearPower;
+    std::vector<std::vector<float>> currLinearPeakPower;
+    std::vector<std::vector<float>> currComparison;
+    std::vector<String> channelUnits;
+    spectrumviewer::SpectrumAmplitudeRange amplitudeRange;
+    bool amplitudeUnitsChanged = false;
+    spectrumviewer::SpectrumComparisonFrameStatus comparisonStatus;
 
     std::vector<float> xvalues;
 
-    std::unique_ptr<InteractivePlot> plt;
+    std::unique_ptr<FrequencyPlot> plt;
+    std::unique_ptr<Label> cursorLabel;
 
     float freqStep;
+    int freqStart = 0;
     int nFreqs;
     int freqEnd;
 
     Array<int> activeChannels;
+    std::uint16_t activeStreamId = 0;
+    SpectrumAmplitudeDisplay amplitudeDisplay = SpectrumAmplitudeDisplay::psd;
+    spectrumviewer::AperiodicDisplayMode aperiodicDisplayMode =
+        spectrumviewer::AperiodicDisplayMode::off;
+    bool peakEnvelopeVisible = true;
+    spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
+    float displayMinimumFrequencyHz = 0.0f;
+    float displayMaximumFrequencyHz = 1000.0f;
+    std::size_t frameChannelCount = 0;
+    std::uint64_t lastConfigurationGeneration = 0;
+    std::uint64_t lastFrameSequence = 0;
+    double pendingRangeElapsedSeconds = 0.0;
+    bool hasFrameTiming = false;
 
     /** Image to draw*/
     std::unique_ptr<Image> spectrogramImg;
-
-    OwnedArray<OwnedArray<Dsp::Filter>> lowPassFilters;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CanvasPlot);
 };
@@ -122,7 +293,8 @@ class SpectrumCanvas : public Visualizer
 {
 public:
     /** Constructor */
-    SpectrumCanvas (SpectrumViewer* n);
+    SpectrumCanvas (SpectrumViewer* n,
+                    SpectrumViewerEditor* editorControls = nullptr);
 
     /** Destructor */
     ~SpectrumCanvas() {}
@@ -151,16 +323,30 @@ public:
     /** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
     void setDisplayType (DisplayType type);
 
+    /** Opens or closes the display-options drawer at the bottom of the canvas. */
+    void setOptionsDrawerOpen (bool shouldBeOpen);
+
+    bool isOptionsDrawerOpen() const noexcept { return optionsDrawerIsOpen; }
+
     CanvasPlot* getPlotPtr() { return canvasPlot.get(); };
 
 private:
+    static constexpr int optionsBarHeight = 44;
+    static constexpr int optionsDrawerHeight = 88;
+
     SpectrumViewer* processor;
+    SpectrumViewerEditor* editorControls;
 
     std::unique_ptr<Viewport> viewport;
     std::unique_ptr<CanvasPlot> canvasPlot;
+    std::unique_ptr<Component> mainOptionsBar;
+    std::unique_ptr<Component> optionsDrawer;
+    std::unique_ptr<Button> showHideOptionsButton;
     juce::Rectangle<int> canvasBounds;
 
     DisplayType displayType;
+    bool optionsDrawerIsOpen = false;
+    bool unavailableStateCleared = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumCanvas);
 };

@@ -27,7 +27,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <VisualizerEditorHeaders.h>
 
 class SpectrumViewerEditor : public VisualizerEditor,
-                             public ComboBox::Listener
+                             public ComboBox::Listener,
+                             public Slider::Listener,
+                             public Button::Listener,
+                             private Timer
 {
     friend class SpectrumCanvas;
 
@@ -36,7 +39,7 @@ public:
     SpectrumViewerEditor (GenericProcessor* parentNode);
 
     /** Destructor */
-    ~SpectrumViewerEditor() {}
+    ~SpectrumViewerEditor() override;
 
     /** Enables animation */
     void startAcquisition() override;
@@ -46,6 +49,10 @@ public:
 
     /** Called when a ComboBox changes*/
     void comboBoxChanged (ComboBox* comboBox);
+
+    void sliderValueChanged (Slider* slider) override;
+
+    void buttonClicked (Button* button) override;
 
     /** Creates the canvas */
     Visualizer* createNewCanvas();
@@ -58,11 +65,42 @@ public:
     void loadVisualizerEditorParameters (XmlElement* xml) override;
 
 private:
+    void timerCallback() override;
+    void updateAmplitudeRangeControls();
+    void applyAmplitudeRangeToCanvas();
+
     std::unique_ptr<Label> displayLabel;
     std::unique_ptr<ComboBox> displayType;
 
     std::unique_ptr<Label> frequencyLabel;
     std::unique_ptr<ComboBox> frequencyRange;
+
+    std::unique_ptr<Label> profileLabel;
+    std::unique_ptr<ComboBox> analysisProfile;
+    std::unique_ptr<Label> scaleLabel;
+    std::unique_ptr<ComboBox> frequencyScale;
+    std::unique_ptr<Label> amplitudeLabel;
+    std::unique_ptr<ComboBox> amplitudeDisplay;
+    std::unique_ptr<Label> baselineLabel;
+    std::unique_ptr<ComboBox> baselineDisplay;
+    std::unique_ptr<ToggleButton> peakEnvelope;
+    std::unique_ptr<Label> amplitudeRangeLabel;
+    std::unique_ptr<ComboBox> amplitudeRangeMode;
+    std::unique_ptr<Label> minimumDbLabel;
+    std::unique_ptr<Slider> minimumDb;
+    std::unique_ptr<Label> maximumDbLabel;
+    std::unique_ptr<Slider> maximumDb;
+    std::unique_ptr<Label> automaticRangeLabel;
+    std::unique_ptr<Label> captureDurationLabel;
+    std::unique_ptr<ComboBox> captureDuration;
+    std::unique_ptr<UtilityButton> captureAction;
+    std::unique_ptr<Label> captureStatusLabel;
+    std::unique_ptr<ComboBox> comparisonMode;
+    std::unique_ptr<Label> comparisonModeLabel;
+    std::unique_ptr<UtilityButton> setReferenceAction;
+    std::unique_ptr<UtilityButton> clearReferenceAction;
+    std::unique_ptr<Label> referenceStatusLabel;
+    std::unique_ptr<Label> readinessLabel;
 
     Array<Range<int>> freqRanges;
 
