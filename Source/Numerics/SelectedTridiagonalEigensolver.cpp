@@ -19,6 +19,10 @@
 #include <limits>
 #include <new>
 
+#ifndef SPECTRUM_VIEWER_OPENBLAS_VERSION
+#error "The Spectrum Viewer OpenBLAS target must define its backend version"
+#endif
+
 namespace
 {
 constexpr int lapackColumnMajor = 102;
@@ -39,6 +43,17 @@ extern "C" int LAPACKE_dstevr (int matrixLayout,
                                double* eigenvectors,
                                int leadingDimension,
                                int* support);
+extern "C" void openblas_set_num_threads (int threadCount);
+
+void configureOpenBlas() noexcept
+{
+    static const auto configured = []
+    {
+        openblas_set_num_threads (1);
+        return true;
+    }();
+    static_cast<void> (configured);
+}
 
 bool isFinite (const std::vector<double>& values) noexcept
 {
@@ -98,6 +113,8 @@ namespace numerics
 
         try
         {
+            configureOpenBlas();
+
             auto mutableDiagonal = diagonal;
             auto mutableOffDiagonal = offDiagonal;
             mutableOffDiagonal.resize (std::max<std::size_t> (1, order - 1));
@@ -187,7 +204,8 @@ namespace numerics
 
     const char* getNumericsBackendDescription() noexcept
     {
-        return "OpenBLAS 0.3.34 C-LAPACK, LP64, double-real, single-threaded";
+        return "conda-forge OpenBLAS " SPECTRUM_VIEWER_OPENBLAS_VERSION
+               ", LP64, one thread";
     }
 } // namespace numerics
 } // namespace spectrumviewer

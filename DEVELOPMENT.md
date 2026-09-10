@@ -123,6 +123,29 @@ already in flight, then asks the analysis worker to stop. Expensive runtime
 destruction is handed to the configuration thread. Preserve this ordering when
 adding state whose lifetime crosses a thread boundary.
 
+## OpenBLAS packaging
+
+DPSS preparation calls two OpenBLAS entry points: `LAPACKE_dstevr` and
+`openblas_set_num_threads`. `cmake/OpenBlasPackages.cmake` is the single source
+of package filenames, SHA-256 digests, and feedstock provenance.
+`cmake/PrepareOpenBlas.cmake` downloads pinned conda-forge packages into the
+build-local download cache, verifies them before extraction, and publishes a
+content-addressed stage only after all files and licenses are present. A short
+process lock prevents concurrent configure jobs from publishing the same stage.
+
+Linux embeds the static archive and hides all archive symbols. macOS combines
+the x86_64 and arm64 archives with `lipo` and uses Apple ld's
+`-hidden-lopenblas` form. Windows installs a namespaced DLL in the GUI's shared
+directory and links a generated import library containing only the two required
+symbols. The eigensolver sets OpenBLAS to one thread before its first solve;
+unrestricted OpenBLAS workers make background configuration slower and can
+interfere with acquisition.
+
+`SPECTRUM_VIEWER_OPENBLAS_ROOT` bypasses all network access. Point it at a stage
+with the layout documented in `README.md`. Do not commit `_deps/` contents or
+copy binaries into the source tree. Update `THIRD_PARTY_NOTICES.md` and test all
+three platform paths when changing the package pins.
+
 ## Invariants for changes
 
 - Do not allocate, lock, plan FFTs, notify a thread, or run DSP in

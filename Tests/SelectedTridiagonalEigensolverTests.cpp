@@ -103,6 +103,12 @@ TEST (SelectedTridiagonalEigensolverTests, SolvesKnownTwoByTwoMatrix)
     EXPECT_EQ (result.getEigenvector (2), nullptr);
 }
 
+TEST (SelectedTridiagonalEigensolverTests, ReportsThePinnedBackend)
+{
+    EXPECT_STREQ (spectrumviewer::numerics::getNumericsBackendDescription(),
+                  "conda-forge OpenBLAS 0.3.34, LP64, one thread");
+}
+
 TEST (SelectedTridiagonalEigensolverTests, RejectsInvalidInputs)
 {
     using spectrumviewer::numerics::findLargestSymmetricTridiagonalEigenpairs;

@@ -30,11 +30,19 @@ First, follow the instructions on [this page](https://open-ephys.github.io/gui-d
 
 This plugin depends on the `main` branch of the [OpenEphysFFTW](https://github.com/open-ephys-plugins/OpenEphysFFTW/tree/main) library, which must be built and installed first.
 
-Spectrum Viewer builds a pinned, static, single-threaded OpenBLAS subset for
-DPSS taper generation. CMake downloads it by default. For an offline build, set
-`SPECTRUM_VIEWER_OPENBLAS_SOURCE_DIR` to an existing OpenBLAS source checkout
-and set `SPECTRUM_VIEWER_FETCH_OPENBLAS=OFF`. OpenBLAS remains private to the
-plugin and is never called from the acquisition thread.
+Spectrum Viewer uses pinned OpenBLAS 0.3.34 binaries from conda-forge for DPSS
+taper generation. The first CMake configure downloads and verifies the package,
+then creates an immutable private stage under `Build/_deps/openblas/`; a conda
+installation is not required. Subsequent builds reuse the verified download and
+stage. OpenBLAS is never called from the acquisition thread and is limited to
+one thread.
+
+For an offline build, either preserve the download cache or set
+`SPECTRUM_VIEWER_OPENBLAS_ROOT` to a previously prepared stage. Unix stages
+must contain `lib/libopenblas.a`; Windows stages must contain
+`lib/spectrum-viewer-openblas.lib` and
+`bin/spectrum-viewer-openblas.dll`. See the [developer guide](DEVELOPMENT.md)
+for platform packaging details and provenance.
 
 Contributors should start with the [developer guide](DEVELOPMENT.md), which maps
 the runtime data flow, source files, thread boundaries, and real-time invariants.

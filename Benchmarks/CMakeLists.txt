@@ -115,7 +115,7 @@ if(FFTW_BENCH_INCLUDE_DIR AND FFTW_BENCH_DOUBLE_LIBRARY AND FFTW_BENCH_FLOAT_LIB
 		../Source/Numerics/SelectedTridiagonalEigensolver.cpp
 		../Source/SpectrumAnalysis.cpp
 		MultitaperPeriodogramBenchmarks.cpp)
-	target_link_libraries(spectrum_viewer_benchmarks PRIVATE openblas)
+	target_link_libraries(spectrum_viewer_benchmarks PRIVATE SpectrumViewer::OpenBLAS)
 	if(FFTW_BENCH_DOUBLE_THREADS_LIBRARY AND FFTW_BENCH_FLOAT_THREADS_LIBRARY)
 		target_compile_definitions(spectrum_viewer_benchmarks PRIVATE SPECTRUM_VIEWER_FFTW_THREADS=1)
 		target_link_libraries(spectrum_viewer_benchmarks PRIVATE

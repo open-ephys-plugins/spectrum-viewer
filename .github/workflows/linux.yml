@@ -51,6 +51,8 @@ jobs:
         new_plugin_ver=$tag-API$plugin_api
         mkdir plugins 
         cp -r $build_dir/*.so plugins
+        mkdir shared
+        cp THIRD_PARTY_NOTICES.md shared/SpectrumViewer-THIRD_PARTY_NOTICES.md
         zipfile=${package}_${new_plugin_ver}.zip
-        zip -r -X $zipfile plugins
+        zip -r -X $zipfile plugins shared
         curl -H "X-JFrog-Art-Api:$ARTIFACTORY_ACCESS_TOKEN" -T $zipfile "https://openephys.jfrog.io/artifactory/SpectrumViewer-plugin/linux/$zipfile"

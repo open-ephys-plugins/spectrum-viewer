@@ -93,11 +93,17 @@ target_link_libraries(spectrum_viewer_tests PRIVATE
 	gtest_main
 	${TEST_FFTW_DOUBLE_LIBRARY}
 	${TEST_FFTW_FLOAT_LIBRARY}
-	openblas
+	SpectrumViewer::OpenBLAS
 	${CMAKE_DL_LIBS})
 
 if(LINUX)
 	target_link_libraries(spectrum_viewer_tests PRIVATE pthread rt)
+endif()
+if(MSVC)
+	add_custom_command(TARGET spectrum_viewer_tests POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			$<TARGET_FILE:SpectrumViewerOpenBLAS>
+			$<TARGET_FILE_DIR:spectrum_viewer_tests>)
 endif()
 
 add_test(NAME spectrum_viewer_tests COMMAND spectrum_viewer_tests)

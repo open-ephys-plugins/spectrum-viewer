@@ -57,6 +57,8 @@ jobs:
 
         mkdir plugins 
         cp -r $build_dir/*.bundle plugins
+        mkdir -p plugins/spectrum-viewer.bundle/Contents/Resources
+        cp THIRD_PARTY_NOTICES.md plugins/spectrum-viewer.bundle/Contents/Resources/
 
         # Turn our base64-encoded certificate back to a regular .p12 file
         echo $MACOS_CERTIFICATE | base64 --decode > certificate.p12
