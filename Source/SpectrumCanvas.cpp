@@ -89,56 +89,6 @@ public:
     }
 };
 
-class BatchedXYLine final : public XYLine
-{
-public:
-    BatchedXYLine (std::vector<float> xValues, std::vector<float> yValues)
-        : XYLine (std::move (xValues), std::move (yValues))
-    {
-    }
-
-    void draw (Graphics& graphics, XYRange& visibleRange, int plotWidth, int plotHeight) override
-    {
-        if (type != PlotType::LINE)
-        {
-            XYLine::draw (graphics, visibleRange, plotWidth, plotHeight);
-            return;
-        }
-
-        const auto xRange = visibleRange.xmax - visibleRange.xmin;
-        const auto yRange = visibleRange.ymax - visibleRange.ymin;
-        const auto pointCount = std::min (x.size(), y.size());
-        if (pointCount < 2 || xRange < 1.0e-6f || yRange < 1.0e-6f)
-            return;
-
-        Path path;
-        auto continuing = false;
-        for (std::size_t index = 0; index < pointCount; ++index)
-        {
-            if (! std::isfinite (x[index]) || ! std::isfinite (y[index]))
-            {
-                continuing = false;
-                continue;
-            }
-
-            const auto pixelX = (x[index] - visibleRange.xmin) / xRange
-                                * static_cast<float> (plotWidth);
-            const auto pixelY = static_cast<float> (plotHeight)
-                                - (y[index] - visibleRange.ymin) / yRange
-                                      * static_cast<float> (plotHeight);
-            if (continuing)
-                path.lineTo (pixelX, pixelY);
-            else
-            {
-                path.startNewSubPath (pixelX, pixelY);
-                continuing = true;
-            }
-        }
-
-        graphics.setColour (colour.withAlpha (opacity));
-        graphics.strokePath (path, PathStrokeType (width));
-    }
-};
 } // namespace
 
 FrequencyPlot::FrequencyPlot()
@@ -191,12 +141,20 @@ void FrequencyPlot::plot (std::vector<float> x,
                           float opacity,
                           PlotType type)
 {
-    auto* line = new BatchedXYLine (std::move (x), std::move (y));
-    line->setColour (colour);
-    line->setWidth (width);
-    line->setOpacity (opacity);
-    line->setType (type);
-    drawComponent->add (line);
+    if (type != PlotType::LINE)
+    {
+        InteractivePlot::plot (std::move (x), std::move (y), colour, width, opacity, type);
+        return;
+    }
+
+    lineSeries.push_back ({ std::move (x), std::move (y), colour, width, opacity });
+    repaint (drawComponent->getBounds());
+}
+
+void FrequencyPlot::clear()
+{
+    lineSeries.clear();
+    InteractivePlot::clear();
 }
 
 void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
@@ -208,6 +166,8 @@ void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
     frequencyScale = scale;
     minimumFrequencyHz = minimumHz;
     maximumFrequencyHz = maximumHz;
+    minimumAmplitude = minimumDb;
+    maximumAmplitude = maximumDb;
     const auto axisMinimum = scale == spectrumviewer::FrequencyScale::linear
                                  ? minimumHz
                                  : std::log10 (minimumHz);
@@ -244,6 +204,54 @@ void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
 
 void FrequencyPlot::paintOverChildren (Graphics& graphics)
 {
+    const auto drawingBounds = drawComponent->getBounds();
+    const auto axisMinimum = frequencyScale == spectrumviewer::FrequencyScale::linear
+                                 ? minimumFrequencyHz
+                                 : std::log10 (minimumFrequencyHz);
+    const auto axisMaximum = frequencyScale == spectrumviewer::FrequencyScale::linear
+                                 ? maximumFrequencyHz
+                                 : std::log10 (maximumFrequencyHz);
+    const auto xRange = axisMaximum - axisMinimum;
+    const auto yRange = maximumAmplitude - minimumAmplitude;
+    if (drawingBounds.getWidth() > 0 && drawingBounds.getHeight() > 0
+        && xRange > 1.0e-6f && yRange > 1.0e-6f)
+    {
+        graphics.saveState();
+        graphics.reduceClipRegion (drawingBounds);
+
+        for (const auto& series : lineSeries)
+        {
+            const auto pointCount = std::min (series.x.size(), series.y.size());
+            Path path;
+            auto continuing = false;
+            for (std::size_t index = 0; index < pointCount; ++index)
+            {
+                if (! std::isfinite (series.x[index]) || ! std::isfinite (series.y[index]))
+                {
+                    continuing = false;
+                    continue;
+                }
+
+                const auto pixelX = static_cast<float> (drawingBounds.getX())
+                                    + (series.x[index] - axisMinimum) / xRange
+                                          * static_cast<float> (drawingBounds.getWidth());
+                const auto pixelY = static_cast<float> (drawingBounds.getBottom())
+                                    - (series.y[index] - minimumAmplitude) / yRange
+                                          * static_cast<float> (drawingBounds.getHeight());
+                if (continuing)
+                    path.lineTo (pixelX, pixelY);
+                else
+                {
+                    path.startNewSubPath (pixelX, pixelY);
+                    continuing = true;
+                }
+            }
+            graphics.setColour (series.colour.withAlpha (series.opacity));
+            graphics.strokePath (path, PathStrokeType (series.width));
+        }
+        graphics.restoreState();
+    }
+
     if (frequencyScale != spectrumviewer::FrequencyScale::logarithmic)
         return;
 

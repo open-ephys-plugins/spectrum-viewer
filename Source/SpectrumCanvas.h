@@ -47,6 +47,7 @@ public:
                float width = 1.0f,
                float opacity = 1.0f,
                PlotType type = PlotType::LINE) override;
+    void clear();
 
     void setFrequencyAxis (spectrumviewer::FrequencyScale scale,
                            float minimumHz,
@@ -75,9 +76,21 @@ public:
 #endif
 
 private:
+    struct LineSeries
+    {
+        std::vector<float> x;
+        std::vector<float> y;
+        Colour colour;
+        float width = 1.0f;
+        float opacity = 1.0f;
+    };
+
+    std::vector<LineSeries> lineSeries;
     spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
     float minimumFrequencyHz = 0.0f;
     float maximumFrequencyHz = 1.0f;
+    float minimumAmplitude = -60.0f;
+    float maximumAmplitude = 60.0f;
     std::vector<float> logarithmicTickPositions;
     std::vector<String> logarithmicTickLabels;
 };
