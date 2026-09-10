@@ -9,6 +9,11 @@ FetchContent_Declare(
 	GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(googletest)
 
+if(APPLE)
+	enable_language(OBJCXX)
+	set_source_files_properties(JuceCore.cpp PROPERTIES LANGUAGE OBJCXX)
+endif()
+
 set(OPENEPHYS_FFTW_SOURCE_DIR
 	"${CMAKE_CURRENT_SOURCE_DIR}/../../OpenEphysFFTW"
 	CACHE PATH "Path to the matching OpenEphysFFTW source checkout")
@@ -136,6 +141,11 @@ if(LINUX)
 	target_link_libraries(spectrum_viewer_tests PRIVATE pthread rt)
 	set_target_properties(spectrum_viewer_tests PROPERTIES BUILD_RPATH "$ORIGIN")
 elseif(APPLE)
+	target_link_libraries(spectrum_viewer_tests PRIVATE
+		"-framework Cocoa"
+		"-framework Foundation"
+		"-framework IOKit"
+		"-framework Security")
 	set_target_properties(spectrum_viewer_tests PROPERTIES BUILD_RPATH "@loader_path")
 endif()
 

@@ -228,7 +228,7 @@ TEST (SampleWindowAssemblerTests, CallbackPartitioningDoesNotChangeWindows)
 
         for (const auto callbackSize : callbackSizes)
         {
-            std::array<const float*, numChannels> channels;
+            std::vector<const float*> channels (numChannels);
             for (std::size_t channel = 0; channel < numChannels; ++channel)
                 channels[channel] = samples[channel].data() + offset;
 
