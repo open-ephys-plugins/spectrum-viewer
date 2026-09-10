@@ -29,6 +29,27 @@ frames.
 tapers, allocates a complete runtime, and creates FFTW plans without blocking the
 callback, analysis worker, or message thread.
 
+## Thread ownership
+
+Four execution contexts cooperate, but each mutable DSP object has one owner:
+
+| Context | Owns or changes | May communicate through |
+| --- | --- | --- |
+| Acquisition callback | One input-block publication at a time | `SampleBlockFifo` and the read-only input-route snapshot |
+| Analysis worker | Active runtime, sample history, estimator state, captures, and references | Input FIFO, output FIFO, atomics, and configuration results |
+| Configuration thread | Pending build request and destruction of retired runtimes | A mutex-protected, coalescing mailbox |
+| JUCE message thread | Parameters, editor state, canvas state, and repaint | Atomics, preparation requests, reference commands, and newest output frame |
+
+The acquisition callback and analysis worker form the input FIFO's single
+producer and single consumer. The analysis worker and message thread have the
+same roles for each runtime's frame FIFO. Do not add a second producer or
+consumer without replacing the transport contract.
+
+The configuration mailbox may lock because neither participant is the
+acquisition callback. Runtime construction occurs after releasing that lock.
+The canvas obtains the runtime used for display with `try_lock`; it skips an
+update instead of blocking if the worker is installing a replacement.
+
 ## Source map
 
 | Area | Files | Responsibility |
@@ -56,10 +77,51 @@ route. The callback can therefore observe either the old route or the new route,
 never a mixture. Blocks from older generations are rejected before entering new
 history. Failed or superseded preparations cannot replace the active runtime.
 
+The replacement sequence is:
+
+1. The message thread snapshots the requested profile, stream, channels, units,
+   sample rate, and input-block capacity into a new generation.
+2. `AsyncSpectrumAnalysis::request()` replaces any older pending request. Its
+   thread builds a complete `PreparedSpectrumAnalysis`, including storage,
+   DPSS tapers, reducers, and FFTW plans.
+3. The analysis worker accepts only the latest completed generation. A failure
+   leaves the previous runtime usable; a superseded result is retired.
+4. The worker swaps the active runtime, resets warm-up state, then publishes a
+   coherent input route. Publishing the generation is the callback's permission
+   to enqueue blocks for that runtime.
+5. The new runtime becomes `live` after its first complete spectral window.
+   Blocks carrying an older generation are rejected rather than joined to new
+   history.
+
+Input-route and display-setting snapshots use an even/odd sequence counter.
+The writer marks the snapshot odd, changes its fields, and publishes the next
+even value with release ordering. A reader accepts the fields only when the
+same even value surrounds its relaxed loads. This is a small fixed-field
+publication protocol, not a general replacement for a queue.
+
 Frames and captured references retain stream, channel, unit, frequency, and
 generation metadata. Keep that identity attached when adding another output
 product; labels must describe the data being drawn, not merely the latest UI
 selection.
+
+## Frame publication and overload
+
+Input slots contain whole callbacks and preserve all selected channels as one
+planar block. A full FIFO rejects the whole block and records its sample range.
+After copying an accepted block into private circular history, the worker
+releases the slot before detrending, tapering, or FFT work begins.
+
+Live spectral frames are replaceable state. The worker reduces full-resolution
+linear PSDs to display-width mean and peak products, and the canvas consumes
+only the newest complete frame. If analysis falls behind, the worker retains
+the newest eligible window and records sequence gaps and shedding counters.
+Capture completion is different: a final frozen result remains pending until a
+frame slot is available, so it cannot be silently lost.
+
+Stopping acquisition first prevents new callback entry, waits for callbacks
+already in flight, then asks the analysis worker to stop. Expensive runtime
+destruction is handed to the configuration thread. Preserve this ordering when
+adding state whose lifetime crosses a thread boundary.
 
 ## Invariants for changes
 
