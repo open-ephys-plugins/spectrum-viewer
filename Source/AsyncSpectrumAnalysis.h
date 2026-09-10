@@ -15,6 +15,7 @@
 #ifndef ASYNC_SPECTRUM_ANALYSIS_H_INCLUDED
 #define ASYNC_SPECTRUM_ANALYSIS_H_INCLUDED
 
+#include "AperiodicSpectrumBaseline.h"
 #include "SpectrumAnalysis.h"
 #include "SpectrumCaptureAccumulator.h"
 #include "SpectrumFrameFifo.h"
@@ -50,6 +51,8 @@ public:
     SpectrumDisplayReducer& getDisplayReducer() noexcept { return displayReducer; }
     SpectrumDisplayReducer& getReferenceDisplayReducer() noexcept { return referenceDisplayReducer; }
     float* getComparisonScratch() noexcept { return comparisonScratch.data(); }
+    AperiodicSpectrumBaseline& getBaselineEstimator() noexcept { return baselineEstimator; }
+    float* getBaselineScratch() noexcept { return baselineScratch.data(); }
     const SpectrumAnalysisConfiguration& getConfiguration() const noexcept { return *configuration; }
     SpectrumCaptureAccumulator* getCaptureAccumulator() noexcept { return captureAccumulator.get(); }
     bool isCaptureRuntime() const noexcept { return captureAccumulator != nullptr; }
@@ -66,6 +69,8 @@ private:
     SpectrumDisplayReducer displayReducer;
     SpectrumDisplayReducer referenceDisplayReducer;
     std::vector<float> comparisonScratch;
+    AperiodicSpectrumBaseline baselineEstimator;
+    std::vector<float> baselineScratch;
     SpectrumFrameFifo frameFifo;
     std::unique_ptr<SpectrumCaptureAccumulator> captureAccumulator;
     std::uint64_t captureIdentifier = 0;

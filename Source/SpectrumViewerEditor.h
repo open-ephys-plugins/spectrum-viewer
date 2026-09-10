@@ -39,7 +39,7 @@ public:
     SpectrumViewerEditor (GenericProcessor* parentNode);
 
     /** Destructor */
-    ~SpectrumViewerEditor() {}
+    ~SpectrumViewerEditor() override;
 
     /** Enables animation */
     void startAcquisition() override;
@@ -81,6 +81,9 @@ private:
     std::unique_ptr<ComboBox> frequencyScale;
     std::unique_ptr<Label> amplitudeLabel;
     std::unique_ptr<ComboBox> amplitudeDisplay;
+    std::unique_ptr<Label> baselineLabel;
+    std::unique_ptr<ComboBox> baselineDisplay;
+    std::unique_ptr<ToggleButton> peakEnvelope;
     std::unique_ptr<Label> amplitudeRangeLabel;
     std::unique_ptr<ComboBox> amplitudeRangeMode;
     std::unique_ptr<Label> minimumDbLabel;

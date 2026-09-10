@@ -12,6 +12,7 @@ Open Ephys callback
      -> SampleWindowAssembler
      -> MultitaperPeriodogram
      -> SpectrumDisplayReducer
+     -> AperiodicSpectrumBaseline
   -> SpectrumFrameFifo
   -> SpectrumCanvas repaint
 ```
@@ -37,7 +38,7 @@ callback, analysis worker, or message thread.
 | Runtime preparation | `AsyncSpectrumAnalysis.*`, `SpectrumAnalysis.*` | Immutable configuration, asynchronous construction, and the worker pipeline |
 | Spectral estimation | `DpssTapers.*`, `MultitaperPeriodogram.*`, `SpectrumEstimation.h` | DPSS generation, detrending, tapering, batched FFTs, and calibrated one-sided PSDs |
 | Numerical support | `Numerics/SelectedTridiagonalEigensolver.*` | Plugin-private LAPACKE wrapper used only to generate selected DPSS eigenpairs |
-| Display | `SpectrumDisplayReducer.*`, `SpectrumAmplitudeRange.*`, `SpectrumFrameFifo.h`, `SpectrumCanvas.*` | Linear/log bin reduction, stable dB ranges, frame publication, axes, cursors, and traces |
+| Display | `SpectrumDisplayReducer.*`, `AperiodicSpectrumBaseline.*`, `SpectrumAmplitudeRange.*`, `SpectrumFrameFifo.h`, `SpectrumCanvas.*` | Linear/log bin reduction, optional broad-background display, stable dB ranges, frame publication, axes, cursors, and traces |
 | Capture and comparison | `SpectrumCaptureAccumulator.*`, `SpectrumReference.*` | Non-overlapping Fine-window accumulation, variance, frozen references, and compatible comparisons |
 | Correctness oracles | `ReferencePeriodogram.*`, `SingleTaperPeriodogram.*` | Independent double-precision reference and focused single-taper implementation; neither is the live pipeline |
 
@@ -70,6 +71,8 @@ selection.
   channel.
 - Keep PSD values linear through estimation, capture, averaging, and display
   reduction. Convert PSD to ASD or decibels only for presentation.
+- Keep aperiodic-background fitting separate from spectral estimation. Publish
+  the raw PSD beside the fit, and label removed views as dB above background.
 - Treat configurations and DPSS banks as immutable after construction.
 - Preserve absolute sample positions and reset window history at discontinuities
   or generation changes.

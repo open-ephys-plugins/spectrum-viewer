@@ -195,6 +195,88 @@ TEST_F (SpectrumViewerLifecycleTests, StartPreparesWarmsAndBecomesLive)
     ASSERT_TRUE (waitUntil ([this] { return consumeWindowSize() == 20u; }));
 }
 
+TEST_F (SpectrumViewerLifecycleTests, FirstStartResolvesLoadedStreamSelection)
+{
+    auto requestedStream = std::make_shared<std::atomic<std::uint16_t>> (0);
+    createProcessor (
+        [requestedStream] (Request request)
+        {
+            requestedStream->store (request.sourceStreamId);
+            return buildRuntime (std::move (request));
+        },
+        1,
+        2);
+
+    const auto secondStream = processor->getDataStreams()[1]->getStreamId();
+    auto* streamParameter = dynamic_cast<SelectedStreamParameter*> (
+        processor->getParameter ("active_stream"));
+    ASSERT_NE (streamParameter, nullptr);
+    XmlElement savedParameters ("PARAMETERS");
+    savedParameters.setAttribute ("active_stream", 1);
+    streamParameter->fromXml (&savedParameters);
+
+    // Loading changes the stored value directly. updateSettings(), rather
+    // than a UI callback, must establish the route used by the first start.
+    processor->updateSettings();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    EXPECT_EQ (requestedStream->load(), secondStream);
+}
+
+TEST_F (SpectrumViewerLifecycleTests, FirstStartDoesNotRequirePreparedHostBlockSize)
+{
+    createProcessor();
+    processor->setRateAndBufferSizeDetails (sampleRate, 0);
+
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    writeBlocks (4);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness()
+               == SpectrumAnalysisReadiness::live;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, NominalJuceBlockSizeDoesNotLimitStreamPayload)
+{
+    constexpr int nominalJuceBlockSize = 128;
+    constexpr int streamPayloadSamples = 696;
+    createProcessor();
+    processor->setRateAndBufferSizeDetails (sampleRate, nominalJuceBlockSize);
+
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+
+    AudioBuffer<float> buffer (1, streamPayloadSamples);
+    buffer.clear();
+    tester->processBlock (processor, buffer);
+
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
+    }));
+    EXPECT_EQ (processor->getRejectedInputBlockCount(), 0u);
+}
+
+TEST_F (SpectrumViewerLifecycleTests, FirstStartDoesNotRequirePopulatedStreamNames)
+{
+    createProcessor();
+    auto* streamParameter = dynamic_cast<SelectedStreamParameter*> (
+        processor->getParameter ("active_stream"));
+    ASSERT_NE (streamParameter, nullptr);
+    streamParameter->setStreamNames ({});
+
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    writeBlocks (4);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness()
+               == SpectrumAnalysisReadiness::live;
+    }));
+}
+
 TEST_F (SpectrumViewerLifecycleTests, InvalidChannelNamesUseSafeFallbacks)
 {
     createProcessor();
@@ -568,7 +650,10 @@ TEST_F (SpectrumViewerLifecycleTests, PublishesFullRangeReducedFramesWithNativeU
         {
             matched = frame.frequencyScale == spectrumviewer::FrequencyScale::logarithmic;
             if (matched)
+            {
+                EXPECT_DOUBLE_EQ (frame.minimumFrequencyHz, 4.0);
                 EXPECT_GT (frame.frequenciesHz[0], 0.0f);
+            }
         });
         return matched;
     }));
@@ -965,17 +1050,17 @@ TEST_F (SpectrumViewerLifecycleTests, CompletedCaptureBecomesImmutableReferenceA
         return processor->getCaptureState() == SpectrumCaptureState::live;
     }));
     EXPECT_TRUE (processor->hasSpectrumReference());
-    writeBlocks (4);
+    writeBlocks (32);
     ASSERT_TRUE (waitUntil ([this]
     {
-        bool incompatible = false;
+        bool compatible = false;
         processor->consumeLatestSpectrumFrame ([&] (const auto& frame)
         {
-            incompatible = frame.comparison.compatibility
-                               == spectrumviewer::SpectrumReferenceCompatibility::incompatible
-                           && frame.getChannelComparisonData (0) == nullptr;
+            compatible = frame.comparison.compatibility
+                             == spectrumviewer::SpectrumReferenceCompatibility::compatible
+                         && frame.getChannelComparisonData (0) != nullptr;
         });
-        return incompatible;
+        return compatible;
     }));
 
     processor->clearSpectrumReference();
@@ -983,7 +1068,7 @@ TEST_F (SpectrumViewerLifecycleTests, CompletedCaptureBecomesImmutableReferenceA
     EXPECT_EQ (processor->getReferenceCompatibility(),
                spectrumviewer::SpectrumReferenceCompatibility::noReference);
     EXPECT_EQ (processor->getReferenceCapturedAtMilliseconds(), 0);
-    writeBlocks (4);
+    writeBlocks (32);
     ASSERT_TRUE (waitUntil ([this]
     {
         bool absolute = false;

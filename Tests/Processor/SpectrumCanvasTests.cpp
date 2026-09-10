@@ -156,6 +156,8 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
     ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
 
     auto* plot = canvas->getPlotPtr();
+    plot->setAmplitudeRangeMode (spectrumviewer::AmplitudeRangeMode::fixed);
+    ASSERT_TRUE (plot->setFixedAmplitudeRange (-60.0f, 60.0f));
     for (int block = 0;
          block < 64
          && (plot->getMaximumFrequencyForTesting() != sampleRate * 0.5f
@@ -213,11 +215,11 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
     EXPECT_GT (plot->getFrequenciesForTesting().front(), 0.0f);
     EXPECT_TRUE (std::is_sorted (plot->getFrequenciesForTesting().begin(),
                                  plot->getFrequenciesForTesting().end()));
-    EXPECT_TRUE (plot->getXAxisLabelForTesting().containsIgnoreCase ("log10"));
+    EXPECT_TRUE (plot->getXAxisLabelForTesting().containsIgnoreCase ("log scale"));
     EXPECT_TRUE (plot->getYAxisLabelForTesting().startsWith ("ASD"));
-    EXPECT_TRUE (plot->getYAxisLabelForTesting().contains ("uV/sqrt(Hz)"));
+    EXPECT_TRUE (plot->getYAxisLabelForTesting().contains ("uV/√Hz"));
     const auto logRange = plot->getPlotRangeForTesting();
-    EXPECT_NEAR (logRange.xmin, std::log10 (4.0f), 1.0e-5f);
+    EXPECT_NEAR (logRange.xmin, std::log10 (10.0f), 1.0e-5f);
     EXPECT_NEAR (logRange.xmax, std::log10 (sampleRate * 0.5f), 1.0e-5f);
     EXPECT_FLOAT_EQ (logRange.ymin, fixedLinearRange.ymin);
     EXPECT_FLOAT_EQ (logRange.ymax, fixedLinearRange.ymax);
@@ -296,7 +298,7 @@ TEST_F (SpectrumCanvasTests, DeltaComparisonUsesSymmetricRangeAndReferenceLabel)
     plot->beginSpectrumFrame (1, 1, 1, 0.5);
     plot->updatePowerSpectrum (mean, peak, 3, frequencies, "uV",
                                spectrumviewer::FrequencyScale::logarithmic,
-                               10.0, 1000.0, 0, delta, comparison);
+                               10.0, 1000.0, 0, nullptr, delta, comparison);
     plot->plotPowerSpectrum();
 
     EXPECT_EQ (plot->getComparisonModeForTesting(),
@@ -309,5 +311,26 @@ TEST_F (SpectrumCanvasTests, DeltaComparisonUsesSymmetricRangeAndReferenceLabel)
     const auto image = renderCanvas();
     EXPECT_NE (imageHash (image), 0u);
     optionallyWriteImage (image, "spectrum-delta-reference.png");
+}
+
+TEST_F (SpectrumCanvasTests, AperiodicRemovalDisplaysDbAboveBackground)
+{
+    auto* plot = canvas->getPlotPtr();
+    const float mean[] { 1.0f, 10.0f, 100.0f };
+    const float peak[] { 2.0f, 20.0f, 200.0f };
+    const float baseline[] { -3.0f, 7.0f, 17.0f };
+    const float frequencies[] { 10.0f, 100.0f, 1000.0f };
+
+    plot->beginSpectrumFrame (1, 1, 1, 0.5);
+    plot->updatePowerSpectrum (mean, peak, 3, frequencies, "uV",
+                               spectrumviewer::FrequencyScale::logarithmic,
+                               10.0, 1000.0, 0, baseline);
+    plot->setAperiodicDisplayMode (
+        spectrumviewer::AperiodicDisplayMode::remove);
+
+    EXPECT_EQ (plot->getDisplayedDbMeanTraceForTesting (0),
+               (std::vector<float> { 3.0f, 3.0f, 3.0f }));
+    EXPECT_EQ (plot->getYAxisLabelForTesting(),
+               "Spectral residual (dB above background)");
 }
 } // namespace

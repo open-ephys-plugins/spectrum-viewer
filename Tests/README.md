@@ -47,12 +47,18 @@ integrated-power conservation, flat-noise level, narrow-line preservation, and
 monotonic linear/log frequency coordinates. Log display excludes DC because
 zero has no logarithmic coordinate; the underlying full PSD remains unchanged.
 
-`SpectrumAmplitudeRange` defaults to a fixed -60 to 60 dB display and rejects
-fixed spans narrower than 20 dB. Its optional auto mode fits the lower bound
+`AperiodicSpectrumBaseline` estimates a broad background from median log-power
+in log-frequency bands, then smooths and interpolates those knots. Tests check
+power-law recovery and ensure that a narrow high-contrast line remains in the
+residual. This is an optional display transform; it never replaces or modifies
+the multitaper PSD.
+
+`SpectrumAmplitudeRange` defaults to automatic fitting and rejects
+fixed spans narrower than 20 dB. Automatic mode fits the lower bound
 from a robust mean-PSD percentile, retains the strongest peak-envelope value,
-and follows targets using signal time rather than repaint cadence. Tests pin
-outlier rejection, peak visibility, fixed-range stability, unit resets, and the
-faster outward/slower inward response.
+and follows targets using signal time rather than repaint cadence. Tests
+pin outlier rejection, peak visibility, fixed-range stability, unit resets, and
+the faster outward/slower inward response.
 
 `ReferencePeriodogram` is an intentionally slow, double-precision direct DFT
 used only as a correctness oracle. Its tests pin one-sided PSD calibration,

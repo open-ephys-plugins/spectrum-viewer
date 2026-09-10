@@ -153,6 +153,14 @@ public:
         endDisplaySettingsUpdate();
     }
 
+    void setAperiodicDisplayMode (
+        spectrumviewer::AperiodicDisplayMode mode) noexcept
+    {
+        beginDisplaySettingsUpdate();
+        aperiodicDisplayMode.store (mode, std::memory_order_relaxed);
+        endDisplaySettingsUpdate();
+    }
+
     /** Returns the frequency step for the currently selected range*/
     float getFreqStep() const noexcept
     {
@@ -353,6 +361,8 @@ private:
         std::uint64_t sequence = 0;
         std::size_t columnCount = 1;
         spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
+        spectrumviewer::AperiodicDisplayMode aperiodicMode =
+            spectrumviewer::AperiodicDisplayMode::off;
         double minimumFrequencyHz = 0.0;
         double maximumFrequencyHz = 0.0;
     };
@@ -409,6 +419,11 @@ private:
     Array<int> channels;
 
     static constexpr std::size_t INPUT_QUEUE_CAPACITY = 8;
+    // GenericProcessor reports JUCE's nominal 128-sample graph quantum, not an
+    // upper bound for stream payloads. Reserve enough room for the largest
+    // callback supported by the GUI's audio settings while retaining a larger
+    // value if a future host supplies one.
+    static constexpr std::size_t MINIMUM_INPUT_BLOCK_CAPACITY = 8192;
     // Display frames are replaceable latest-state data: one may be read, one
     // ready, and one provides scheduling tolerance without retaining history.
     static constexpr std::size_t OUTPUT_QUEUE_CAPACITY = 3;
@@ -434,6 +449,9 @@ private:
     std::atomic<std::size_t> displayColumnCount { 800 };
     std::atomic<spectrumviewer::FrequencyScale> displayFrequencyScale {
         spectrumviewer::FrequencyScale::linear
+    };
+    std::atomic<spectrumviewer::AperiodicDisplayMode> aperiodicDisplayMode {
+        spectrumviewer::AperiodicDisplayMode::off
     };
     std::atomic<double> displayMinimumFrequencyHz { 0.0 };
     // A non-positive maximum means the active stream's Nyquist frequency.

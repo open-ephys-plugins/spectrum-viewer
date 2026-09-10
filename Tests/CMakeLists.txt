@@ -37,6 +37,7 @@ endif()
 add_executable(
 	spectrum_viewer_tests
 	${OPENEPHYS_FFTW_SOURCE_DIR}/Source/OpenEphysFFTWBatch.cpp
+	../Source/AperiodicSpectrumBaseline.cpp
 	../Source/DpssTapers.cpp
 	../Source/Numerics/SelectedTridiagonalEigensolver.cpp
 	../Source/AsyncSpectrumAnalysis.cpp
@@ -48,6 +49,7 @@ add_executable(
 	../Source/SpectrumCaptureAccumulator.cpp
 	../Source/SpectrumDisplayReducer.cpp
 	../Source/SpectrumReference.cpp
+	AperiodicSpectrumBaselineTests.cpp
 	AsyncSpectrumAnalysisTests.cpp
 	BacklogSheddingPolicyTests.cpp
 	JuceCore.cpp

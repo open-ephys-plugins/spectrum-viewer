@@ -251,6 +251,7 @@ SpectrumViewer::DisplaySettings SpectrumViewer::readDisplaySettings() const noex
 
         settings.columnCount = displayColumnCount.load (std::memory_order_relaxed);
         settings.frequencyScale = displayFrequencyScale.load (std::memory_order_relaxed);
+        settings.aperiodicMode = aperiodicDisplayMode.load (std::memory_order_relaxed);
         settings.minimumFrequencyHz = displayMinimumFrequencyHz.load (std::memory_order_relaxed);
         settings.maximumFrequencyHz = displayMaximumFrequencyHz.load (std::memory_order_relaxed);
 
@@ -406,6 +407,10 @@ bool SpectrumViewer::publishReducedSpectrum (
     auto maximumHz = settings.maximumFrequencyHz;
     if (maximumHz <= 0.0)
         maximumHz = descriptor.sampleRateHz * 0.5;
+    auto minimumHz = settings.minimumFrequencyHz;
+    if (settings.frequencyScale == spectrumviewer::FrequencyScale::logarithmic
+        && minimumHz <= 0.0)
+        minimumHz = std::min (10.0, maximumHz / 10.0);
 
     auto& reducer = activeAnalysis->getDisplayReducer();
     if (! reducer.reduce (planarPsd,
@@ -415,7 +420,7 @@ bool SpectrumViewer::publishReducedSpectrum (
                           descriptor.windowSampleCount,
                           settings.columnCount,
                           settings.frequencyScale,
-                          settings.minimumFrequencyHz,
+                          minimumHz,
                           maximumHz))
         return false;
 
@@ -458,7 +463,7 @@ bool SpectrumViewer::publishReducedSpectrum (
                         descriptor.windowSampleCount,
                         settings.columnCount,
                         settings.frequencyScale,
-                        settings.minimumFrequencyHz,
+                        minimumHz,
                         maximumHz))
                     return false;
 
@@ -482,6 +487,21 @@ bool SpectrumViewer::publishReducedSpectrum (
     }
 
     const auto& reduced = reducer.getView();
+    auto* baselineDb = settings.aperiodicMode
+                               == spectrumviewer::AperiodicDisplayMode::off
+                           ? nullptr
+                           : activeAnalysis->getBaselineScratch();
+    if (baselineDb != nullptr
+        && ! activeAnalysis->getBaselineEstimator().estimate (
+            planarPsd,
+            channelCount,
+            binCount,
+            descriptor.sampleRateHz,
+            descriptor.windowSampleCount,
+            reduced.frequenciesHz,
+            reduced.numColumns,
+            baselineDb))
+        baselineDb = nullptr;
     return frameFifo.tryPushReduced (reduced.getChannelMean (0),
                                      reduced.getChannelPeak (0),
                                      reduced.frequenciesHz,
@@ -494,7 +514,8 @@ bool SpectrumViewer::publishReducedSpectrum (
                                      reduced.maximumFrequencyHz,
                                      capture,
                                      comparisonData,
-                                     comparison);
+                                     comparison,
+                                     baselineDb);
 }
 
 bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
@@ -879,6 +900,12 @@ void SpectrumViewer::adoptPreparedAnalysis()
 
 void SpectrumViewer::updateSettings()
 {
+    // Resolve the processor-scoped selection before consulting the cached
+    // stream id. Session loading can update a parameter without delivering
+    // its callback before the first acquisition starts.
+    if (auto* selectedStream = getParameter ("active_stream"))
+        parameterValueChanged (selectedStream);
+
     if (dataStreams.size() > 0)
     {
         if (auto* stream = getDataStream (activeStream))
@@ -1009,7 +1036,29 @@ bool SpectrumViewer::startAcquisition()
         if (inputFifo != nullptr || activeAnalysis != nullptr)
             clearAcquisitionState();
 
+        // The first host start can precede the editor/visualizer update that
+        // populates SelectedStreamParameter's display-name table. Refresh all
+        // available routing state, then fall back to its selected index against
+        // the processor's actual streams rather than requiring that UI table.
+        updateSettings();
+
         auto* stream = getDataStream (activeStream);
+        if (stream == nullptr && ! dataStreams.isEmpty())
+        {
+            auto selectedIndex = 0;
+            if (auto* selected = dynamic_cast<SelectedStreamParameter*> (
+                    getParameter ("active_stream")))
+                selectedIndex = jlimit (0, dataStreams.size() - 1,
+                                        selected->getSelectedIndex());
+            stream = dataStreams[selectedIndex];
+            if (stream != nullptr)
+            {
+                activeStream = stream->getStreamId();
+                if (auto* selectedChannels = dynamic_cast<SelectedChannelsParameter*> (
+                        stream->getParameter ("Channels")))
+                    channels = selectedChannels->getArrayValue();
+            }
+        }
         if (! updateRequestedInputRoute (stream))
         {
             analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
@@ -1018,8 +1067,11 @@ bool SpectrumViewer::startAcquisition()
             return false;
         }
 
-        const auto maximumInputBlockSamples = getBlockSize();
-        if (acquisitionChannelCount == 0 || maximumInputBlockSamples <= 0
+        const auto reportedBlockSize = getBlockSize();
+        const auto maximumInputBlockSamples = std::max (
+            MINIMUM_INPUT_BLOCK_CAPACITY,
+            reportedBlockSize > 0 ? static_cast<std::size_t> (reportedBlockSize) : 0u);
+        if (acquisitionChannelCount == 0
             || ! std::isfinite (acquisitionSampleRateHz)
             || acquisitionSampleRateHz <= 0.0)
         {
@@ -1032,7 +1084,7 @@ bool SpectrumViewer::startAcquisition()
         {
             inputFifo = std::make_unique<spectrumviewer::SampleBlockFifo> (
                 MAX_CHANS,
-                static_cast<std::size_t> (maximumInputBlockSamples),
+                maximumInputBlockSamples,
                 INPUT_QUEUE_CAPACITY);
         }
         catch (const std::exception& error)
@@ -1045,7 +1097,7 @@ bool SpectrumViewer::startAcquisition()
             return false;
         }
 
-        acquisitionMaximumInputBlockSamples = static_cast<std::size_t> (maximumInputBlockSamples);
+        acquisitionMaximumInputBlockSamples = maximumInputBlockSamples;
         publishInputRoute (acquisitionStream,
                            acquisitionChannelCount,
                            acquisitionGlobalChannels.data(),
@@ -1222,6 +1274,10 @@ bool SpectrumViewer::setCurrentCaptureAsReference() noexcept
     const auto captureId = requestedCaptureId.load (std::memory_order_acquire);
     if (captureId == 0)
         return false;
+    // Captures use the Fine estimator. Keep the restored live analysis
+    // compatible so a reference comparison works without a hidden profile
+    // prerequisite.
+    setAnalysisProfile (SpectrumAnalysisProfile::fine);
     referenceRequest.store (captureId, std::memory_order_release);
     comparisonSettingsSequence.fetch_add (1, std::memory_order_release);
     return true;

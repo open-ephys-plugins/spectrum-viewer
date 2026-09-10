@@ -23,8 +23,8 @@ enum class AmplitudeRangeMode
 
 struct DecibelRange
 {
-    float minimum = -60.0f;
-    float maximum = 60.0f;
+    float minimum = -25.0f;
+    float maximum = 25.0f;
 };
 
 /**
@@ -70,7 +70,7 @@ private:
                          bool movingOutward,
                          double elapsedSignalSeconds) noexcept;
 
-    AmplitudeRangeMode mode = AmplitudeRangeMode::fixed;
+    AmplitudeRangeMode mode = AmplitudeRangeMode::automatic;
     DecibelRange fixedRange;
     DecibelRange automaticRange;
     bool automaticRangeIsValid = false;

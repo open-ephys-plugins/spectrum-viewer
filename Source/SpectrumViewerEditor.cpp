@@ -26,8 +26,29 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "SpectrumCanvas.h"
 #include "SpectrumViewer.h"
 
+namespace
+{
+void applyReadableTextBoxColours (Slider& slider)
+{
+    const auto text = slider.findColour (ThemeColours::controlPanelText);
+    const auto background = slider.findColour (ThemeColours::widgetBackground);
+    slider.setColour (Slider::textBoxTextColourId, text);
+    slider.setColour (Slider::textBoxBackgroundColourId, background);
+    slider.setColour (Slider::textBoxHighlightColourId,
+                      text.withAlpha (0.25f));
+    for (auto* child : slider.getChildren())
+    {
+        if (auto* label = dynamic_cast<Label*> (child))
+        {
+            label->setColour (Label::textWhenEditingColourId, text);
+            label->setColour (Label::backgroundWhenEditingColourId, background);
+        }
+    }
+}
+} // namespace
+
 SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
-    : VisualizerEditor (p, "Power Spectrum", 875)
+    : VisualizerEditor (p, "Power Spectrum", 230)
 {
     addSelectedStreamParameterEditor (Parameter::PROCESSOR_SCOPE, "active_stream", 15, 28);
     getParameterEditor ("active_stream")->setSize (210, 18);
@@ -36,7 +57,7 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     getParameterEditor ("Channels")->setSize (210, 18);
 
     displayType = std::make_unique<ComboBox> ("Display Type");
-    displayType->setBounds (230, 28, 100, 18);
+    displayType->setBounds (330, 28, 100, 18);
     displayType->addListener (this);
     displayType->addItemList ({ "Power Spectrum", "Spectrogram" }, 1);
     displayType->setSelectedId (1, dontSendNotification);
@@ -44,7 +65,7 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
 
     displayLabel = std::make_unique<Label> ("DisplayTypeLabel", "Display");
     displayLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    displayLabel->setBounds (338, 28, 80, 18);
+    displayLabel->setBounds (230, 28, 95, 18);
     addAndMakeVisible (displayLabel.get());
 
     freqRanges.add (Range (0, 100));
@@ -52,15 +73,15 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     freqRanges.add (Range (0, 1000));
     freqRanges.add (Range (0, 1000)); // Updated to the selected stream's Nyquist.
     frequencyRange = std::make_unique<ComboBox> ("FreqRange");
-    frequencyRange->setBounds (230, 53, 100, 18);
+    frequencyRange->setBounds (330, 53, 100, 18);
     frequencyRange->addListener (this);
     frequencyRange->addItemList ({ "0 - 100", "0 - 500", "0 - 1000", "Full" }, 1);
     frequencyRange->setSelectedId (4, dontSendNotification);
     addAndMakeVisible (frequencyRange.get());
 
-    frequencyLabel = std::make_unique<Label> ("FreqRangeLabel", "Freq. Range");
+    frequencyLabel = std::make_unique<Label> ("FreqRangeLabel", "Frequency range");
     frequencyLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    frequencyLabel->setBounds (338, 53, 80, 18);
+    frequencyLabel->setBounds (230, 53, 95, 18);
     addAndMakeVisible (frequencyLabel.get());
 
     analysisProfile = std::make_unique<ComboBox> ("AnalysisProfile");
@@ -76,76 +97,97 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     addAndMakeVisible (profileLabel.get());
 
     frequencyScale = std::make_unique<ComboBox> ("FrequencyScale");
-    frequencyScale->setBounds (230, 78, 100, 18);
+    frequencyScale->setBounds (330, 78, 100, 18);
     frequencyScale->addListener (this);
     frequencyScale->addItemList ({ "Linear", "Log" }, 1);
     frequencyScale->setSelectedId (1, dontSendNotification);
     addAndMakeVisible (frequencyScale.get());
 
-    scaleLabel = std::make_unique<Label> ("FrequencyScaleLabel", "Frequency Axis");
+    scaleLabel = std::make_unique<Label> ("FrequencyScaleLabel", "Frequency scale");
     scaleLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    scaleLabel->setBounds (338, 78, 95, 18);
+    scaleLabel->setBounds (230, 78, 95, 18);
     addAndMakeVisible (scaleLabel.get());
 
     amplitudeDisplay = std::make_unique<ComboBox> ("AmplitudeDisplay");
-    amplitudeDisplay->setBounds (230, 103, 100, 18);
+    amplitudeDisplay->setBounds (330, 103, 100, 18);
     amplitudeDisplay->addListener (this);
     amplitudeDisplay->addItemList ({ "PSD", "ASD" }, 1);
     amplitudeDisplay->setSelectedId (1, dontSendNotification);
     addAndMakeVisible (amplitudeDisplay.get());
 
-    amplitudeLabel = std::make_unique<Label> ("AmplitudeDisplayLabel", "Values");
+    amplitudeLabel = std::make_unique<Label> ("AmplitudeDisplayLabel", "Y units");
     amplitudeLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    amplitudeLabel->setBounds (338, 103, 80, 18);
+    amplitudeLabel->setBounds (230, 103, 95, 18);
     addAndMakeVisible (amplitudeLabel.get());
 
+    baselineDisplay = std::make_unique<ComboBox> ("AperiodicDisplay");
+    baselineDisplay->addListener (this);
+    baselineDisplay->addItemList ({ "Off", "Show fit", "Remove" }, 1);
+    baselineDisplay->setSelectedId (1, dontSendNotification);
+    baselineDisplay->setTooltip (
+        "Show or subtract a robust broad spectral background; the PSD estimate is unchanged");
+    addAndMakeVisible (baselineDisplay.get());
+
+    baselineLabel = std::make_unique<Label> ("AperiodicDisplayLabel", "Background");
+    baselineLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    addAndMakeVisible (baselineLabel.get());
+
+    peakEnvelope = std::make_unique<ToggleButton> ("Peak envelope");
+    peakEnvelope->setToggleState (true, dontSendNotification);
+    peakEnvelope->setTooltip (
+        "Show the maximum spectral power contributing to each display column");
+    peakEnvelope->addListener (this);
+    addAndMakeVisible (peakEnvelope.get());
+
     amplitudeRangeMode = std::make_unique<ComboBox> ("AmplitudeRangeMode");
-    amplitudeRangeMode->setBounds (445, 28, 100, 18);
+    amplitudeRangeMode->setBounds (540, 28, 100, 18);
     amplitudeRangeMode->addListener (this);
     amplitudeRangeMode->addItemList ({ "Auto", "Fixed" }, 1);
-    amplitudeRangeMode->setSelectedId (2, dontSendNotification);
+    amplitudeRangeMode->setSelectedId (1, dontSendNotification);
     addAndMakeVisible (amplitudeRangeMode.get());
 
     amplitudeRangeLabel = std::make_unique<Label> ("AmplitudeRangeLabel", "dB Range");
     amplitudeRangeLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    amplitudeRangeLabel->setBounds (553, 28, 80, 18);
+    amplitudeRangeLabel->setBounds (445, 28, 90, 18);
     addAndMakeVisible (amplitudeRangeLabel.get());
 
     minimumDb = std::make_unique<Slider> ("MinimumDb");
     minimumDb->setRange (-240.0, 100.0, 1.0);
-    minimumDb->setValue (-60.0, dontSendNotification);
+    minimumDb->setValue (-25.0, dontSendNotification);
     minimumDb->setSliderStyle (Slider::LinearHorizontal);
     minimumDb->setTextBoxStyle (Slider::TextBoxLeft, false, 55, 18);
-    minimumDb->setBounds (445, 53, 100, 18);
+    minimumDb->setBounds (540, 78, 100, 18);
+    applyReadableTextBoxColours (*minimumDb);
     minimumDb->addListener (this);
     addAndMakeVisible (minimumDb.get());
 
     minimumDbLabel = std::make_unique<Label> ("MinimumDbLabel", "Minimum dB");
     minimumDbLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    minimumDbLabel->setBounds (553, 53, 90, 18);
+    minimumDbLabel->setBounds (445, 78, 90, 18);
     addAndMakeVisible (minimumDbLabel.get());
 
     maximumDb = std::make_unique<Slider> ("MaximumDb");
     maximumDb->setRange (-220.0, 120.0, 1.0);
-    maximumDb->setValue (60.0, dontSendNotification);
+    maximumDb->setValue (25.0, dontSendNotification);
     maximumDb->setSliderStyle (Slider::LinearHorizontal);
     maximumDb->setTextBoxStyle (Slider::TextBoxLeft, false, 55, 18);
-    maximumDb->setBounds (445, 78, 100, 18);
+    maximumDb->setBounds (540, 53, 100, 18);
+    applyReadableTextBoxColours (*maximumDb);
     maximumDb->addListener (this);
     addAndMakeVisible (maximumDb.get());
 
     maximumDbLabel = std::make_unique<Label> ("MaximumDbLabel", "Maximum dB");
     maximumDbLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    maximumDbLabel->setBounds (553, 78, 90, 18);
+    maximumDbLabel->setBounds (445, 53, 90, 18);
     addAndMakeVisible (maximumDbLabel.get());
 
     automaticRangeLabel = std::make_unique<Label> ("AutomaticRangeLabel", "Awaiting spectrum...");
     automaticRangeLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
-    automaticRangeLabel->setBounds (445, 53, 200, 18);
+    automaticRangeLabel->setBounds (540, 53, 115, 18);
     addAndMakeVisible (automaticRangeLabel.get());
 
     captureDuration = std::make_unique<ComboBox> ("CaptureDuration");
-    captureDuration->setBounds (660, 28, 100, 18);
+    captureDuration->setBounds (765, 28, 100, 18);
     captureDuration->addItemList ({ "10 s", "30 s", "60 s" }, 1);
     captureDuration->setSelectedId (1, dontSendNotification);
     captureDuration->setTooltip (
@@ -154,7 +196,7 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
 
     captureDurationLabel = std::make_unique<Label> ("CaptureDurationLabel", "Capture Length");
     captureDurationLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    captureDurationLabel->setBounds (768, 28, 100, 18);
+    captureDurationLabel->setBounds (660, 28, 100, 18);
     addAndMakeVisible (captureDurationLabel.get());
 
     captureAction = std::make_unique<UtilityButton> ("Capture");
@@ -173,7 +215,7 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     addAndMakeVisible (readinessLabel.get());
 
     comparisonMode = std::make_unique<ComboBox> ("SpectrumComparisonMode");
-    comparisonMode->setBounds (660, 78, 100, 18);
+    comparisonMode->setBounds (765, 78, 100, 18);
     comparisonMode->addItemList ({ "Absolute", "Overlay", "Delta" }, 1);
     comparisonMode->setSelectedId (1, dontSendNotification);
     comparisonMode->addListener (this);
@@ -181,7 +223,7 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
 
     comparisonModeLabel = std::make_unique<Label> ("SpectrumComparisonModeLabel", "Comparison");
     comparisonModeLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    comparisonModeLabel->setBounds (768, 78, 100, 18);
+    comparisonModeLabel->setBounds (660, 78, 100, 18);
     addAndMakeVisible (comparisonModeLabel.get());
 
     setReferenceAction = std::make_unique<UtilityButton> ("Set Reference");
@@ -198,15 +240,47 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     referenceStatusLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
     referenceStatusLabel->setBounds (445, 103, 200, 18);
     addAndMakeVisible (referenceStatusLabel.get());
+
+    // Stream and channel selection change the processor route, so keep them in
+    // the signal-chain editor. SpectrumCanvas reparents display-only controls.
+    getParameterEditor ("active_stream")->setBounds (15, 28, 210, 18);
+    getParameterEditor ("Channels")->setBounds (15, 53, 210, 18);
+    readinessLabel->setBounds (15, 78, 210, 18);
+    Component* canvasControls[] {
+        displayType.get(), displayLabel.get(),
+        frequencyRange.get(), frequencyLabel.get(),
+        analysisProfile.get(), profileLabel.get(),
+        frequencyScale.get(), scaleLabel.get(),
+        amplitudeDisplay.get(), amplitudeLabel.get(),
+        baselineDisplay.get(), baselineLabel.get(),
+        peakEnvelope.get(),
+        amplitudeRangeMode.get(), amplitudeRangeLabel.get(),
+        minimumDb.get(), minimumDbLabel.get(),
+        maximumDb.get(), maximumDbLabel.get(), automaticRangeLabel.get(),
+        captureDuration.get(), captureDurationLabel.get(),
+        captureAction.get(), captureStatusLabel.get(),
+        comparisonMode.get(), comparisonModeLabel.get(),
+        setReferenceAction.get(), clearReferenceAction.get(),
+        referenceStatusLabel.get()
+    };
+    for (auto* control : canvasControls)
+        removeChildComponent (control);
+
     updateAmplitudeRangeControls();
     startTimerHz (4);
+}
+
+SpectrumViewerEditor::~SpectrumViewerEditor()
+{
+    // Detach canvas children before the editor-owned controls are destroyed.
+    canvas.reset();
 }
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
 {
     // Create a new canvas and pass the processor ptr
     auto sp = (SpectrumViewer*) getProcessor();
-    auto spectrumCanvas = new SpectrumCanvas (sp);
+    auto spectrumCanvas = new SpectrumCanvas (sp, this);
 
     // Set frequency range for canvas
     Range<int> range = freqRanges[frequencyRange->getSelectedItemIndex()];
@@ -217,6 +291,14 @@ Visualizer* SpectrumViewerEditor::createNewCanvas()
     spectrumCanvas->setDisplayType (type);
     spectrumCanvas->getPlotPtr()->setAmplitudeDisplay (
         static_cast<SpectrumAmplitudeDisplay> (amplitudeDisplay->getSelectedId()));
+    spectrumCanvas->getPlotPtr()->setAperiodicDisplayMode (
+        static_cast<spectrumviewer::AperiodicDisplayMode> (
+            baselineDisplay->getSelectedId()));
+    spectrumCanvas->getPlotPtr()->setPeakEnvelopeVisible (
+        peakEnvelope->getToggleState());
+    sp->setAperiodicDisplayMode (
+        static_cast<spectrumviewer::AperiodicDisplayMode> (
+            baselineDisplay->getSelectedId()));
     spectrumCanvas->getPlotPtr()->setFixedAmplitudeRange (
         static_cast<float> (minimumDb->getValue()),
         static_cast<float> (maximumDb->getValue()));
@@ -288,6 +370,16 @@ void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
         sc->getPlotPtr()->setAmplitudeDisplay (
             static_cast<SpectrumAmplitudeDisplay> (cb->getSelectedId()));
     }
+    else if (cb == baselineDisplay.get())
+    {
+        static_cast<SpectrumViewer*> (getProcessor())->setAperiodicDisplayMode (
+            static_cast<spectrumviewer::AperiodicDisplayMode> (
+                cb->getSelectedId()));
+        if (sc != nullptr)
+            sc->getPlotPtr()->setAperiodicDisplayMode (
+                static_cast<spectrumviewer::AperiodicDisplayMode> (
+                    cb->getSelectedId()));
+    }
     else if (cb == amplitudeRangeMode.get())
     {
         updateAmplitudeRangeControls();
@@ -319,10 +411,22 @@ void SpectrumViewerEditor::sliderValueChanged (Slider* slider)
 void SpectrumViewerEditor::buttonClicked (Button* button)
 {
     auto* processor = static_cast<SpectrumViewer*> (getProcessor());
+    if (button == peakEnvelope.get())
+    {
+        if (auto* spectrumCanvas = static_cast<SpectrumCanvas*> (canvas.get()))
+            spectrumCanvas->getPlotPtr()->setPeakEnvelopeVisible (
+                peakEnvelope->getToggleState());
+        return;
+    }
     if (button == setReferenceAction.get())
     {
         if (processor->setCurrentCaptureAsReference())
         {
+            // Captures always use Fine analysis. Restore the same estimator
+            // when returning live so the reference remains comparable.
+            analysisProfile->setSelectedId (
+                static_cast<int> (SpectrumAnalysisProfile::fine),
+                sendNotification);
             comparisonMode->setSelectedId (
                 static_cast<int> (spectrumviewer::SpectrumComparisonMode::overlay),
                 sendNotification);
@@ -362,13 +466,19 @@ void SpectrumViewerEditor::buttonClicked (Button* button)
 void SpectrumViewerEditor::updateAmplitudeRangeControls()
 {
     const auto* processor = static_cast<SpectrumViewer*> (getProcessor());
+    const auto compatibleReference = processor->hasSpectrumReference()
+                                     && processor->getReferenceCompatibility()
+                                            == spectrumviewer::SpectrumReferenceCompatibility::compatible;
+    const auto comparisonActive = comparisonMode != nullptr
+                                  && comparisonMode->getSelectedId()
+                                         != static_cast<int> (
+                                             spectrumviewer::SpectrumComparisonMode::absolute)
+                                  && compatibleReference;
     const auto delta = comparisonMode != nullptr
                        && comparisonMode->getSelectedId()
                               == static_cast<int> (
                                   spectrumviewer::SpectrumComparisonMode::deltaDb)
-                       && processor->hasSpectrumReference()
-                       && processor->getReferenceCompatibility()
-                              == spectrumviewer::SpectrumReferenceCompatibility::compatible;
+                       && compatibleReference;
     const auto fixed = amplitudeRangeMode->getSelectedId() == 2 && ! delta;
     amplitudeRangeMode->setEnabled (! delta);
     minimumDb->setEnabled (fixed);
@@ -378,6 +488,11 @@ void SpectrumViewerEditor::updateAmplitudeRangeControls()
     minimumDbLabel->setVisible (fixed);
     maximumDbLabel->setVisible (fixed);
     automaticRangeLabel->setVisible (! fixed);
+    baselineDisplay->setEnabled (! comparisonActive);
+    baselineDisplay->setTooltip (
+        comparisonActive
+            ? "Aperiodic display is unavailable while comparing with a reference"
+            : "Show or subtract a robust broad spectral background; the PSD estimate is unchanged");
 }
 
 void SpectrumViewerEditor::applyAmplitudeRangeToCanvas()
@@ -409,12 +524,14 @@ void SpectrumViewerEditor::timerCallback()
     {
         case SpectrumCaptureState::preparing:
             captureAction->setButtonText ("Cancel");
+            captureAction->setTooltip ("Cancel this capture and return to the live spectrum");
             captureStatusLabel->setText ("Preparing Fine...", dontSendNotification);
             captureStatusLabel->setTooltip (
                 "Preparing 2 s, NW=3, K=4 non-overlapping Fine analysis");
             break;
         case SpectrumCaptureState::capturing:
             captureAction->setButtonText ("Cancel");
+            captureAction->setTooltip ("Cancel this capture and return to the live spectrum");
             captureStatusLabel->setText (
                 "Fine " + String (processor->getCaptureIncludedWindowCount()) + "/"
                     + String (processor->getCaptureTargetWindowCount()) + " ("
@@ -425,7 +542,8 @@ void SpectrumViewerEditor::timerCallback()
             break;
         case SpectrumCaptureState::frozen:
         {
-            captureAction->setButtonText ("Live");
+            captureAction->setButtonText ("Go Live");
+            captureAction->setTooltip ("Discard the frozen result and resume the live spectrum");
             const auto warning = processor->getCaptureFailedWindowCount()
                                      + processor->getCaptureShedWindowCount()
                                      + processor->getCaptureDiscontinuityCount()
@@ -445,28 +563,31 @@ void SpectrumViewerEditor::timerCallback()
         }
         case SpectrumCaptureState::restoringLive:
             captureAction->setButtonText ("Restoring...");
+            captureAction->setTooltip ("Preparing the live analysis");
             captureStatusLabel->setText ("Frozen", dontSendNotification);
             break;
         case SpectrumCaptureState::failed:
             captureAction->setButtonText ("Retry");
+            captureAction->setTooltip ("Retry the spectrum capture");
             captureStatusLabel->setText ("Capture failed", dontSendNotification);
             break;
         case SpectrumCaptureState::live:
         default:
             captureAction->setButtonText ("Capture");
+            captureAction->setTooltip ("Average Fine spectra, then freeze the result");
             captureStatusLabel->setText ("Live", dontSendNotification);
             break;
     }
 
     String text;
+    readinessLabel->setTooltip ({});
     switch (processor->getAnalysisReadiness())
     {
         case SpectrumAnalysisReadiness::preparing:
             text = "Preparing analysis...";
             break;
         case SpectrumAnalysisReadiness::warmingUp:
-            text = "Warming up "
-                   + String (processor->getWarmupSampleCount()) + "/"
+            text = "Warming up " + String (processor->getWarmupSampleCount()) + "/"
                    + String (processor->getWarmupTargetSampleCount());
             break;
         case SpectrumAnalysisReadiness::live:
@@ -495,9 +616,13 @@ void SpectrumViewerEditor::timerCallback()
     {
         const auto compatibility = processor->getReferenceCompatibility();
         referenceStatusLabel->setText (
-            "Ref "
-                + Time (processor->getReferenceCapturedAtMilliseconds())
-                      .formatted ("%H:%M:%S")
+            (capture == SpectrumCaptureState::frozen
+                 ? "Ref set; Go Live"
+                 : "Ref ")
+                + (capture == SpectrumCaptureState::frozen
+                       ? String()
+                       : Time (processor->getReferenceCapturedAtMilliseconds())
+                             .formatted ("%H:%M:%S"))
                 + (compatibility
                            == spectrumviewer::SpectrumReferenceCompatibility::incompatible
                        ? " (incompatible)"
@@ -561,11 +686,16 @@ void SpectrumViewerEditor::saveVisualizerEditorParameters (XmlElement* xml)
     xml->setAttribute ("analysis_profile", analysisProfile->getSelectedId());
     xml->setAttribute ("frequency_scale", frequencyScale->getSelectedId());
     xml->setAttribute ("amplitude_display", amplitudeDisplay->getSelectedId());
+    xml->setAttribute ("aperiodic_display", baselineDisplay->getSelectedId());
+    xml->setAttribute ("show_peak_envelope", peakEnvelope->getToggleState());
     xml->setAttribute ("amplitude_range_mode", amplitudeRangeMode->getSelectedId());
     xml->setAttribute ("minimum_db", minimumDb->getValue());
     xml->setAttribute ("maximum_db", maximumDb->getValue());
     xml->setAttribute ("capture_duration", captureDuration->getSelectedId());
     xml->setAttribute ("comparison_mode", comparisonMode->getSelectedId());
+    if (auto* spectrumCanvas = static_cast<SpectrumCanvas*> (canvas.get()))
+        xml->setAttribute ("options_drawer_open",
+                           spectrumCanvas->isOptionsDrawerOpen());
 }
 
 void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
@@ -583,21 +713,30 @@ void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
         xml->getIntAttribute ("frequency_scale", 1), sendNotification);
     amplitudeDisplay->setSelectedId (
         xml->getIntAttribute ("amplitude_display", 1), sendNotification);
-    minimumDb->setValue (xml->getDoubleAttribute ("minimum_db", -60.0),
+    baselineDisplay->setSelectedId (
+        jlimit (1, 3, xml->getIntAttribute ("aperiodic_display", 1)),
+        sendNotification);
+    peakEnvelope->setToggleState (
+        xml->getBoolAttribute ("show_peak_envelope", true),
+        sendNotification);
+    minimumDb->setValue (xml->getDoubleAttribute ("minimum_db", -25.0),
                          dontSendNotification);
-    maximumDb->setValue (xml->getDoubleAttribute ("maximum_db", 60.0),
+    maximumDb->setValue (xml->getDoubleAttribute ("maximum_db", 25.0),
                          dontSendNotification);
     if (maximumDb->getValue() - minimumDb->getValue() < 20.0)
     {
-        minimumDb->setValue (-60.0, dontSendNotification);
-        maximumDb->setValue (60.0, dontSendNotification);
+        minimumDb->setValue (-25.0, dontSendNotification);
+        maximumDb->setValue (25.0, dontSendNotification);
     }
     amplitudeRangeMode->setSelectedId (
-        xml->getIntAttribute ("amplitude_range_mode", 2), sendNotification);
+        xml->getIntAttribute ("amplitude_range_mode", 1), sendNotification);
     captureDuration->setSelectedId (
         jlimit (1, 3, xml->getIntAttribute ("capture_duration", 1)),
         dontSendNotification);
     comparisonMode->setSelectedId (
         jlimit (1, 3, xml->getIntAttribute ("comparison_mode", 1)),
         sendNotification);
+    if (auto* spectrumCanvas = static_cast<SpectrumCanvas*> (canvas.get()))
+        spectrumCanvas->setOptionsDrawerOpen (
+            xml->getBoolAttribute ("options_drawer_open", false));
 }

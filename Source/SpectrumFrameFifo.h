@@ -101,6 +101,14 @@ public:
             return channel < numChannels ? peakData + channel * binStride : nullptr;
         }
 
+        /** Broad log-frequency background in dB, when available. */
+        const float* getChannelBaselineData (std::size_t channel) const noexcept
+        {
+            return baselineData != nullptr && channel < numChannels
+                       ? baselineData + channel * binStride
+                       : nullptr;
+        }
+
         /** Reference PSD for overlay, or worker-computed dB delta for delta mode. */
         const float* getChannelComparisonData (std::size_t channel) const noexcept
         {
@@ -143,6 +151,7 @@ public:
         friend class SpectrumFrameFifo;
         const float* data = nullptr;
         const float* peakData = nullptr;
+        const float* baselineData = nullptr;
         const float* comparisonData = nullptr;
         const int* sourceChannelIndices = nullptr;
         const std::string* sourceChannelUnits = nullptr;
@@ -179,6 +188,7 @@ public:
           metadata (capacity + 1),
           powers (checkedPowerCount (numChannels, numBins, capacity + 1)),
           peakPowers (checkedPowerCount (numChannels, numBins, capacity + 1)),
+          baselineValues (checkedPowerCount (numChannels, numBins, capacity + 1)),
           comparisonValues (checkedPowerCount (numChannels, numBins, capacity + 1)),
           frequencyCoordinates (checkedFrequencyCount (numBins, capacity + 1))
     {
@@ -201,7 +211,8 @@ public:
                          double maximumFrequencyHz,
                          SpectrumCaptureFrameStatus capture = {},
                          const float* planarComparison = nullptr,
-                         SpectrumComparisonFrameStatus comparison = {}) noexcept
+                         SpectrumComparisonFrameStatus comparison = {},
+                         const float* planarBaselineDb = nullptr) noexcept
     {
         if (planarMeans == nullptr || planarPeaks == nullptr || frequenciesHz == nullptr
             || numChannels != channelCount || numColumns == 0 || numColumns > binCount
@@ -235,6 +246,11 @@ public:
             std::memcpy (peakPowers.data() + (slot * channelCount + channel) * binCount,
                          planarPeaks + channel * numColumns,
                          numColumns * sizeof (float));
+            if (planarBaselineDb != nullptr)
+                std::memcpy (baselineValues.data()
+                                 + (slot * channelCount + channel) * binCount,
+                             planarBaselineDb + channel * numColumns,
+                             numColumns * sizeof (float));
             if (comparison.hasComparisonData())
                 std::memcpy (comparisonValues.data()
                                  + (slot * channelCount + channel) * binCount,
@@ -252,7 +268,8 @@ public:
                            scale,
                            true,
                            capture,
-                           comparison };
+                           comparison,
+                           planarBaselineDb != nullptr };
         return true;
     }
 
@@ -313,6 +330,10 @@ public:
         view.peakData = frameMetadata.reduced
                             ? peakPowers.data() + slot * channelCount * binCount
                             : view.data;
+        view.baselineData = frameMetadata.hasBaseline
+                                ? baselineValues.data()
+                                      + slot * channelCount * binCount
+                                : nullptr;
         view.comparisonData = frameMetadata.comparison.hasComparisonData()
                                   ? comparisonValues.data()
                                         + slot * channelCount * binCount
@@ -374,6 +395,7 @@ private:
         bool reduced = false;
         SpectrumCaptureFrameStatus capture;
         SpectrumComparisonFrameStatus comparison;
+        bool hasBaseline = false;
     };
 
     static bool captureStatusIsValid (const SpectrumCaptureFrameStatus& value) noexcept
@@ -504,6 +526,7 @@ private:
     std::vector<Metadata> metadata;
     std::vector<float> powers;
     std::vector<float> peakPowers;
+    std::vector<float> baselineValues;
     std::vector<float> comparisonValues;
     std::vector<float> frequencyCoordinates;
     std::atomic<std::uint64_t> droppedFrames { 0 };
