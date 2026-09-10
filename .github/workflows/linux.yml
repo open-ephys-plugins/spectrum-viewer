@@ -54,7 +54,7 @@ jobs:
     - name: build
       run: |
         cd Build
-        cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=${{ github.workspace }}/../../OEPlugins/OpenEphysFFTW ..
+        cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=../../../OEPlugins/OpenEphysFFTW ..
         cmake --build . --config Release --parallel
     - name: test
       run: ctest --test-dir Build --output-on-failure

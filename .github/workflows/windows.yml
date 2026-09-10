@@ -65,7 +65,7 @@ jobs:
     - name: configure
       run: |
         cd Build
-        cmake -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=${{ github.workspace }}/../../OEPlugins/OpenEphysFFTW .. 
+        cmake -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=../../../OEPlugins/OpenEphysFFTW ..
       shell: bash
     - name: build
       run: |

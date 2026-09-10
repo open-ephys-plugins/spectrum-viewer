@@ -52,7 +52,7 @@ jobs:
     - name: build
       run: |
         cd Build
-        cmake -G "Xcode" -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=${{ github.workspace }}/../../OEPlugins/OpenEphysFFTW ..
+        cmake -G "Xcode" -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=../../../OEPlugins/OpenEphysFFTW ..
         xcodebuild -configuration Release
     - name: test
       run: ctest --test-dir Build -C Release --output-on-failure

@@ -16,16 +16,20 @@ if(NOT EXISTS "${OPENEPHYS_FFTW_SOURCE_DIR}/Source/OpenEphysFFTWBatch.cpp")
 	message(FATAL_ERROR "Tests require the matching OpenEphysFFTW batch source checkout")
 endif()
 
-find_library(TEST_FFTW_DOUBLE_LIBRARY NAMES libfftw3-3 fftw3 fftw3-3
+find_library(TEST_FFTW_DOUBLE_LIBRARY NAMES libfftw3 libfftw3-3 fftw3 fftw3-3
 	HINTS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/linux/lib
 	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/macos/lib
 	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/windows/lib/x64
 	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/linux/lib
-	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/lib)
-find_library(TEST_FFTW_FLOAT_LIBRARY NAMES libfftw3f-3 fftw3f fftw3f-3
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/lib
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/windows/lib/x64)
+find_library(TEST_FFTW_FLOAT_LIBRARY NAMES libfftw3f libfftw3f-3 fftw3f fftw3f-3
 	HINTS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/linux/lib
 	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/macos/lib
-	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/windows/lib/x64)
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/windows/lib/x64
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/linux/lib
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/lib
+	      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/windows/lib/x64)
 if(UNIX AND NOT TEST_FFTW_FLOAT_LIBRARY)
 	find_file(TEST_FFTW_FLOAT_LIBRARY NAMES libfftw3f.so.3
 		PATHS /usr/lib /usr/lib64 /lib /lib64)
