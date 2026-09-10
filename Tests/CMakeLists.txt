@@ -102,6 +102,7 @@ add_executable(
 	SampleBlockFifoTests.cpp
 	SampleWindowAssemblerTests.cpp
 	SingleTaperPeriodogramTests.cpp
+	StandaloneJuceConfig.h
 	SpectrumAnalysisTests.cpp
 	SpectrumAmplitudeRangeTests.cpp
 	SpectrumCaptureAccumulatorTests.cpp
@@ -111,7 +112,9 @@ add_executable(
 
 target_compile_features(spectrum_viewer_tests PRIVATE cxx_std_17)
 if(MSVC)
-	target_compile_options(spectrum_viewer_tests PRIVATE /W4)
+	target_compile_options(spectrum_viewer_tests PRIVATE
+		/W4
+		"/FI${CMAKE_CURRENT_SOURCE_DIR}/StandaloneJuceConfig.h")
 else()
 	target_compile_options(spectrum_viewer_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion)
 endif()
