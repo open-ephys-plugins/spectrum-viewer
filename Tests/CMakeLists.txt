@@ -38,6 +38,38 @@ if(NOT TEST_FFTW_DOUBLE_LIBRARY OR NOT TEST_FFTW_FLOAT_LIBRARY)
 	message(FATAL_ERROR "Tests require float and double FFTW libraries")
 endif()
 
+if(LINUX)
+	find_file(TEST_FFTW_DOUBLE_RUNTIME NAMES libfftw3.so.3
+		PATHS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/linux/bin
+		      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/linux/bin
+		NO_DEFAULT_PATH)
+	find_file(TEST_FFTW_FLOAT_RUNTIME NAMES libfftw3f.so.3
+		PATHS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/linux/bin
+		      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/linux/bin
+		NO_DEFAULT_PATH)
+elseif(APPLE)
+	find_file(TEST_FFTW_DOUBLE_RUNTIME NAMES libfftw3.3.dylib
+		PATHS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/macos/bin
+		      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/bin
+		NO_DEFAULT_PATH)
+	find_file(TEST_FFTW_FLOAT_RUNTIME NAMES libfftw3f.3.dylib
+		PATHS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/macos/bin
+		      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/bin
+		NO_DEFAULT_PATH)
+elseif(MSVC)
+	find_file(TEST_FFTW_DOUBLE_RUNTIME NAMES fftw3.dll libfftw3-3.dll
+		PATHS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/windows/bin/x64
+		      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/windows/bin/x64
+		NO_DEFAULT_PATH)
+	find_file(TEST_FFTW_FLOAT_RUNTIME NAMES fftw3f.dll libfftw3f-3.dll
+		PATHS ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/windows/bin/x64
+		      ${OPENEPHYS_FFTW_SOURCE_DIR}/libs/windows/bin/x64
+		NO_DEFAULT_PATH)
+endif()
+if(NOT TEST_FFTW_DOUBLE_RUNTIME OR NOT TEST_FFTW_FLOAT_RUNTIME)
+	message(FATAL_ERROR "Tests require staged float and double FFTW runtimes")
+endif()
+
 add_executable(
 	spectrum_viewer_tests
 	${OPENEPHYS_FFTW_SOURCE_DIR}/Source/OpenEphysFFTWBatch.cpp
@@ -102,7 +134,19 @@ target_link_libraries(spectrum_viewer_tests PRIVATE
 
 if(LINUX)
 	target_link_libraries(spectrum_viewer_tests PRIVATE pthread rt)
+	set_target_properties(spectrum_viewer_tests PROPERTIES BUILD_RPATH "$ORIGIN")
+elseif(APPLE)
+	set_target_properties(spectrum_viewer_tests PROPERTIES BUILD_RPATH "@loader_path")
 endif()
+
+add_custom_command(TARGET spectrum_viewer_tests POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different
+		${TEST_FFTW_DOUBLE_RUNTIME}
+		$<TARGET_FILE_DIR:spectrum_viewer_tests>
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different
+		${TEST_FFTW_FLOAT_RUNTIME}
+		$<TARGET_FILE_DIR:spectrum_viewer_tests>)
+
 if(MSVC)
 	add_custom_command(TARGET spectrum_viewer_tests POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different
