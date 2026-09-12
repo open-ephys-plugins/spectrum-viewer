@@ -74,13 +74,6 @@ add_custom_command(TARGET spectrum_viewer_processor_tests POST_BUILD
         "${GUI_TEST_BUILD_DIR}/TestBin/common"
         $<TARGET_FILE_DIR:spectrum_viewer_processor_tests>)
 
-if(MSVC)
-    add_custom_command(TARGET spectrum_viewer_processor_tests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SpectrumViewerOpenBLAS>
-            $<TARGET_FILE_DIR:spectrum_viewer_processor_tests>)
-endif()
-
 if(LINUX)
     set_target_properties(spectrum_viewer_processor_tests PROPERTIES BUILD_RPATH "$ORIGIN")
 endif()

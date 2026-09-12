@@ -61,25 +61,6 @@ namespace numerics
                                                    const std::vector<double>& offDiagonal,
                                                    std::size_t eigenpairCount) noexcept;
 
-    /** Plugin-local implementation: Sturm bisection plus inverse iteration.
-
-    Exposed separately only so the backend-parity tests can compare it against
-    the LAPACK implementation. Production code calls
-    findLargestSymmetricTridiagonalEigenpairs.
-*/
-    SymmetricTridiagonalEigenResult
-        findLargestSymmetricTridiagonalEigenpairsInTree (
-            const std::vector<double>& diagonal,
-            const std::vector<double>& offDiagonal,
-            std::size_t eigenpairCount) noexcept;
-
-    /** LAPACK implementation, retained until the in-tree kernel is proven. */
-    SymmetricTridiagonalEigenResult
-        findLargestSymmetricTridiagonalEigenpairsLapack (
-            const std::vector<double>& diagonal,
-            const std::vector<double>& offDiagonal,
-            std::size_t eigenpairCount) noexcept;
-
     const char* getSymmetricTridiagonalEigenStatusDescription (
         SymmetricTridiagonalEigenStatus status) noexcept;
 

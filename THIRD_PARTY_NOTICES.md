@@ -1,115 +1,25 @@
 # Third-Party Notices
 
-Spectrum Viewer uses OpenBLAS 0.3.34 binaries packaged by conda-forge. Linux and
-macOS embed a static archive; Windows distributes a namespaced dynamic library.
-The packages were built from the official OpenBLAS sources by
-`conda-forge/openblas-feedstock` commit
-`c4b90e053a14540bd9904eec1eb9f0b48622e88b`.
+Spectrum Viewer bundles no third-party binaries of its own.
 
-## OpenBLAS
+The plugin links the Open Ephys GUI and the `OpenEphysFFTW` common library,
+both of which are distributed by the Open Ephys project and carry their own
+notices. FFTW is redistributed by `OpenEphysFFTW`, not by this plugin.
 
-OpenBLAS is distributed under the BSD 3-Clause License:
+DPSS taper generation uses a plugin-private symmetric-tridiagonal eigensolver,
+so there is no BLAS or LAPACK dependency and no numerical library is shipped
+alongside the plugin. Earlier releases bundled OpenBLAS for this purpose; that
+dependency has been removed.
 
-Copyright (c) 2011-2014, The OpenBLAS Project
-All rights reserved.
+## Algorithmic provenance
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
+The eigensolver in `Source/Numerics/SelectedTridiagonalEigensolver.cpp` was
+written from the published descriptions of two classical algorithms. It is not
+derived from, and contains no code from, any existing implementation.
 
-1. Redistributions of source code must retain the above copyright notice,
-   this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-3. Neither the name of the OpenBLAS project nor the names of its contributors
-   may be used to endorse or promote products derived from this software
-   without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
-LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-POSSIBILITY OF SUCH DAMAGE.
-
-## LAPACK
-
-OpenBLAS includes LAPACK code under the following license:
-
-Copyright (c) 1992-2023 The University of Tennessee and The University
-                        of Tennessee Research Foundation.  All rights
-                        reserved.
-Copyright (c) 2000-2023 The University of California Berkeley. All
-                        rights reserved.
-Copyright (c) 2006-2023 The University of Colorado Denver.  All rights
-                        reserved.
-
-$COPYRIGHT$
-
-Additional copyrights may follow
-
-$HEADER$
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-- Redistributions of source code must retain the above copyright notice,
-  this list of conditions and the following disclaimer.
-- Redistributions in binary form must reproduce the above copyright notice,
-  this list of conditions and the following disclaimer listed in this license
-  in the documentation and/or other materials provided with the distribution.
-- Neither the name of the copyright holders nor the names of its contributors
-  may be used to endorse or promote products derived from this software without
-  specific prior written permission.
-
-The copyright holders provide no reassurances that the source code provided
-does not infringe any patent, copyright, or any other intellectual property
-rights of third parties. The copyright holders disclaim any liability to any
-recipient for claims brought against recipient by any third party for
-infringement of that parties intellectual property rights.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
-LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-POSSIBILITY OF SUCH DAMAGE.
-
-## conda-forge recipe scripts
-
-The conda-forge recipe scripts are distributed under the BSD 3-Clause License:
-
-Copyright (c) 2015-2026, conda-forge contributors
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice,
-   this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-3. Neither the name of the copyright holder nor the names of its contributors
-   may be used to endorse or promote products derived from this software
-   without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR
-ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
-ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+- W. Barth, R. S. Martin and J. H. Wilkinson, "Calculation of the eigenvalues of
+  a symmetric tridiagonal matrix by the method of bisection",
+  *Numerische Mathematik* 9 (1967), 386-393.
+- G. Peters and J. H. Wilkinson, "Inverse iteration, ill-conditioned equations
+  and Newton's method", *SIAM Review* 21 (1979), 339-360.
+- G. H. Golub and C. F. Van Loan, *Matrix Computations*, sections 8.2 and 8.4.

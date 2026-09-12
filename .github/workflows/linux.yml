@@ -61,12 +61,8 @@ jobs:
     - name: validate
       run: |
         test -f Build/spectrum-viewer.so
-        test "$(find Build/_deps/openblas/stage -name MANIFEST.txt | wc -l)" -eq 1
-        if nm -D --defined-only Build/spectrum-viewer.so | grep -Eiq 'openblas|lapacke|dstevr'; then
-          echo "Spectrum Viewer exports private OpenBLAS symbols"
-          exit 1
-        fi
-        if ldd Build/spectrum-viewer.so | grep -Eiq 'openblas|lapack|gfortran|quadmath'; then
+        # The plugin must stay free of external numerical libraries.
+        if ldd Build/spectrum-viewer.so | grep -Eiq 'openblas|lapack|blas|mkl|gfortran|quadmath'; then
           echo "Spectrum Viewer has an unexpected numerical-library dependency"
           exit 1
         fi

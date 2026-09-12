@@ -79,15 +79,12 @@ jobs:
     - name: validate
       run: |
         test -f Build/Release/spectrum-viewer.dll
-        test -f ../../plugin-GUI/Build/Release/shared/spectrum-viewer-openblas.dll
-        test "$(find Build/_deps/openblas/stage -name MANIFEST.txt | wc -l)" -eq 1
       shell: bash
     - name: package acquiring-rig artifact
       run: |
         mkdir -p ci-artifact/plugins ci-artifact/shared
         cp Build/Release/spectrum-viewer.dll ci-artifact/plugins/
         find ../../plugin-GUI/Build/Release/shared -maxdepth 1 -type f -iname '*fftw*.dll' -exec cp '{}' ci-artifact/shared/ \;
-        cp ../../plugin-GUI/Build/Release/shared/spectrum-viewer-openblas.dll ci-artifact/shared/
         cp THIRD_PARTY_NOTICES.md ci-artifact/shared/SpectrumViewer-THIRD_PARTY_NOTICES.md
         test "$(find ci-artifact/shared -maxdepth 1 -type f -iname '*fftw*.dll' | wc -l)" -ge 3
       shell: bash
@@ -111,7 +108,6 @@ jobs:
         mkdir plugins
         cp $build_dir/*.dll plugins
         mkdir shared
-        cp ../../plugin-GUI/Build/Release/shared/spectrum-viewer-openblas.dll shared
         cp THIRD_PARTY_NOTICES.md shared/SpectrumViewer-THIRD_PARTY_NOTICES.md
         zipfile=${package}_${new_plugin_ver}.zip
         powershell Compress-Archive -Path "plugins","shared" -DestinationPath ${zipfile}

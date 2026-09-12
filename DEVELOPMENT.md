@@ -58,7 +58,7 @@ update instead of blocking if the worker is installing a replacement.
 | Input transport | `SampleBlockFifo.h`, `SampleWindowAssembler.h`, `BacklogSheddingPolicy.h` | Complete-block SPSC transport, continuous history, exact window cadence, and overload policy |
 | Runtime preparation | `AsyncSpectrumAnalysis.*`, `SpectrumAnalysis.*` | Immutable configuration, asynchronous construction, and the worker pipeline |
 | Spectral estimation | `DpssTapers.*`, `MultitaperPeriodogram.*`, `SpectrumEstimation.h` | DPSS generation, detrending, tapering, batched FFTs, and calibrated one-sided PSDs |
-| Numerical support | `Numerics/SelectedTridiagonalEigensolver.*` | Plugin-private LAPACKE wrapper used only to generate selected DPSS eigenpairs |
+| Numerical support | `Numerics/SelectedTridiagonalEigensolver.*` | Plugin-private Sturm bisection and inverse iteration, used only to generate selected DPSS eigenpairs |
 | Display | `SpectrumDisplayReducer.*`, `AperiodicSpectrumBaseline.*`, `SpectrumAmplitudeRange.*`, `SpectrumFrameFifo.h`, `SpectrumCanvas.*` | Linear/log bin reduction, optional broad-background display, stable dB ranges, frame publication, axes, cursors, and traces |
 | Capture and comparison | `SpectrumCaptureAccumulator.*`, `SpectrumReference.*` | Non-overlapping Fine-window accumulation, variance, frozen references, and compatible comparisons |
 | Correctness oracles | `ReferencePeriodogram.*`, `SingleTaperPeriodogram.*` | Independent double-precision reference and focused single-taper implementation; neither is the live pipeline |
@@ -123,28 +123,50 @@ already in flight, then asks the analysis worker to stop. Expensive runtime
 destruction is handed to the configuration thread. Preserve this ordering when
 adding state whose lifetime crosses a thread boundary.
 
-## OpenBLAS packaging
+## DPSS eigensolver
 
-DPSS preparation calls two OpenBLAS entry points: `LAPACKE_dstevr` and
-`openblas_set_num_threads`. `cmake/OpenBlasPackages.cmake` is the single source
-of package filenames, SHA-256 digests, and feedstock provenance.
-`cmake/PrepareOpenBlas.cmake` downloads pinned conda-forge packages into the
-build-local download cache, verifies them before extraction, and publishes a
-content-addressed stage only after all files and licenses are present. A short
-process lock prevents concurrent configure jobs from publishing the same stage.
+`Numerics/SelectedTridiagonalEigensolver.*` finds the K algebraically largest
+eigenpairs of a real symmetric tridiagonal matrix: Sturm-sequence bisection for
+the eigenvalues, then inverse iteration through a shifted tridiagonal LU for the
+vectors. It is written from the published algorithms - Barth, Martin and
+Wilkinson (1967) for the bisection; Peters and Wilkinson (1979) and Golub and
+Van Loan sections 8.2 and 8.4 for the inverse iteration - and deliberately not
+transliterated from LAPACK. The plugin has no BLAS or LAPACK dependency.
 
-Linux embeds the static archive and hides all archive symbols. macOS combines
-the x86_64 and arm64 archives with `lipo` and uses Apple ld's
-`-hidden-lopenblas` form. Windows installs a namespaced DLL in the GUI's shared
-directory and links a generated import library containing only the two required
-symbols. The eigensolver sets OpenBLAS to one thread before its first solve;
-unrestricted OpenBLAS workers make background configuration slower and can
-interfere with acquisition.
+`DpssTapers` is the only caller. It reads the eigenvectors; concentration ratios
+come from its own FFT, so eigenvalue accuracy matters only as the inverse
+iteration shift.
 
-`SPECTRUM_VIEWER_OPENBLAS_ROOT` bypasses all network access. Point it at a stage
-with the layout documented in `README.md`. Do not commit `_deps/` contents or
-copy binaries into the source tree. Update `THIRD_PARTY_NOTICES.md` and test all
-three platform paths when changing the package pins.
+The clustering hazard here is about the *relative* gap, not the absolute one.
+The Slepian tridiagonal matrix has absolute eigenvalue gaps of order 1 that do
+not shrink with N, so bisection isolates each wanted eigenvalue comfortably. Its
+relative gaps, however, fall to roughly 1e-9 at N = 60000, far inside LAPACK's
+1e-3 cluster threshold. Independent inverse iterations would therefore return
+vectors orders of magnitude less orthogonal than the tests require. All wanted
+vectors are treated as a single cluster and reorthogonalized unconditionally,
+both inside each iteration and once more at the end. At K <= 8 that costs under
+a millisecond against a bisection of tens of milliseconds, so there is no reason
+to make it conditional.
+
+Three details are not negotiable, and each one fails silently if changed:
+
+- In the Sturm recurrence the pivot clamp must precede the sign test, and the
+  test must be inclusive. Otherwise the count is wrong whenever a pivot is
+  exactly zero. The clamps are also what let the solver handle zero
+  off-diagonals, exact degeneracy and diagonal matrices with no explicit
+  block-splitting code.
+- The shifted solve must not use a general banded factorization. `T - theta*I`
+  is deliberately near-singular, which is what makes inverse iteration converge;
+  a vanishing pivot is clamped rather than reported as an error.
+- The start vector must be deterministic and reentrant. The solver is called
+  concurrently, so no global or function-local static state, and no
+  `std::uniform_real_distribution`, whose output is implementation-defined and
+  would make tapers differ between standard libraries.
+
+Accuracy targets, checked by `Tests/SelectedTridiagonalEigensolverTests.cpp`:
+normalized residual below 1e-13 and orthonormality below 5e-12 at the
+production-scale N = 60000 case. `Tests/DpssTapersTests.cpp` is the end-to-end
+criterion, including SciPy golden values.
 
 ## Invariants for changes
 
@@ -163,6 +185,8 @@ three platform paths when changing the package pins.
   or generation changes.
 - Keep queue overflow and backlog shedding observable through counters and frame
   metadata.
+- Keep numerical dependencies in-tree. Do not reintroduce BLAS or LAPACK; the CI
+  `ldd` and `otool` checks enforce this.
 
 Run `ctest --test-dir Build --output-on-failure` after behavioral changes. Use
 the benchmarks to justify performance-driven complexity, and record target-rig
