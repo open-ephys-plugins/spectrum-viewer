@@ -39,6 +39,26 @@ if(NOT GUI_TESTABLE_SOURCE_LIBRARY OR NOT GUI_TEST_HELPERS_LIBRARY)
         "then set GUI_TEST_BUILD_DIR to that build directory.")
 endif()
 
+# Where the GUI's test runtimes actually live. A multi-config generator puts
+# them in a per-configuration subdirectory, so TestBin/common alone is only
+# right for single-config builds; copying that instead nests a Release folder
+# inside the output directory and the tests then fail to start.
+if(WIN32)
+    find_file(GUI_TESTABLE_SOURCE_RUNTIME NAMES gui_testable_source.dll
+        HINTS ${GUI_TEST_LIBRARY_HINTS} NO_DEFAULT_PATH)
+    find_file(GUI_TEST_HELPERS_RUNTIME NAMES test_helpers.dll
+        HINTS ${GUI_TEST_LIBRARY_HINTS} NO_DEFAULT_PATH)
+else()
+    set(GUI_TESTABLE_SOURCE_RUNTIME "${GUI_TESTABLE_SOURCE_LIBRARY}")
+    set(GUI_TEST_HELPERS_RUNTIME "${GUI_TEST_HELPERS_LIBRARY}")
+endif()
+
+if(NOT GUI_TESTABLE_SOURCE_RUNTIME OR NOT GUI_TEST_HELPERS_RUNTIME)
+    message(FATAL_ERROR
+        "Processor tests require the built gui_testable_source and test_helpers "
+        "runtimes beside their import libraries")
+endif()
+
 add_executable(spectrum_viewer_processor_tests
     SpectrumCanvasTests.cpp
     SpectrumViewerLifecycleTests.cpp)
@@ -60,7 +80,10 @@ target_link_libraries(spectrum_viewer_processor_tests PRIVATE
 if(MSVC)
     # Test builds resolve the GUI API from the testable host library, matching
     # Open Ephys' in-tree plugin test convention.
-    target_link_libraries(${PLUGIN_NAME} PRIVATE ${GUI_TESTABLE_SOURCE_LIBRARY})
+    #
+    # Plain signature, not PRIVATE: link_open_ephys_lib() already links this
+    # target plainly, and CMake refuses to mix the two forms on one target.
+    target_link_libraries(${PLUGIN_NAME} ${GUI_TESTABLE_SOURCE_LIBRARY})
 endif()
 
 set_target_properties(spectrum_viewer_processor_tests PROPERTIES
@@ -70,8 +93,11 @@ add_custom_command(TARGET spectrum_viewer_processor_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:${PLUGIN_NAME}>
         $<TARGET_FILE_DIR:spectrum_viewer_processor_tests>
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${GUI_TEST_BUILD_DIR}/TestBin/common"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${GUI_TESTABLE_SOURCE_RUNTIME}"
+        $<TARGET_FILE_DIR:spectrum_viewer_processor_tests>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${GUI_TEST_HELPERS_RUNTIME}"
         $<TARGET_FILE_DIR:spectrum_viewer_processor_tests>)
 
 if(LINUX)

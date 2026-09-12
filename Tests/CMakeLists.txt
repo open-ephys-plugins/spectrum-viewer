@@ -133,6 +133,7 @@ target_include_directories(
 		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/macos/include
 		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/windows/include
 		${GUI_COMMONLIB_DIR}/include
+		${GUI_BASE_DIR}/Source
 		${GUI_BASE_DIR}/JuceLibraryCode
 		${GUI_BASE_DIR}/JuceLibraryCode/modules
 		${GUI_BASE_DIR}/Plugins/Headers)

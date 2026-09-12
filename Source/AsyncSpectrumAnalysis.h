@@ -21,6 +21,7 @@
 #include "SpectrumFrameFifo.h"
 
 #include <AppConfig.h>
+#include <TestableExport.h>
 #include <juce_core/juce_core.h>
 
 #include <cstddef>
@@ -35,7 +36,7 @@
 namespace spectrumviewer
 {
 /** Everything the analysis worker needs after an allocation-free activation. */
-class PreparedSpectrumAnalysis
+class TESTABLE PreparedSpectrumAnalysis
 {
 public:
     PreparedSpectrumAnalysis (SpectrumAnalysisParameters parameters,

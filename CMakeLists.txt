@@ -53,6 +53,7 @@ endif()
 
 target_compile_features(${PLUGIN_NAME} PUBLIC cxx_auto_type cxx_generalized_initializers cxx_std_17)
 target_include_directories(${PLUGIN_NAME} PUBLIC
+	${GUI_BASE_DIR}/Source
 	${GUI_BASE_DIR}/JuceLibraryCode
 	${GUI_BASE_DIR}/JuceLibraryCode/modules
 	${GUI_BASE_DIR}/Plugins/Headers
