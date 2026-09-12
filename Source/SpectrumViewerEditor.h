@@ -26,14 +26,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <VisualizerEditorHeaders.h>
 
+#include "SpectrumDisplaySettings.h"
+
+/**
+    Signal-chain editor for the Spectrum Viewer.
+
+    Holds only what belongs in the signal chain: stream and channel selection,
+    which change the processor's input route, and a readiness label. Every
+    display control lives on the canvas.
+
+    The editor does own the display *settings*, because the canvas is created
+    lazily and may never exist; see SpectrumDisplaySettings.
+*/
 class SpectrumViewerEditor : public VisualizerEditor,
-                             public ComboBox::Listener,
-                             public Slider::Listener,
-                             public Button::Listener,
                              private Timer
 {
-    friend class SpectrumCanvas;
-
 public:
     /** Constructor */
     SpectrumViewerEditor (GenericProcessor* parentNode);
@@ -47,15 +54,8 @@ public:
     /** Disables animation*/
     void stopAcquisition() override;
 
-    /** Called when a ComboBox changes*/
-    void comboBoxChanged (ComboBox* comboBox);
-
-    void sliderValueChanged (Slider* slider) override;
-
-    void buttonClicked (Button* button) override;
-
     /** Creates the canvas */
-    Visualizer* createNewCanvas();
+    Visualizer* createNewCanvas() override;
 
     /** Notifies editor that the selected stream has changed.*/
     void selectedStreamHasChanged() override;
@@ -64,45 +64,14 @@ public:
 
     void loadVisualizerEditorParameters (XmlElement* xml) override;
 
+    /** Display state, edited by the canvas and persisted here. */
+    SpectrumDisplaySettings& getDisplaySettings() noexcept { return displaySettings; }
+
 private:
     void timerCallback() override;
-    void updateAmplitudeRangeControls();
-    void applyAmplitudeRangeToCanvas();
 
-    std::unique_ptr<Label> displayLabel;
-    std::unique_ptr<ComboBox> displayType;
-
-    std::unique_ptr<Label> frequencyLabel;
-    std::unique_ptr<ComboBox> frequencyRange;
-
-    std::unique_ptr<Label> profileLabel;
-    std::unique_ptr<ComboBox> analysisProfile;
-    std::unique_ptr<Label> scaleLabel;
-    std::unique_ptr<ComboBox> frequencyScale;
-    std::unique_ptr<Label> amplitudeLabel;
-    std::unique_ptr<ComboBox> amplitudeDisplay;
-    std::unique_ptr<Label> baselineLabel;
-    std::unique_ptr<ComboBox> baselineDisplay;
-    std::unique_ptr<ToggleButton> peakEnvelope;
-    std::unique_ptr<Label> amplitudeRangeLabel;
-    std::unique_ptr<ComboBox> amplitudeRangeMode;
-    std::unique_ptr<Label> minimumDbLabel;
-    std::unique_ptr<Slider> minimumDb;
-    std::unique_ptr<Label> maximumDbLabel;
-    std::unique_ptr<Slider> maximumDb;
-    std::unique_ptr<Label> automaticRangeLabel;
-    std::unique_ptr<Label> captureDurationLabel;
-    std::unique_ptr<ComboBox> captureDuration;
-    std::unique_ptr<UtilityButton> captureAction;
-    std::unique_ptr<Label> captureStatusLabel;
-    std::unique_ptr<ComboBox> comparisonMode;
-    std::unique_ptr<Label> comparisonModeLabel;
-    std::unique_ptr<UtilityButton> setReferenceAction;
-    std::unique_ptr<UtilityButton> clearReferenceAction;
-    std::unique_ptr<Label> referenceStatusLabel;
+    SpectrumDisplaySettings displaySettings;
     std::unique_ptr<Label> readinessLabel;
-
-    Array<Range<int>> freqRanges;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumViewerEditor);
 };

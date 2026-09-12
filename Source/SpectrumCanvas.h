@@ -28,15 +28,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "AperiodicSpectrumBaseline.h"
 #include "SpectrumAmplitudeRange.h"
+#include "SpectrumDisplaySettings.h"
 #include "SpectrumViewer.h"
 
 #include <cstdint>
 
 class SpectrumCanvas;
-class SpectrumViewerEditor;
 
 // Component for housing power spectrum & spectrograph plots
-class FrequencyPlot : public InteractivePlot
+class TESTABLE FrequencyPlot : public InteractivePlot
 {
 public:
     FrequencyPlot();
@@ -95,8 +95,8 @@ private:
     std::vector<String> logarithmicTickLabels;
 };
 
-class CanvasPlot : public Component,
-                   public Button::Listener
+class TESTABLE CanvasPlot : public Component,
+                            public Button::Listener
 {
 public:
     /** Constructor */
@@ -289,18 +289,24 @@ private:
 	Draws the real-time power spectrum
 
 */
-class SpectrumCanvas : public Visualizer
+class TESTABLE SpectrumCanvas : public Visualizer,
+                       public ComboBox::Listener,
+                       public Slider::Listener,
+                       public Button::Listener
 {
 public:
-    /** Constructor */
-    SpectrumCanvas (SpectrumViewer* n,
-                    SpectrumViewerEditor* editorControls = nullptr);
+    /** Constructor.
+
+        settings outlives the canvas: it is a member of the editor, which
+        destroys the canvas before its own members.
+    */
+    SpectrumCanvas (SpectrumViewer* n, SpectrumDisplaySettings& settings);
 
     /** Destructor */
-    ~SpectrumCanvas() {}
+    ~SpectrumCanvas() override;
 
     /** Called when tab becomes visible again */
-    void refreshState();
+    void refreshState() override;
 
     /** Updates settings */
     void updateSettings() override;
@@ -320,33 +326,99 @@ public:
     /** Updates component boundaries */
     void resized() override;
 
-    /** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
-    void setDisplayType (DisplayType type);
+    /** Pushes every stored display setting into the controls, the plot and the
+        processor. Called at construction and whenever a session is loaded. */
+    void applyDisplaySettings();
 
     /** Opens or closes the display-options drawer at the bottom of the canvas. */
     void setOptionsDrawerOpen (bool shouldBeOpen);
 
-    bool isOptionsDrawerOpen() const noexcept { return optionsDrawerIsOpen; }
+    bool isOptionsDrawerOpen() const noexcept { return displaySettings.optionsDrawerOpen; }
 
     CanvasPlot* getPlotPtr() { return canvasPlot.get(); };
 
+    void comboBoxChanged (ComboBox* comboBox) override;
+    void sliderValueChanged (Slider* slider) override;
+    void buttonClicked (Button* button) override;
+
 private:
+    /** Visualizer already owns a Timer, driving refresh() at the plot rate and
+        only while acquisition runs. Capture and reference status must keep
+        updating when it is not, so this drives that at a slower rate. */
+    class StatusTimer final : public Timer
+    {
+    public:
+        explicit StatusTimer (SpectrumCanvas& ownerToUse) : owner (ownerToUse) {}
+        void timerCallback() override { owner.updateStatus(); }
+
+    private:
+        SpectrumCanvas& owner;
+    };
+
+    void updateStatus();
+
+    void setDisplayType (DisplayType type);
+    void createControls();
+    void layOutControls();
+    void updateAmplitudeRangeControls();
+    void applyAmplitudeRangeToPlot();
+    void applyFrequencyRange();
+    void refreshNyquistRangeItem();
+
+    // Laid out as a flow of label/control pairs, so a narrow canvas wraps
+    // instead of clipping. Widths are per control; heights are uniform.
     static constexpr int optionsBarHeight = 44;
     static constexpr int optionsDrawerHeight = 88;
+    static constexpr int controlHeight = 20;
+    static constexpr int controlSpacing = 12;
+    static constexpr int rowSpacing = 8;
+    static constexpr int optionsButtonWidth = 78;
 
     SpectrumViewer* processor;
-    SpectrumViewerEditor* editorControls;
+    SpectrumDisplaySettings& displaySettings;
 
     std::unique_ptr<Viewport> viewport;
     std::unique_ptr<CanvasPlot> canvasPlot;
     std::unique_ptr<Component> mainOptionsBar;
     std::unique_ptr<Component> optionsDrawer;
     std::unique_ptr<Button> showHideOptionsButton;
-    juce::Rectangle<int> canvasBounds;
 
-    DisplayType displayType;
-    bool optionsDrawerIsOpen = false;
+    std::unique_ptr<Label> displayLabel;
+    std::unique_ptr<ComboBox> displayType;
+    std::unique_ptr<Label> frequencyLabel;
+    std::unique_ptr<ComboBox> frequencyRange;
+    std::unique_ptr<Label> profileLabel;
+    std::unique_ptr<ComboBox> analysisProfile;
+    std::unique_ptr<Label> scaleLabel;
+    std::unique_ptr<ComboBox> frequencyScale;
+    std::unique_ptr<Label> amplitudeLabel;
+    std::unique_ptr<ComboBox> amplitudeDisplay;
+    std::unique_ptr<Label> baselineLabel;
+    std::unique_ptr<ComboBox> baselineDisplay;
+    std::unique_ptr<ToggleButton> peakEnvelope;
+    std::unique_ptr<Label> amplitudeRangeLabel;
+    std::unique_ptr<ComboBox> amplitudeRangeMode;
+    std::unique_ptr<Label> minimumDbLabel;
+    std::unique_ptr<Slider> minimumDb;
+    std::unique_ptr<Label> maximumDbLabel;
+    std::unique_ptr<Slider> maximumDb;
+    std::unique_ptr<Label> automaticRangeLabel;
+    std::unique_ptr<Label> captureDurationLabel;
+    std::unique_ptr<ComboBox> captureDuration;
+    std::unique_ptr<UtilityButton> captureAction;
+    std::unique_ptr<Label> captureStatusLabel;
+    std::unique_ptr<Label> comparisonModeLabel;
+    std::unique_ptr<ComboBox> comparisonMode;
+    std::unique_ptr<UtilityButton> setReferenceAction;
+    std::unique_ptr<UtilityButton> clearReferenceAction;
+    std::unique_ptr<Label> referenceStatusLabel;
+
+    Array<Range<int>> freqRanges;
+    StatusTimer statusTimer { *this };
+
+    DisplayType currentDisplayType = POWER_SPECTRUM;
     bool unavailableStateCleared = false;
+    bool applyingSettings = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumCanvas);
 };

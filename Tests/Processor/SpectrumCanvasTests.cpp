@@ -85,7 +85,9 @@ protected:
         processor = tester->createProcessor<SpectrumViewer> (Plugin::Processor::SINK);
         processor->setRateAndBufferSizeDetails (sampleRate, blockSize);
 
-        canvas = std::make_unique<SpectrumCanvas> (processor);
+        // The canvas is a view over settings the editor owns; the tests own
+        // them directly instead of constructing an editor.
+        canvas = std::make_unique<SpectrumCanvas> (processor, displaySettings);
         canvas->setBounds (0, 0, 1200, 700);
     }
 
@@ -146,6 +148,7 @@ protected:
 
     std::unique_ptr<ProcessorTester> tester;
     SpectrumViewer* processor = nullptr;
+    SpectrumDisplaySettings displaySettings;
     std::unique_ptr<SpectrumCanvas> canvas;
     std::int64_t nextSample = 0;
 };

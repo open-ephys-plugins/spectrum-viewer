@@ -127,6 +127,9 @@ public:
     const String getChanName (int localIdx);
     const String getChanName (std::uint16_t streamId, int localIdx);
 
+    /** Stream currently selected for display. Message thread only. */
+    std::uint16_t getActiveStreamId() const noexcept { return activeStream; }
+
     /** Sets the min/max frequency range*/
     void setFrequencyRange (Range<int>);
 
