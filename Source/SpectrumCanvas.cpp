@@ -748,7 +748,13 @@ void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
                    findColour (ThemeColours::controlPanelText),
                    1.0f,
                    0.5f);
-    for (int i = 0; i < activeChannels.size(); i++)
+    // activeChannels is bounded to MAX_CHANS by beginSpectrumFrame and by the
+    // Channels parameter, but the trace and colour arrays are indexed directly
+    // below, so make that bound explicit rather than assumed.
+    const auto traceCount = std::min ({ static_cast<std::size_t> (activeChannels.size()),
+                                        currPower.size(),
+                                        chanColors.size() });
+    for (std::size_t i = 0; i < traceCount; i++)
     {
         if (showingDelta)
             plt->plot (plotFrequencies, currComparison[i], chanColors[i], 1.5f);
@@ -1171,7 +1177,9 @@ void CanvasPlot::paint (Graphics& g)
         {
             top = (i + 1) * rowHeight + 10;
 
-            g.setColour (chanColors.at (i));
+            // paint() must never throw: an exception escaping a JUCE paint call
+            // terminates the host. Wrap rather than index past the palette.
+            g.setColour (chanColors[static_cast<std::size_t> (i) % chanColors.size()]);
             g.fillRect (left, top + 10, 30, 30);
 
             g.setColour (findColour (ThemeColours::controlPanelText));

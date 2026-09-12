@@ -653,9 +653,10 @@ void SpectrumViewerEditor::timerCallback()
 
 void SpectrumViewerEditor::selectedStreamHasChanged()
 {
-    if (getProcessor()->getDataStreams().size() > 0)
+    // A nonempty stream list does not guarantee that the cached selection still
+    // names a live stream. Stream replacement can retire it before this runs.
+    if (auto* stream = getProcessor()->getDataStream (getCurrentStream()))
     {
-        auto stream = getProcessor()->getDataStream (getCurrentStream());
         // Add or change the currently selected stream's max frequency
         float maxFreq = stream->getSampleRate() / 2;
 

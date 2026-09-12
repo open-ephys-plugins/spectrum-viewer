@@ -59,12 +59,17 @@ public:
     explicit ScopedAudioCallback (std::atomic<std::size_t>& callbackCount) noexcept
         : count (callbackCount)
     {
-        count.fetch_add (1, std::memory_order_acq_rel);
+        // Sequentially consistent, and paired with the seq_cst store/load in
+        // stopAcquisition(). Acquire-release alone would leave a store-buffering
+        // hole: the stopper could observe zero callbacks while this callback
+        // still observes acquisitionRunning == true, and then free the FIFO
+        // underneath it. Only a total order over both pairs excludes that.
+        count.fetch_add (1, std::memory_order_seq_cst);
     }
 
     ~ScopedAudioCallback()
     {
-        count.fetch_sub (1, std::memory_order_release);
+        count.fetch_sub (1, std::memory_order_seq_cst);
     }
 
 private:
@@ -96,14 +101,15 @@ SpectrumViewer::SpectrumViewer (
 
 SpectrumViewer::~SpectrumViewer()
 {
-    acquisitionRunning.store (false, std::memory_order_release);
+    acquisitionRunning.store (false, std::memory_order_seq_cst);
     activeConfigurationGeneration.store (0, std::memory_order_release);
     activeBinWidthHz.store (0.0f, std::memory_order_release);
 
     // Destruction cannot continue while a callback or worker may still refer
     // to member storage. Unlike stopThread(timeout), this never force-kills a
-    // thread that may own locks or partially updated state.
-    while (activeAudioCallbacks.load (std::memory_order_acquire) != 0)
+    // thread that may own locks or partially updated state. seq_cst for the
+    // same reason as stopAcquisition().
+    while (activeAudioCallbacks.load (std::memory_order_seq_cst) != 0)
         Thread::sleep (1);
     signalThreadShouldExit();
     notify();
@@ -196,6 +202,13 @@ void SpectrumViewer::parameterValueChanged (Parameter* param)
     }
     else if (param->getName() == "Channels")
     {
+        // "Channels" is stream-scoped, so every stream owns one and every one of
+        // them reports here. Only the displayed stream's selection is ours;
+        // acting on another stream's would route its channel list to the wrong
+        // runtime. Session loading delivers these in arbitrary order.
+        if (param->getStreamId() != activeStream)
+            return;
+
         channels.clear();
 
         auto* p = dynamic_cast<SelectedChannelsParameter*> (param);
@@ -240,10 +253,13 @@ void SpectrumViewer::setFrequencyRange (Range<int> newRange)
     }
 }
 
-SpectrumViewer::DisplaySettings SpectrumViewer::readDisplaySettings() const noexcept
+bool SpectrumViewer::tryReadDisplaySettings (DisplaySettings& settings) const noexcept
 {
-    DisplaySettings settings;
-    for (;;)
+    // Bounded like readInputRoute(): the writer is the message thread, which
+    // can issue a burst of updates (CanvasPlot::resized() publishes a column
+    // count on every resize event), and an unbounded spin here would stall
+    // frame publication on the worker.
+    for (int attempt = 0; attempt < seqlockReadAttempts; ++attempt)
     {
         const auto before = displaySettingsSequence.load (std::memory_order_acquire);
         if ((before & 1u) != 0u)
@@ -255,13 +271,21 @@ SpectrumViewer::DisplaySettings SpectrumViewer::readDisplaySettings() const noex
         settings.minimumFrequencyHz = displayMinimumFrequencyHz.load (std::memory_order_relaxed);
         settings.maximumFrequencyHz = displayMaximumFrequencyHz.load (std::memory_order_relaxed);
 
-        if (displaySettingsSequence.load (std::memory_order_acquire) == before)
+        // The payload loads above are relaxed, and an acquire load on the
+        // sequence would only stop *later* accesses from being hoisted above
+        // it. This fence is what stops those relaxed loads from being sunk
+        // below the re-read, which is the actual torn-read hazard.
+        std::atomic_thread_fence (std::memory_order_acquire);
+
+        if (displaySettingsSequence.load (std::memory_order_relaxed) == before)
         {
             settings.sequence = before;
-            return settings;
+            return true;
         }
     }
+    return false;
 }
+
 
 void SpectrumViewer::publishInputRoute (std::uint16_t streamId,
                                         std::size_t channelCount,
@@ -286,7 +310,7 @@ void SpectrumViewer::publishInputRoute (std::uint16_t streamId,
 
 bool SpectrumViewer::readInputRoute (InputRouteSnapshot& route) const noexcept
 {
-    for (int attempt = 0; attempt < 3; ++attempt)
+    for (int attempt = 0; attempt < seqlockReadAttempts; ++attempt)
     {
         const auto before = inputRouteSequence.load (std::memory_order_acquire);
         if ((before & 1u) != 0u)
@@ -299,7 +323,13 @@ bool SpectrumViewer::readInputRoute (InputRouteSnapshot& route) const noexcept
                 std::memory_order_relaxed);
         route.generation = publishedInputGeneration.load (std::memory_order_relaxed);
 
-        if (inputRouteSequence.load (std::memory_order_acquire) == before)
+        // Stops the relaxed payload loads above from being sunk below the
+        // re-read. An acquire load on the sequence would only constrain
+        // accesses that follow it, which is the wrong direction here. This
+        // payload is eleven words wide, so a torn read is a real hazard.
+        std::atomic_thread_fence (std::memory_order_acquire);
+
+        if (inputRouteSequence.load (std::memory_order_relaxed) == before)
             return route.channelCount <= MAX_CHANS;
     }
     return false;
@@ -403,7 +433,13 @@ bool SpectrumViewer::publishReducedSpectrum (
     if (frameFifo.getNumReady() >= frameFifo.getCapacity())
         return false;
 
-    const auto settings = readDisplaySettings();
+    // Reducing against a torn snapshot would publish a frame whose axis does
+    // not match its data. Frames are replaceable latest-state: skipping one is
+    // free, and the next window arrives a hop later.
+    DisplaySettings settings;
+    if (! tryReadDisplaySettings (settings))
+        return false;
+
     auto maximumHz = settings.maximumFrequencyHz;
     if (maximumHz <= 0.0)
         maximumHz = descriptor.sampleRateHz * 0.5;
@@ -551,10 +587,17 @@ bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
         status);
     if (published)
     {
-        const auto settings = readDisplaySettings();
-        captureLastPublishedDisplaySettings = settings.sequence;
-        captureLastPublishedComparisonSettings = comparisonSettingsSequence.load (
-            std::memory_order_acquire);
+        // publishReducedSpectrum only succeeds on a stable snapshot, so this
+        // read cannot legitimately fail. If it does, leave the watermark alone
+        // so the frozen capture is republished on the next pass rather than
+        // recorded against a sequence that was never used.
+        DisplaySettings settings;
+        if (tryReadDisplaySettings (settings))
+        {
+            captureLastPublishedDisplaySettings = settings.sequence;
+            captureLastPublishedComparisonSettings = comparisonSettingsSequence.load (
+                std::memory_order_acquire);
+        }
     }
     return published;
 }
@@ -562,7 +605,8 @@ bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
 void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
 {
     ScopedAudioCallback callback (activeAudioCallbacks);
-    if (! acquisitionRunning.load (std::memory_order_acquire))
+    // seq_cst, paired with stopAcquisition(). See ScopedAudioCallback.
+    if (! acquisitionRunning.load (std::memory_order_seq_cst))
         return;
 
     auto* fifo = inputFifo.get();
@@ -1152,14 +1196,19 @@ bool SpectrumViewer::startAcquisition()
 
 bool SpectrumViewer::stopAcquisition()
 {
-    acquisitionRunning.store (false, std::memory_order_release);
+    acquisitionRunning.store (false, std::memory_order_seq_cst);
     activeConfigurationGeneration.store (0, std::memory_order_release);
     activeBinWidthHz.store (0.0f, std::memory_order_release);
 
-    // A callback that begins after the release-store above returns before
-    // touching the FIFO. A nonzero count therefore identifies an older
-    // callback that may still own a raw pointer into the current FIFO.
-    if (activeAudioCallbacks.load (std::memory_order_acquire) != 0)
+    // Both this store/load pair and the callback's increment/load pair are
+    // seq_cst, so they participate in one total order. That is what makes the
+    // following argument sound: a callback that begins after the store above
+    // observes false and returns before touching the FIFO, so a nonzero count
+    // can only be an older callback that may still hold a pointer into the
+    // current FIFO. With acquire/release alone, store-load reordering would
+    // permit both sides to miss each other and clearAcquisitionState() would
+    // free the FIFO under a live callback.
+    if (activeAudioCallbacks.load (std::memory_order_seq_cst) != 0)
     {
         analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
                                  std::memory_order_release);

@@ -377,7 +377,15 @@ private:
         displaySettingsSequence.fetch_add (1, std::memory_order_release);
     }
 
-    DisplaySettings readDisplaySettings() const noexcept;
+    /** Reads a stable display-settings snapshot, or fails after a bounded
+        number of attempts rather than spinning against a burst of updates. */
+    bool tryReadDisplaySettings (DisplaySettings& settings) const noexcept;
+
+    // Both seqlock readers give up after this many attempts. readInputRoute
+    // runs on the audio callback, where spinning is never acceptable;
+    // tryReadDisplaySettings runs on the worker, where it would stall frame
+    // publication.
+    static constexpr int seqlockReadAttempts = 3;
 
     struct InputRouteSnapshot
     {

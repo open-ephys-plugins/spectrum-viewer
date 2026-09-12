@@ -23,6 +23,7 @@
 #include <AppConfig.h>
 #include <juce_core/juce_core.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -122,13 +123,29 @@ public:
 
     void request (SpectrumAnalysisPreparationRequest request);
     bool tryTakeLatest (SpectrumAnalysisPreparationResult& result);
-    void retire (std::shared_ptr<PreparedSpectrumAnalysis> analysis);
+
+    /** Hands a runtime to the configuration thread for destruction.
+
+        Safe to call from a destructor or from Thread::run(): it never throws.
+    */
+    void retire (std::shared_ptr<PreparedSpectrumAnalysis> analysis) noexcept;
+
+    /** False when the configuration thread could not be started. */
+    bool isConfigurationThreadAvailable() const noexcept
+    {
+        return configurationThreadAvailable;
+    }
 
 private:
     void run() override;
     static std::shared_ptr<PreparedSpectrumAnalysis> buildDefault (
         SpectrumAnalysisPreparationRequest request);
 
+    // At most a handful of runtimes are ever awaiting destruction: the active
+    // one, a replacement, and a superseded preparation.
+    static constexpr std::size_t retiredCapacityHint = 8;
+
+    bool configurationThreadAvailable = false;
     Builder builder;
     std::mutex mutex;
     std::optional<SpectrumAnalysisPreparationRequest> pending;

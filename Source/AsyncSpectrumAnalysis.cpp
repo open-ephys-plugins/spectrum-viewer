@@ -67,8 +67,23 @@ AsyncSpectrumAnalysis::AsyncSpectrumAnalysis (Builder newBuilder)
     : juce::Thread ("Spectrum Viewer Configuration"),
       builder (newBuilder ? std::move (newBuilder) : Builder { buildDefault })
 {
-    if (! startThread (juce::Thread::Priority::low))
-        throw std::runtime_error ("Unable to start Spectrum Viewer configuration thread");
+    // This object is a direct member of SpectrumViewer, so throwing here would
+    // escape Plugin::createProcessor across the plugin ABI and take the host
+    // down. Degrade instead: request() reports the failure through the normal
+    // result path, which the worker already handles as configurationFailed.
+    configurationThreadAvailable = startThread (juce::Thread::Priority::low);
+
+    // retire() must be noexcept because it runs from ~SpectrumViewer and from
+    // inside Thread::run(). Reserve enough room that the common case never
+    // reallocates: at most a handful of runtimes are ever in flight.
+    try
+    {
+        retired.reserve (retiredCapacityHint);
+    }
+    catch (const std::bad_alloc&)
+    {
+        // Not fatal; retire() falls back to destroying on the calling thread.
+    }
 }
 
 AsyncSpectrumAnalysis::~AsyncSpectrumAnalysis()
@@ -83,6 +98,21 @@ void AsyncSpectrumAnalysis::request (SpectrumAnalysisPreparationRequest request)
     {
         const std::lock_guard<std::mutex> lock (mutex);
         latestRequestedGeneration = request.parameters.generation;
+
+        if (! configurationThreadAvailable)
+        {
+            // No thread will ever consume this. Publish the failure directly so
+            // the worker adopts it, counts it, and reports configurationFailed
+            // instead of waiting forever on a preparation that cannot happen.
+            SpectrumAnalysisPreparationResult failure;
+            failure.generation = request.parameters.generation;
+            failure.captureId = request.captureId;
+            failure.error = "Spectrum Viewer configuration thread is unavailable";
+            completed = std::move (failure);
+            pending.reset();
+            return;
+        }
+
         pending = std::move (request);
     }
     notify();
@@ -99,16 +129,32 @@ bool AsyncSpectrumAnalysis::tryTakeLatest (SpectrumAnalysisPreparationResult& re
     return true;
 }
 
-void AsyncSpectrumAnalysis::retire (std::shared_ptr<PreparedSpectrumAnalysis> analysis)
+void AsyncSpectrumAnalysis::retire (std::shared_ptr<PreparedSpectrumAnalysis> analysis) noexcept
 {
     if (analysis == nullptr)
         return;
 
+    // Callers include ~SpectrumViewer and SpectrumViewer::run(); an exception
+    // escaping either is std::terminate. Never propagate from here.
+    try
     {
-        const std::lock_guard<std::mutex> lock (mutex);
-        retired.push_back (std::move (analysis));
+        {
+            const std::lock_guard<std::mutex> lock (mutex);
+            retired.push_back (std::move (analysis));
+        }
+        notify();
+        return;
     }
-    notify();
+    catch (...)
+    {
+        // Fall through.
+    }
+
+    // Handing the runtime to the configuration thread failed. Destroying it on
+    // the calling thread takes the FFTW planner mutex here instead, which is
+    // undesirable but strictly better than terminating. Never reached from the
+    // audio callback, which does not retire runtimes.
+    analysis.reset();
 }
 
 std::shared_ptr<PreparedSpectrumAnalysis> AsyncSpectrumAnalysis::buildDefault (
