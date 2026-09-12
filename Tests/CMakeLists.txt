@@ -121,6 +121,9 @@ endif()
 target_include_directories(
 	spectrum_viewer_tests
 	PRIVATE
+		# Shadows the GUI's CommonLibHeader.h; see Tests/stubs/CommonLibHeader.h.
+		# Must precede ${GUI_BASE_DIR}/Plugins/Headers below.
+		${CMAKE_CURRENT_SOURCE_DIR}/stubs
 		${CMAKE_CURRENT_SOURCE_DIR}/../Source
 		${OPENEPHYS_FFTW_SOURCE_DIR}/Source
 		${OPENEPHYS_FFTW_SOURCE_DIR}/libs/generated/linux/include
