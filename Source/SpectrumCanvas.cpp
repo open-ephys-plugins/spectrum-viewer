@@ -765,18 +765,21 @@ void SpectrumCanvas::refresh()
 
 void SpectrumCanvas::setDisplayType (DisplayType type)
 {
-    if (CoreServices::getAcquisitionStatus())
-    {
+    // Pause the refresh while the plot swaps its display type, so refresh()
+    // cannot run against a half-changed plot. What matters is whether this
+    // canvas's own animation timer is running, not whether the host is
+    // acquiring: applyDisplaySettings() calls this from the constructor, where
+    // CoreServices::getAcquisitionStatus() would reach a ControlPanel that
+    // does not exist outside the full application.
+    const auto wasAnimating = isTimerRunning();
+    if (wasAnimating)
         stopCallbacks();
-        currentDisplayType = type;
-        canvasPlot->setDisplayType (type);
+
+    currentDisplayType = type;
+    canvasPlot->setDisplayType (type);
+
+    if (wasAnimating)
         startCallbacks();
-    }
-    else
-    {
-        currentDisplayType = type;
-        canvasPlot->setDisplayType (type);
-    }
 
     resized();
 }
