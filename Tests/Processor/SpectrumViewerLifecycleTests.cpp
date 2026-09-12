@@ -1082,6 +1082,94 @@ TEST_F (SpectrumViewerLifecycleTests, CompletedCaptureBecomesImmutableReferenceA
     }));
 }
 
+TEST_F (SpectrumViewerLifecycleTests, DeselectingEveryChannelReleasesTheLiveRoute)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    writeBlocks (4);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
+    }));
+
+    auto* stream = processor->getDataStreams()[0];
+    ASSERT_NE (stream, nullptr);
+    auto* channelParameter = dynamic_cast<SelectedChannelsParameter*> (
+        stream->getParameter ("Channels"));
+    ASSERT_NE (channelParameter, nullptr);
+
+    channelParameter->setNextValue (Array<var> {}, false);
+    EXPECT_TRUE (processor->getActiveChans().isEmpty());
+
+    // The route the display was built from is gone, so the runtime holding it
+    // must go too. Leaving it live is what kept the canvas drawing channels
+    // the user had just deselected.
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness()
+               == SpectrumAnalysisReadiness::invalidSelection;
+    }));
+    ASSERT_TRUE (waitUntil ([this] { return ! processor->hasActiveAnalysis(); }));
+
+    // Blocks arriving against the released route are not mapping errors.
+    const auto rejectedBefore = processor->getRejectedInputBlockCount();
+    writeBlocks (4);
+    EXPECT_EQ (processor->getRejectedInputBlockCount(), rejectedBefore);
+    EXPECT_GT (processor->getUnconfiguredInputBlockCount(), 0u);
+
+    // No frames are published while nothing is selected.
+    auto framesPublished = false;
+    processor->consumeLatestSpectrumFrame ([&] (const auto&) { framesPublished = true; });
+    EXPECT_FALSE (framesPublished);
+
+    // Selecting again rebuilds the route and returns to live.
+    channelParameter->setNextValue (Array<var> { 0 }, false);
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    writeBlocks (4);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getAnalysisReadiness() == SpectrumAnalysisReadiness::live;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, ReleasedRouteDiscardsAFrozenCaptureButKeepsTheReference)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    ASSERT_TRUE (processor->startSpectrumCapture (2.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+    writeBlocks (32);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+    ASSERT_TRUE (processor->setCurrentCaptureAsReference());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasSpectrumReference(); }));
+
+    auto* stream = processor->getDataStreams()[0];
+    ASSERT_NE (stream, nullptr);
+    auto* channelParameter = dynamic_cast<SelectedChannelsParameter*> (
+        stream->getParameter ("Channels"));
+    ASSERT_NE (channelParameter, nullptr);
+    channelParameter->setNextValue (Array<var> {}, false);
+
+    // The frozen result is republished from the runtime's accumulator, so it
+    // cannot outlive the runtime.
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::live;
+    }));
+    EXPECT_EQ (processor->getCaptureIncludedWindowCount(), 0u);
+
+    // The reference is a standalone snapshot and does survive.
+    EXPECT_TRUE (processor->hasSpectrumReference());
+}
+
 TEST_F (SpectrumViewerLifecycleTests, DeltaComparesAreaWeightedLinearPower)
 {
     createProcessor();

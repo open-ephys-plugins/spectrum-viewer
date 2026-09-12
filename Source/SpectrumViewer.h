@@ -61,7 +61,12 @@ enum class SpectrumAnalysisReadiness
     preparing,
     warmingUp,
     live,
-    configurationFailed
+    configurationFailed,
+    // The stream or channel selection cannot be routed - no channels are
+    // selected, or the selected stream is gone. Distinct from
+    // configurationFailed: nothing is broken, and the user can fix it by
+    // changing the selection.
+    invalidSelection
 };
 
 enum class SpectrumAmplitudeDisplay
@@ -403,6 +408,7 @@ private:
     bool updateRequestedInputRoute (DataStream* stream);
     void requestInputRouteReplacement();
     void rejectInputRouteReplacement() noexcept;
+    void discardInvalidatedInputRoute() noexcept;
     void publishInputRoute (std::uint16_t streamId,
                             std::size_t channelCount,
                             const int* globalChannelIndices,
@@ -474,6 +480,11 @@ private:
     std::atomic<SpectrumAnalysisProfile> analysisProfile { SpectrumAnalysisProfile::fast };
     std::atomic<SpectrumAnalysisReadiness> analysisReadiness { SpectrumAnalysisReadiness::stopped };
     std::atomic<bool> configurationPending { false };
+    // A one-shot command from the message thread to the worker: the selection
+    // the live route was built from is no longer routable, so release it. The
+    // worker has to do the releasing because it is the input route seqlock's
+    // only writer while acquisition runs.
+    std::atomic<bool> inputRouteInvalidated { false };
     std::atomic<bool> acquisitionRunning { false };
     std::atomic<std::size_t> activeAudioCallbacks { 0 };
     std::atomic<std::size_t> warmupSampleCount { 0 };

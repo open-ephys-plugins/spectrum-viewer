@@ -713,12 +713,16 @@ void SpectrumCanvas::refresh()
     const auto unavailable = ! processor->hasActiveAnalysis()
                              && (readiness == SpectrumAnalysisReadiness::preparing
                                  || readiness == SpectrumAnalysisReadiness::warmingUp
-                                 || readiness == SpectrumAnalysisReadiness::configurationFailed);
+                                 || readiness == SpectrumAnalysisReadiness::configurationFailed
+                                 || readiness == SpectrumAnalysisReadiness::invalidSelection);
     if (unavailable)
     {
         if (! unavailableStateCleared)
         {
-            canvasPlot->clear();
+            // The legend is refreshed from frames while acquisition runs, so
+            // clearing the traces alone would leave it naming the channels of
+            // the route that just went away. Re-read the selection instead.
+            canvasPlot->updateActiveChans();
             unavailableStateCleared = true;
         }
         return;
@@ -964,14 +968,19 @@ void SpectrumCanvas::applyAmplitudeRangeToPlot()
 void SpectrumCanvas::updateStatus()
 {
     const auto capture = processor->getCaptureState();
+    const auto readiness = processor->getAnalysisReadiness();
+    // Nothing can be captured from a selection that cannot be routed, and
+    // nothing is running to capture from when acquisition is stopped.
+    const auto analysisAvailable =
+        readiness != SpectrumAnalysisReadiness::stopped
+        && readiness != SpectrumAnalysisReadiness::invalidSelection;
     captureStatusLabel->setTooltip ({});
     captureDuration->setEnabled (capture == SpectrumCaptureState::live
                                  || capture == SpectrumCaptureState::failed);
     analysisProfile->setEnabled (capture == SpectrumCaptureState::live
                                  || capture == SpectrumCaptureState::failed);
-    captureAction->setEnabled (
-        processor->getAnalysisReadiness() != SpectrumAnalysisReadiness::stopped
-        && capture != SpectrumCaptureState::restoringLive);
+    captureAction->setEnabled (analysisAvailable
+                               && capture != SpectrumCaptureState::restoringLive);
 
     switch (capture)
     {

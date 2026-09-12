@@ -614,9 +614,22 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
         return;
 
     InputRouteSnapshot route;
-    if (! readInputRoute (route) || route.channelCount == 0)
+    if (! readInputRoute (route))
     {
         invalidMappedInputBlocks.fetch_add (1, std::memory_order_relaxed);
+        return;
+    }
+
+    // An empty route is not a mapping error - it is the worker saying no
+    // runtime claims this data, either before the first configuration or after
+    // it released a route whose selection became invalid. Counting these as
+    // rejected blocks would make that diagnostic climb for as long as a user
+    // leaves nothing selected. The sample count is unavailable here:
+    // getNumSamplesInBlock() throws for the zero stream id an empty route
+    // carries, so it must stay below this guard.
+    if (route.channelCount == 0)
+    {
+        unconfiguredInputBlocks.fetch_add (1, std::memory_order_relaxed);
         return;
     }
 
@@ -662,6 +675,9 @@ void SpectrumViewer::run()
 {
     while (! threadShouldExit())
     {
+        // Before adopting: a rejected route replacement bumps the requested
+        // generation, so any result still in flight is discarded here anyway.
+        discardInvalidatedInputRoute();
         adoptPreparedAnalysis();
         applyReferenceRequest();
         if (activeAnalysis != nullptr && activeAnalysis->isCaptureRuntime()
@@ -1037,6 +1053,11 @@ bool SpectrumViewer::updateRequestedInputRoute (DataStream* stream)
 
 void SpectrumViewer::requestInputRouteReplacement()
 {
+    // A routable selection supersedes a pending invalidation. Clearing the
+    // command before requesting keeps the worker from tearing down the route
+    // that the configuration requested below is about to replace.
+    inputRouteInvalidated.store (false, std::memory_order_release);
+
     const auto state = captureState.load (std::memory_order_acquire);
     if (state != SpectrumCaptureState::live
         && state != SpectrumCaptureState::failed)
@@ -1056,12 +1077,74 @@ void SpectrumViewer::requestInputRouteReplacement()
 
 void SpectrumViewer::rejectInputRouteReplacement() noexcept
 {
+    // Supersede any preparation already in flight so its result is discarded
+    // on arrival rather than installed against a selection that is gone.
     requestedConfigurationGeneration.store (nextConfigurationGeneration++,
                                             std::memory_order_release);
     configurationPending.store (false, std::memory_order_release);
-    configurationFailures.fetch_add (1, std::memory_order_relaxed);
-    analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+
+    // Keeping the live runtime here would leave the canvas drawing, and the
+    // legend naming, the channels the user just deselected - data that is
+    // still arriving but no longer describes the selection. Release it.
+    //
+    // The teardown has to happen on the worker: it is the input route
+    // seqlock's only writer while acquisition runs, and it owns activeAnalysis.
+    // So this is a command, not the act itself.
+    inputRouteInvalidated.store (true, std::memory_order_release);
+    analysisReadiness.store (SpectrumAnalysisReadiness::invalidSelection,
                              std::memory_order_release);
+}
+
+void SpectrumViewer::discardInvalidatedInputRoute() noexcept
+{
+    if (! inputRouteInvalidated.exchange (false, std::memory_order_acq_rel))
+        return;
+
+    // Withdraw the callback's permission to enqueue before releasing the
+    // runtime those blocks were destined for. Blocks already queued keep the
+    // old generation and are rejected at the pipeline boundary if a later
+    // runtime ever sees them.
+    publishInputRoute (0, 0, nullptr, 0);
+    activeBinWidthHz.store (0.0f, std::memory_order_release);
+
+    if (activeAnalysis != nullptr)
+    {
+        {
+            const std::lock_guard<std::mutex> lock (displayAnalysisMutex);
+            displayAnalysis.reset();
+        }
+        asynchronousAnalysis.retire (activeAnalysis);
+        activeAnalysis.reset();
+    }
+
+    warmupSampleCount.store (0, std::memory_order_relaxed);
+    warmupTargetSampleCount.store (0, std::memory_order_relaxed);
+
+    // A frozen capture is republished from the runtime's accumulator, so it
+    // cannot outlive the runtime. The reference is a standalone snapshot and
+    // does survive; its compatibility is re-evaluated against whatever
+    // selection comes next.
+    completedCapture.reset();
+    captureHasFirstSample = false;
+    captureCompletionPending = false;
+    captureFirstSample = 0;
+    captureLastSampleExclusive = 0;
+    captureLastFrameSequence = 0;
+    captureTargetWindows.store (0, std::memory_order_relaxed);
+    captureIncludedWindows.store (0, std::memory_order_relaxed);
+    captureWindowSeconds.store (0.0, std::memory_order_relaxed);
+    captureWallSpanSeconds.store (0.0, std::memory_order_relaxed);
+    captureFailedWindows.store (0, std::memory_order_relaxed);
+    captureShedWindows.store (0, std::memory_order_relaxed);
+    captureDiscontinuities.store (0, std::memory_order_relaxed);
+    captureState.store (SpectrumCaptureState::live, std::memory_order_release);
+
+    // The message thread can make the selection valid again between the
+    // command and this teardown. That configuration request owns the readiness
+    // state, so only claim it when nothing has superseded the invalidation.
+    if (! configurationPending.load (std::memory_order_acquire))
+        analysisReadiness.store (SpectrumAnalysisReadiness::invalidSelection,
+                                 std::memory_order_release);
 }
 
 bool SpectrumViewer::startAcquisition()
@@ -1105,7 +1188,9 @@ bool SpectrumViewer::startAcquisition()
         }
         if (! updateRequestedInputRoute (stream))
         {
-            analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
+            // Same cause as a rejected replacement: the selection is not
+            // routable. Report it as such rather than as a broken analysis.
+            analysisReadiness.store (SpectrumAnalysisReadiness::invalidSelection,
                                      std::memory_order_release);
             LOGE ("Unable to configure Spectrum Viewer without an active stream");
             return false;
@@ -1159,6 +1244,7 @@ bool SpectrumViewer::startAcquisition()
         unconfiguredInputSamples.store (0, std::memory_order_relaxed);
         staleConfigurationBlocks.store (0, std::memory_order_relaxed);
         configurationFailures.store (0, std::memory_order_relaxed);
+        inputRouteInvalidated.store (false, std::memory_order_relaxed);
         requestedCaptureId.store (0, std::memory_order_relaxed);
         captureWindowSeconds.store (0.0, std::memory_order_relaxed);
         captureTargetWindows.store (0, std::memory_order_relaxed);
@@ -1251,6 +1337,9 @@ void SpectrumViewer::clearAcquisitionState()
     acquisitionMaximumInputBlockSamples = 0;
     acquisitionSampleRateHz = 0.0;
     configurationPending.store (false, std::memory_order_release);
+    // The worker is gone by the time this runs, so an armed teardown command
+    // would otherwise survive to fire against the next acquisition.
+    inputRouteInvalidated.store (false, std::memory_order_relaxed);
     captureTargetWindows.store (0, std::memory_order_relaxed);
     captureIncludedWindows.store (0, std::memory_order_relaxed);
     captureWindowSeconds.store (0.0, std::memory_order_relaxed);

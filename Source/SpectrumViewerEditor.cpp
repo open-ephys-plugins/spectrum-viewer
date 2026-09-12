@@ -97,6 +97,9 @@ void SpectrumViewerEditor::timerCallback()
                        ? "Live (new profile failed)"
                        : "Analysis configuration failed";
             break;
+        case SpectrumAnalysisReadiness::invalidSelection:
+            text = "Select a stream and channels";
+            break;
         case SpectrumAnalysisReadiness::stopped:
         default:
             text = "Stopped";
