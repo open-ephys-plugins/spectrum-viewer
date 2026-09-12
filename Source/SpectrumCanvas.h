@@ -420,6 +420,12 @@ private:
     bool unavailableStateCleared = false;
     bool applyingSettings = false;
 
+    // Setting a reference is asynchronous, so a request the worker could not
+    // apply surfaces here rather than at the click. Latched until the next
+    // reference is set or cleared, so the message is not lost between polls.
+    std::uint64_t seenDroppedReferenceRequests = 0;
+    bool referenceRequestWasDropped = false;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumCanvas);
 };
 

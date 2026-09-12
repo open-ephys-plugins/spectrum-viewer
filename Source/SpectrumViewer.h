@@ -230,7 +230,14 @@ public:
         return requestedCaptureId.load (std::memory_order_relaxed);
     }
 
-    /** Marks the completed frozen capture as the session-local reference. */
+    /** Marks the completed frozen capture as the comparison reference.
+
+        The reference lives until acquisition stops, which releases it along
+        with the rest of the acquisition state.
+
+        A true return means the request was accepted, not that it was applied:
+        the worker applies it, and drops it if the frozen capture was never
+        retained. getDroppedReferenceRequestCount() reports that. */
     bool setCurrentCaptureAsReference() noexcept;
     void clearSpectrumReference() noexcept;
     void setSpectrumComparisonMode (spectrumviewer::SpectrumComparisonMode mode) noexcept;
@@ -337,6 +344,13 @@ public:
     std::uint64_t getConfigurationFailureCount() const noexcept
     {
         return configurationFailures.load (std::memory_order_relaxed);
+    }
+
+    /** Returns reference requests the worker accepted but could not apply,
+        because the frozen capture they named was never retained. */
+    std::uint64_t getDroppedReferenceRequestCount() const noexcept
+    {
+        return droppedReferenceRequests.load (std::memory_order_acquire);
     }
 
     /** Consumes all pending display frames and passes only the newest complete frame to consumer. */
@@ -528,6 +542,7 @@ private:
     static constexpr std::uint64_t CLEAR_REFERENCE_REQUEST =
         std::numeric_limits<std::uint64_t>::max();
     std::atomic<std::uint64_t> referenceRequest { 0 };
+    std::atomic<std::uint64_t> droppedReferenceRequests { 0 };
     std::atomic<std::uint64_t> comparisonSettingsSequence { 0 };
     std::atomic<spectrumviewer::SpectrumComparisonMode> comparisonMode {
         spectrumviewer::SpectrumComparisonMode::absolute

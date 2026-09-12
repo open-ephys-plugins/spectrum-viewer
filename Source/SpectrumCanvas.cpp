@@ -883,6 +883,9 @@ void SpectrumCanvas::buttonClicked (Button* button)
     }
     if (button == setReferenceAction.get())
     {
+        // A fresh attempt. updateStatus() latches this again if the worker
+        // drops the request too.
+        referenceRequestWasDropped = false;
         if (processor->setCurrentCaptureAsReference())
         {
             // Captures always use Fine analysis. Restore the same estimator
@@ -897,6 +900,7 @@ void SpectrumCanvas::buttonClicked (Button* button)
     }
     if (button == clearReferenceAction.get())
     {
+        referenceRequestWasDropped = false;
         processor->clearSpectrumReference();
         return;
     }
@@ -1041,16 +1045,38 @@ void SpectrumCanvas::updateStatus()
             break;
     }
 
+    const auto droppedReferenceRequests = processor->getDroppedReferenceRequestCount();
+    if (droppedReferenceRequests != seenDroppedReferenceRequests)
+    {
+        seenDroppedReferenceRequests = droppedReferenceRequests;
+        referenceRequestWasDropped = true;
+
+        // Setting a reference optimistically switches to Fine and Overlay on
+        // the click. There is no reference to overlay, so put the comparison
+        // back rather than leaving a mode selected that does nothing.
+        comparisonMode->setSelectedId (
+            static_cast<int> (spectrumviewer::SpectrumComparisonMode::absolute),
+            sendNotification);
+    }
+
     setReferenceAction->setEnabled (capture == SpectrumCaptureState::frozen);
-    clearReferenceAction->setEnabled (processor->hasSpectrumReference());
+    clearReferenceAction->setEnabled (processor->hasSpectrumReference()
+                                      || referenceRequestWasDropped);
     comparisonMode->setEnabled (processor->hasSpectrumReference());
     if (! processor->hasSpectrumReference())
     {
-        referenceStatusLabel->setText ("No reference", dontSendNotification);
-        referenceStatusLabel->setTooltip ({});
+        referenceStatusLabel->setText (
+            referenceRequestWasDropped ? "Reference unavailable" : "No reference",
+            dontSendNotification);
+        referenceStatusLabel->setTooltip (
+            referenceRequestWasDropped
+                ? "The frozen capture could not be retained, so it could not "
+                  "become the reference. Capture again."
+                : String());
     }
     else
     {
+        referenceRequestWasDropped = false;
         const auto compatibility = processor->getReferenceCompatibility();
         referenceStatusLabel->setText (
             (capture == SpectrumCaptureState::frozen ? "Ref set; Go Live" : "Ref ")

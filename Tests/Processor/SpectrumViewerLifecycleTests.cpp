@@ -1082,6 +1082,48 @@ TEST_F (SpectrumViewerLifecycleTests, CompletedCaptureBecomesImmutableReferenceA
     }));
 }
 
+// The drop itself needs finalizeCapturedSpectrum() to fail its allocation,
+// which no public entry point can provoke. What is testable, and what makes
+// the counter trustworthy as a UI signal, is that the paths a user actually
+// takes never move it: a dropped request must mean a dropped request.
+TEST_F (SpectrumViewerLifecycleTests, AppliedAndRefusedReferenceRequestsAreNotCountedAsDropped)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    ASSERT_TRUE (processor->startSpectrumCapture (2.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+    writeBlocks (32);
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+
+    ASSERT_TRUE (processor->setCurrentCaptureAsReference());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasSpectrumReference(); }));
+    EXPECT_EQ (processor->getDroppedReferenceRequestCount(), 0u);
+
+    processor->clearSpectrumReference();
+    ASSERT_TRUE (waitUntil ([this] { return ! processor->hasSpectrumReference(); }));
+    EXPECT_EQ (processor->getDroppedReferenceRequestCount(), 0u);
+
+    processor->returnToLive();
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::live;
+    }));
+
+    // Refused before it becomes a request: nothing is frozen to reference, so
+    // the worker never sees it and there is nothing to drop.
+    EXPECT_FALSE (processor->setCurrentCaptureAsReference());
+    writeBlocks (8);
+    EXPECT_EQ (processor->getDroppedReferenceRequestCount(), 0u);
+    EXPECT_FALSE (processor->hasSpectrumReference());
+}
+
 TEST_F (SpectrumViewerLifecycleTests, DeselectingEveryChannelReleasesTheLiveRoute)
 {
     createProcessor();

@@ -362,6 +362,17 @@ void SpectrumViewer::applyReferenceRequest() noexcept
             std::memory_order_relaxed);
         referenceCaptureId.store (request, std::memory_order_release);
     }
+    else
+    {
+        // The named capture is not retained: finalizeCapturedSpectrum() could
+        // not allocate it, or the runtime holding it was released first. The
+        // exchange above has already consumed the request, so without this
+        // counter the UI would keep showing the reference controls it enabled
+        // on the click and never learn that nothing was set.
+        droppedReferenceRequests.fetch_add (1, std::memory_order_release);
+        LOGE ("Spectrum Viewer could not set capture ", request,
+              " as the reference because it was not retained");
+    }
 
     captureCompletionPending = captureState.load (std::memory_order_relaxed)
                                == SpectrumCaptureState::frozen;
@@ -1245,6 +1256,7 @@ bool SpectrumViewer::startAcquisition()
         staleConfigurationBlocks.store (0, std::memory_order_relaxed);
         configurationFailures.store (0, std::memory_order_relaxed);
         inputRouteInvalidated.store (false, std::memory_order_relaxed);
+        droppedReferenceRequests.store (0, std::memory_order_relaxed);
         requestedCaptureId.store (0, std::memory_order_relaxed);
         captureWindowSeconds.store (0.0, std::memory_order_relaxed);
         captureTargetWindows.store (0, std::memory_order_relaxed);
