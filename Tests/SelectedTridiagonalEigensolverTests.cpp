@@ -103,10 +103,13 @@ TEST (SelectedTridiagonalEigensolverTests, SolvesKnownTwoByTwoMatrix)
     EXPECT_EQ (result.getEigenvector (2), nullptr);
 }
 
-TEST (SelectedTridiagonalEigensolverTests, ReportsThePinnedBackend)
+// Pins the backend identity. This is the tripwire that fires if an external
+// numerical library is ever linked back in.
+TEST (SelectedTridiagonalEigensolverTests, ReportsTheInTreeBackend)
 {
     EXPECT_STREQ (spectrumviewer::numerics::getNumericsBackendDescription(),
-                  "conda-forge OpenBLAS 0.3.34, LP64, one thread");
+                  "in-tree symmetric tridiagonal bisection and inverse iteration, "
+                  "double precision, one thread");
 }
 
 TEST (SelectedTridiagonalEigensolverTests, RejectsInvalidInputs)
@@ -192,4 +195,118 @@ TEST (SelectedTridiagonalEigensolverTests, SupportsConcurrentIndependentCalls)
         ASSERT_TRUE (result.succeeded());
         ASSERT_EQ (result.eigenpairCount, 5U);
     }
+}
+
+// The four cases below exercise the pivot clamps in the Sturm recurrence and
+// in the shifted factorization. Without them the in-tree solver either divides
+// by zero or miscounts, and it needs no explicit block-splitting code because
+// the clamps keep both recurrences finite.
+
+TEST (SelectedTridiagonalEigensolverTests, HandlesReducibleMatrices)
+{
+    // Two identical decoupled blocks, so every eigenvalue is exactly doubled.
+    // Independent inverse iterations would return parallel vectors here.
+    // expectValidEigenpairs is deliberately not used: it requires strictly
+    // descending eigenvalues, and equal values are the correct answer for a
+    // degenerate matrix.
+    constexpr std::size_t order = 100;
+    constexpr std::size_t count = 4;
+    std::vector<double> diagonal (order, 3.0);
+    std::vector<double> offDiagonal (order - 1, -1.0);
+    offDiagonal[order / 2 - 1] = 0.0;
+
+    const auto result = spectrumviewer::numerics::findLargestSymmetricTridiagonalEigenpairs (
+        diagonal, offDiagonal, count);
+    ASSERT_TRUE (result.succeeded())
+        << spectrumviewer::numerics::getSymmetricTridiagonalEigenStatusDescription (
+               result.status);
+    ASSERT_EQ (result.eigenpairCount, count);
+
+    for (std::size_t pair = 0; pair < count; ++pair)
+    {
+        if (pair > 0)
+            EXPECT_GE (result.eigenvalues[pair - 1], result.eigenvalues[pair]);
+
+        EXPECT_LT (normalizedResidual (diagonal, offDiagonal,
+                                       result.getEigenvector (pair),
+                                       result.eigenvalues[pair]),
+                   1.0e-14);
+
+        for (std::size_t other = 0; other <= pair; ++other)
+            EXPECT_NEAR (dot (result.getEigenvector (pair),
+                              result.getEigenvector (other), order),
+                         pair == other ? 1.0 : 0.0, 1.0e-13);
+    }
+}
+
+TEST (SelectedTridiagonalEigensolverTests, HandlesDiagonalMatrices)
+{
+    std::vector<double> diagonal { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0 };
+    std::vector<double> offDiagonal (diagonal.size() - 1, 0.0);
+
+    const auto result = spectrumviewer::numerics::findLargestSymmetricTridiagonalEigenpairs (
+        diagonal, offDiagonal, 4);
+    ASSERT_TRUE (result.succeeded());
+
+    for (std::size_t pair = 0; pair < result.eigenpairCount; ++pair)
+    {
+        EXPECT_NEAR (result.eigenvalues[pair], 10.0 - static_cast<double> (pair), 1.0e-12);
+
+        // Each eigenvector must be a unit axis vector.
+        const auto* vector = result.getEigenvector (pair);
+        const auto expectedRow = diagonal.size() - 1 - pair;
+        for (std::size_t row = 0; row < diagonal.size(); ++row)
+            EXPECT_NEAR (std::abs (vector[row]), row == expectedRow ? 1.0 : 0.0, 1.0e-12);
+    }
+}
+
+TEST (SelectedTridiagonalEigensolverTests, HandlesZeroMatrix)
+{
+    constexpr std::size_t order = 8;
+    const std::vector<double> diagonal (order, 0.0);
+    const std::vector<double> offDiagonal (order - 1, 0.0);
+
+    const auto result = spectrumviewer::numerics::findLargestSymmetricTridiagonalEigenpairs (
+        diagonal, offDiagonal, 3);
+    ASSERT_TRUE (result.succeeded());
+
+    // normalizedResidual is 0/0 here, so assert the unnormalized residual:
+    // T is zero, so Tv - 0*v must be exactly zero for any v.
+    for (std::size_t pair = 0; pair < result.eigenpairCount; ++pair)
+    {
+        EXPECT_NEAR (result.eigenvalues[pair], 0.0, 1.0e-14);
+
+        const auto* vector = result.getEigenvector (pair);
+        for (std::size_t row = 0; row < order; ++row)
+        {
+            auto transformed = diagonal[row] * vector[row];
+            if (row > 0)
+                transformed += offDiagonal[row - 1] * vector[row - 1];
+            if (row + 1 < order)
+                transformed += offDiagonal[row] * vector[row + 1];
+            EXPECT_DOUBLE_EQ (transformed - result.eigenvalues[pair] * vector[row], 0.0);
+        }
+    }
+
+    // Every direction is an eigenvector, so the only real requirement is that
+    // the returned basis is orthonormal.
+    for (std::size_t left = 0; left < result.eigenpairCount; ++left)
+        for (std::size_t right = 0; right <= left; ++right)
+            EXPECT_NEAR (dot (result.getEigenvector (left),
+                              result.getEigenvector (right), order),
+                         left == right ? 1.0 : 0.0, 1.0e-13);
+}
+
+TEST (SelectedTridiagonalEigensolverTests, SeparatesNearlyDegenerateEigenvalues)
+{
+    // Wilkinson's W+ with order 21: its top eigenvalues agree to roughly 1e-14,
+    // the classic case that defeats inverse iteration without
+    // reorthogonalization.
+    constexpr std::size_t order = 21;
+    std::vector<double> diagonal (order);
+    const std::vector<double> offDiagonal (order - 1, 1.0);
+    for (std::size_t index = 0; index < order; ++index)
+        diagonal[index] = std::abs (static_cast<double> (index) - 10.0);
+
+    expectValidEigenpairs (diagonal, offDiagonal, 6, 1.0e-14, 1.0e-13);
 }

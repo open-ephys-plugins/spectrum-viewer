@@ -96,6 +96,7 @@ add_executable(
 	JuceCore.cpp
 	OpenEphysFFTWBatchTests.cpp
 	DpssTapersTests.cpp
+	EigensolverBackendParityTests.cpp
 	SelectedTridiagonalEigensolverTests.cpp
 	MultitaperPeriodogramTests.cpp
 	ReferencePeriodogramTests.cpp
