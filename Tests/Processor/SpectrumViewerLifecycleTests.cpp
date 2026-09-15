@@ -113,6 +113,24 @@ protected:
         writeBlocksScaled (count, 1.0f);
     }
 
+    /** Keeps feeding the processor until the predicate holds or time runs out.
+
+        A capture only advances while input arrives, so waiting passively on one
+        cannot make progress. Driving from a fixed block count and then waiting
+        is worse than either: it makes the test depend on how many of those
+        blocks happen to survive the queue, which varies with load. */
+    bool writeUntil (const std::function<bool()>& predicate)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + 5s;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (predicate())
+                return true;
+            writeBlocks (1);
+        }
+        return predicate();
+    }
+
     void writeBlocksScaled (int count, float scale)
     {
         AudioBuffer<float> buffer (1, blockSize);
@@ -906,12 +924,7 @@ TEST_F (SpectrumViewerLifecycleTests, CaptureReportsInputGapWithoutMixingWindowH
     {
         return processor->getInputDiscontinuityCount() > 0;
     }));
-    for (int block = 0;
-         block < 96
-         && processor->getCaptureState() != SpectrumCaptureState::frozen;
-         ++block)
-        writeBlocks (1);
-    ASSERT_TRUE (waitUntil ([this]
+    ASSERT_TRUE (writeUntil ([this]
     {
         return processor->getCaptureState() == SpectrumCaptureState::frozen;
     }));

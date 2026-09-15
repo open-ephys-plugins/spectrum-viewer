@@ -66,26 +66,26 @@ public:
         setTooltip ("Show or hide capture, comparison, and dB range controls");
     }
 
-    void paintButton (Graphics& graphics, bool isMouseOver, bool) override
+    void paintButton (Graphics& g, bool isMouseOver, bool) override
     {
-        graphics.setColour (findColour (ThemeColours::defaultText)
+        g.setColour (findColour (ThemeColours::defaultText)
                                 .withAlpha (isMouseOver ? 1.0f : 0.85f));
-        graphics.setFont (FontOptions ("Inter", "Regular", 12.0f));
-        graphics.drawText ("Options", 0, 0, getWidth() - 22, getHeight(),
-                           Justification::centredRight, false);
+        g.setFont (FontOptions ("Inter", "Regular", 13.0f));
+        g.drawText ("Options", 0, 0, getWidth() - 18, getHeight(),
+                    Justification::centredRight, false);
 
-        const auto centreX = static_cast<float> (getWidth() - 11);
+        const auto centreX = static_cast<float> (getWidth() - 9);
         const auto centreY = static_cast<float> (getHeight()) * 0.5f;
         Path arrow;
         if (getToggleState())
-            arrow.addTriangle (centreX, centreY - 5.0f,
-                               centreX - 6.0f, centreY + 4.0f,
-                               centreX + 6.0f, centreY + 4.0f);
+            arrow.addTriangle (centreX, centreY - 4.5f,
+                               centreX - 5.0f, centreY + 3.5f,
+                               centreX + 5.0f, centreY + 3.5f);
         else
-            arrow.addTriangle (centreX - 4.0f, centreY - 6.0f,
-                               centreX + 5.0f, centreY,
-                               centreX - 4.0f, centreY + 6.0f);
-        graphics.fillPath (arrow.createPathWithRoundedCorners (2.0f));
+            arrow.addTriangle (centreX - 3.5f, centreY - 5.0f,
+                               centreX + 4.5f, centreY,
+                               centreX - 3.5f, centreY + 5.0f);
+        g.fillPath (arrow.createPathWithRoundedCorners (2.0f));
     }
 };
 
@@ -329,12 +329,127 @@ SpectrumCanvas::~SpectrumCanvas()
     statusTimer.stopTimer();
 }
 
+namespace
+{
+/** One fixed-size item in a row of controls.
+
+    flexShrink defaults to 1, which would squeeze controls to unreadable widths
+    instead of letting the bar scroll, so it is pinned here. */
+FlexItem rowItem (Component& component, int width, int height, int gapBefore)
+{
+    auto item = FlexItem (component)
+                    .withWidth (static_cast<float> (width))
+                    .withHeight (static_cast<float> (height));
+    item.flexShrink = 0.0f;
+
+    // Set the field rather than withMargin (FlexItem::Margin {...}): the
+    // four-argument Margin constructor is not among the JUCE symbols the host
+    // exports, so calling it fails to link in a plugin.
+    item.margin.left = static_cast<float> (gapBefore);
+    return item;
+}
+} // namespace
+
+SpectrumCanvas::ControlGroup::ControlGroup (const String& titleText)
+    : GroupComponent (titleText + "Group", titleText)
+{
+}
+
+void SpectrumCanvas::ControlGroup::addPair (int row,
+                                            Label* label,
+                                            Component* control,
+                                            int labelWidth,
+                                            int controlWidth)
+{
+    jassert (isPositiveAndBelow (row, rowCount));
+    entries.push_back ({ row, label, control, labelWidth, controlWidth });
+    if (label != nullptr)
+        addAndMakeVisible (label);
+    if (control != nullptr)
+        addAndMakeVisible (control);
+}
+
+std::array<int, SpectrumCanvas::ControlGroup::rowCount>
+    SpectrumCanvas::ControlGroup::getRowWidths() const
+{
+    std::array<int, rowCount> widths {};
+    for (const auto& entry : entries)
+    {
+        if (! entry.isShowing())
+            continue;
+
+        auto& width = widths[static_cast<std::size_t> (entry.row)];
+        if (width > 0)
+            width += controlSpacing;
+        width += entry.width();
+    }
+    return widths;
+}
+
+int SpectrumCanvas::ControlGroup::getPreferredWidth() const
+{
+    const auto widths = getRowWidths();
+    const auto widest = *std::max_element (widths.begin(), widths.end());
+    if (widest == 0)
+        return 0;
+
+    // Never narrower than the title the outline draws inline, or the title is
+    // clipped and the group reads as belonging to its neighbour.
+    const auto titleWidth = GlyphArrangement::getStringWidthInt (
+                                FontOptions { static_cast<float> (groupTitleHeight) + 1.0f },
+                                getText())
+                            + 2 * groupPadding;
+    return std::max (widest, titleWidth) + 2 * groupPadding;
+}
+
+void SpectrumCanvas::ControlGroup::lookAndFeelChanged()
+{
+    setColour (GroupComponent::outlineColourId,
+               findColour (ThemeColours::defaultText).withAlpha (0.35f));
+    setColour (GroupComponent::textColourId,
+               findColour (ThemeColours::defaultText));
+}
+
+void SpectrumCanvas::ControlGroup::resized()
+{
+    auto area = getLocalBounds().reduced (groupPadding, 0);
+    area.removeFromTop (groupTitleHeight);
+
+    // Label visibility follows its control's, which updateAmplitudeRangeControls()
+    // owns for the only pair that hides.
+    for (auto row = 0; row < rowCount; ++row)
+    {
+        if (row > 0)
+            area.removeFromTop (groupRowGap);
+        const auto rowArea = area.removeFromTop (controlHeight);
+
+        FlexBox flex;
+        flex.alignItems = FlexBox::AlignItems::center;
+        for (const auto& entry : entries)
+        {
+            if (entry.row != row || ! entry.isShowing())
+                continue;
+
+            const auto gap = flex.items.isEmpty() ? 0 : controlSpacing;
+            if (entry.label != nullptr)
+                flex.items.add (rowItem (*entry.label, entry.labelWidth, controlHeight, gap));
+            flex.items.add (rowItem (*entry.control,
+                                     entry.controlWidth,
+                                     controlHeight,
+                                     entry.label != nullptr ? 0 : gap));
+        }
+
+        if (! flex.items.isEmpty())
+            flex.performLayout (rowArea.toFloat());
+    }
+}
+
 void SpectrumCanvas::createControls()
 {
     auto makeLabel = [this] (const char* componentName, const char* text)
     {
         auto label = std::make_unique<Label> (componentName, text);
-        label->setFont (FontOptions ("Inter", "Regular", 13.0f));
+        label->setFont (FontOptions ("Inter", "Regular", 14.0f));
         return label;
     };
 
@@ -353,10 +468,17 @@ void SpectrumCanvas::createControls()
         return box;
     };
 
+    optionsContent = std::make_unique<Component> ("Spectrum options");
     mainOptionsBar = std::make_unique<Component> ("Spectrum display controls");
-    addAndMakeVisible (mainOptionsBar.get());
+    optionsContent->addAndMakeVisible (mainOptionsBar.get());
     optionsDrawer = std::make_unique<Component> ("Spectrum advanced controls");
-    addChildComponent (optionsDrawer.get());
+    optionsContent->addChildComponent (optionsDrawer.get());
+
+    optionsViewport = std::make_unique<Viewport> ("Spectrum options viewport");
+    optionsViewport->setViewedComponent (optionsContent.get(), false);
+    optionsViewport->setScrollBarsShown (false, true);
+    optionsViewport->setScrollBarThickness (scrollBarThickness);
+    addAndMakeVisible (optionsViewport.get());
 
     displayLabel = makeLabel ("DisplayTypeLabel", "Display");
     displayType = makeComboBox ("Display Type", { "Power Spectrum", "Spectrogram" });
@@ -387,14 +509,14 @@ void SpectrumCanvas::createControls()
     amplitudeRangeLabel = makeLabel ("AmplitudeRangeLabel", "dB Range");
     amplitudeRangeMode = makeComboBox ("AmplitudeRangeMode", { "Auto", "Fixed" });
 
-    minimumDbLabel = makeLabel ("MinimumDbLabel", "Minimum dB");
+    minimumDbLabel = makeLabel ("MinimumDbLabel", "Min dB");
     minimumDb = std::make_unique<Slider> ("MinimumDb");
     minimumDb->setRange (-240.0, 100.0, 1.0);
     minimumDb->setSliderStyle (Slider::LinearHorizontal);
     minimumDb->setTextBoxStyle (Slider::TextBoxLeft, false, 55, controlHeight);
     minimumDb->addListener (this);
 
-    maximumDbLabel = makeLabel ("MaximumDbLabel", "Maximum dB");
+    maximumDbLabel = makeLabel ("MaximumDbLabel", "Max dB");
     maximumDb = std::make_unique<Slider> ("MaximumDb");
     maximumDb->setRange (-220.0, 120.0, 1.0);
     maximumDb->setSliderStyle (Slider::LinearHorizontal);
@@ -402,7 +524,7 @@ void SpectrumCanvas::createControls()
     maximumDb->addListener (this);
 
     automaticRangeLabel = makeLabel ("AutomaticRangeLabel", "Awaiting spectrum...");
-    automaticRangeLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
+    automaticRangeLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
 
     captureDurationLabel = makeLabel ("CaptureDurationLabel", "Capture Length");
     captureDuration = makeComboBox (
@@ -413,7 +535,7 @@ void SpectrumCanvas::createControls()
     captureAction->addListener (this);
 
     captureStatusLabel = makeLabel ("CaptureStatus", "Live");
-    captureStatusLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
+    captureStatusLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
 
     comparisonModeLabel = makeLabel ("SpectrumComparisonModeLabel", "Comparison");
     comparisonMode = makeComboBox ("SpectrumComparisonMode",
@@ -435,21 +557,9 @@ void SpectrumCanvas::createControls()
     clearReferenceAction->addListener (this);
 
     referenceStatusLabel = makeLabel ("SpectrumReferenceStatus", "No reference");
-    referenceStatusLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
+    referenceStatusLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
 
-    for (auto* control : { (Component*) amplitudeRangeLabel.get(), (Component*) amplitudeRangeMode.get(),
-                           (Component*) maximumDbLabel.get(), (Component*) maximumDb.get(),
-                           (Component*) minimumDbLabel.get(), (Component*) minimumDb.get(),
-                           (Component*) automaticRangeLabel.get(),
-                           (Component*) captureDurationLabel.get(), (Component*) captureDuration.get(),
-                           (Component*) captureAction.get(), (Component*) captureStatusLabel.get(),
-                           (Component*) comparisonModeLabel.get(), (Component*) comparisonMode.get(),
-                           (Component*) baselineLabel.get(), (Component*) baselineDisplay.get(),
-                           (Component*) peakEnvelope.get(),
-                           (Component*) setReferenceAction.get(),
-                           (Component*) clearReferenceAction.get(),
-                           (Component*) referenceStatusLabel.get() })
-        optionsDrawer->addAndMakeVisible (control);
+    createControlGroups();
 
     showHideOptionsButton = std::make_unique<ShowHideSpectrumOptionsButton>();
     showHideOptionsButton->onClick = [this]
@@ -457,6 +567,47 @@ void SpectrumCanvas::createControls()
         setOptionsDrawerOpen (showHideOptionsButton->getToggleState());
     };
     addAndMakeVisible (showHideOptionsButton.get());
+}
+
+void SpectrumCanvas::createControlGroups()
+{
+    // The drawer holds four unrelated jobs. Grouping them by job keeps the
+    // comparison mode next to the reference buttons it applies to, which the
+    // previous flat row separated by five unrelated controls, and lets the
+    // drawer wrap a whole job onto the next line instead of a stray slider.
+    const auto addGroup = [this] (const char* captionText)
+    {
+        controlGroups.push_back (std::make_unique<ControlGroup> (captionText));
+        auto* group = controlGroups.back().get();
+        optionsDrawer->addAndMakeVisible (group);
+        return group;
+    };
+
+    // Two rows per group, assigned here rather than computed: it keeps each
+    // group about half as wide as a single row would, so far more of the
+    // drawer fits before it has to scroll.
+    // The two dB sliders sit side by side on the second row, so they read as a
+    // pair and line up with the automatic readout they replace.
+    auto* amplitude = addGroup ("AMPLITUDE");
+    amplitude->addPair (0, amplitudeRangeLabel.get(), amplitudeRangeMode.get(), 72, 90);
+    amplitude->addPair (1, maximumDbLabel.get(), maximumDb.get(), 48, 110);
+    amplitude->addPair (1, minimumDbLabel.get(), minimumDb.get(), 48, 110);
+    amplitude->addPair (1, nullptr, automaticRangeLabel.get(), 0, 150);
+
+    auto* traces = addGroup ("TRACES");
+    traces->addPair (0, baselineLabel.get(), baselineDisplay.get(), 82, 100);
+    traces->addPair (1, nullptr, peakEnvelope.get(), 0, 125);
+
+    auto* capture = addGroup ("CAPTURE");
+    capture->addPair (0, captureDurationLabel.get(), captureDuration.get(), 100, 90);
+    capture->addPair (1, nullptr, captureAction.get(), 0, 95);
+    capture->addPair (1, nullptr, captureStatusLabel.get(), 0, 155);
+
+    auto* reference = addGroup ("REFERENCE");
+    reference->addPair (0, comparisonModeLabel.get(), comparisonMode.get(), 82, 100);
+    reference->addPair (0, nullptr, setReferenceAction.get(), 0, 105);
+    reference->addPair (1, nullptr, clearReferenceAction.get(), 0, 90);
+    reference->addPair (1, nullptr, referenceStatusLabel.get(), 0, 205);
 }
 
 void SpectrumCanvas::applyDisplaySettings()
@@ -548,11 +699,11 @@ void SpectrumCanvas::applyFrequencyRange()
 
 void SpectrumCanvas::resized()
 {
-    const auto controlsHeight = optionsBarHeight
-                                + (displaySettings.optionsDrawerOpen ? optionsDrawerHeight : 0);
-    viewport->setBounds (0, 0, getWidth(), std::max (0, getHeight() - controlsHeight));
-
-    layOutControls();
+    // The bars wrap, so how much height they need depends on the width. Lay
+    // them out first and give the viewport whatever is left.
+    const auto controlsHeight = layOutControls();
+    const auto width = getWidth();
+    const auto height = getHeight();
 
     int plotWidth, plotHeight;
     if (currentDisplayType == POWER_SPECTRUM)
@@ -564,116 +715,116 @@ void SpectrumCanvas::resized()
         constexpr int plotMargin = 40;
         constexpr int plotVerticalMargin = 50;
 
-        const auto availableWidth = viewport->getMaximumVisibleWidth()
-                                    - canvasPlot->legendWidth - plotMargin;
+        const auto availableWidth = width - canvasPlot->legendWidth - plotMargin;
         plotWidth = std::max (minimumPlotWidth, availableWidth);
 
-        const auto availableHeight = viewport->getMaximumVisibleHeight() - plotVerticalMargin;
+        const auto availableHeight = height - controlsHeight - plotVerticalMargin;
         plotHeight = std::max (minimumPlotHeight, availableHeight);
 
         canvasPlot->setBounds (0, 0,
                                plotWidth + canvasPlot->legendWidth + plotMargin,
                                plotHeight + plotVerticalMargin);
+
+        LOGC ("*********** Canvas plot bounds: ", canvasPlot->getBounds().toString());
     }
     else
     {
-        canvasPlot->setBounds (0, 0, viewport->getMaximumVisibleWidth(),
-                               viewport->getMaximumVisibleHeight());
+        canvasPlot->setBounds (0, 0, width, height - controlsHeight);
     }
+
+    viewport->setBounds (0, 0, width, std::max (0, height - controlsHeight));
 }
 
-void SpectrumCanvas::layOutControls()
+int SpectrumCanvas::layOutControls()
 {
-    const auto barTop = getHeight() - optionsBarHeight;
-    mainOptionsBar->setBounds (0, barTop, getWidth(), optionsBarHeight);
-    showHideOptionsButton->setBounds (getWidth() - optionsButtonWidth - 12, barTop + 10,
-                                      optionsButtonWidth, 24);
+    const auto drawerOpen = displaySettings.optionsDrawerOpen;
+    const auto contentHeight = optionsBarHeight + (drawerOpen ? optionsDrawerHeight : 0);
 
-    // Flow layout: each entry is placed left to right and wraps to the next row
-    // when it would not fit, so no control is ever clipped off the right edge.
-    struct Entry
+    FlexBox mainRow;
+    mainRow.alignItems = FlexBox::AlignItems::flexStart;
+    auto mainRowWidth = 0;
+    const auto addMainPair = [&] (Label* label, Component* control,
+                                  int labelWidth, int controlWidth)
     {
-        Label* label;
-        Component* control;
-        int labelWidth;
-        int controlWidth;
+        const auto gap = mainRow.items.isEmpty() ? 0 : controlSpacing;
+        mainRow.items.add (rowItem (*label, labelWidth, controlHeight, gap));
+        mainRow.items.add (rowItem (*control, controlWidth, controlHeight, 0));
+        mainRowWidth += gap + labelWidth + controlWidth;
     };
+    addMainPair (displayLabel.get(), displayType.get(), 56, 120);
+    addMainPair (profileLabel.get(), analysisProfile.get(), 56, 100);
+    addMainPair (frequencyLabel.get(), frequencyRange.get(), 106, 130);
+    addMainPair (scaleLabel.get(), frequencyScale.get(), 100, 90);
+    addMainPair (amplitudeLabel.get(), amplitudeDisplay.get(), 50, 80);
 
-    const auto flow = [] (Component& parent,
-                          int availableWidth,
-                          int rowHeight,
-                          std::initializer_list<Entry> entries)
+    FlexBox drawerRow;
+    drawerRow.alignItems = FlexBox::AlignItems::flexStart;
+    auto drawerRowWidth = 0;
+    for (auto& group : controlGroups)
     {
-        auto x = 10;
-        auto y = 10;
-        for (const auto& entry : entries)
-        {
-            if (entry.control != nullptr && ! entry.control->isVisible()
-                && (entry.label == nullptr || ! entry.label->isVisible()))
-                continue;
+        const auto width = group->getPreferredWidth();
+        group->setVisible (width > 0);
+        if (width == 0)
+            continue;
 
-            const auto width = entry.labelWidth + entry.controlWidth;
-            if (x > 10 && x + width > availableWidth)
-            {
-                x = 10;
-                y += rowHeight + rowSpacing;
-            }
+        const auto gap = drawerRow.items.isEmpty() ? 0 : groupSpacing;
+        drawerRow.items.add (rowItem (*group, width, groupHeight, gap));
+        drawerRowWidth += gap + width;
+    }
 
-            if (entry.label != nullptr)
-                entry.label->setBounds (x, y, entry.labelWidth, rowHeight);
-            if (entry.control != nullptr)
-                entry.control->setBounds (x + entry.labelWidth, y,
-                                          entry.controlWidth, rowHeight);
-            x += width + controlSpacing;
-        }
-        static_cast<void> (parent);
-    };
+    // The Options button sits beside the scrolling area rather than over it,
+    // so no control can ever scroll underneath it.
+    const auto buttonStrip = optionsButtonWidth + 2 * barPadding;
+    const auto viewportWidth = std::max (1, getWidth() - buttonStrip);
 
-    // Reserve room for the Options button on the main bar.
-    const auto mainWidth = getWidth() - optionsButtonWidth - 30;
-    flow (*mainOptionsBar, mainWidth, controlHeight,
-          { { displayLabel.get(), displayType.get(), 52, 120 },
-            { profileLabel.get(), analysisProfile.get(), 58, 100 },
-            { frequencyLabel.get(), frequencyRange.get(), 100, 130 },
-            { scaleLabel.get(), frequencyScale.get(), 95, 90 },
-            { amplitudeLabel.get(), amplitudeDisplay.get(), 50, 80 } });
+    // Below this the bar scrolls rather than compressing controls to
+    // unreadable widths. The drawer only counts while it is open.
+    const auto requiredWidth = std::max (mainRowWidth, drawerOpen ? drawerRowWidth : 0)
+                               + 2 * barPadding;
+    const auto scrolls = requiredWidth > viewportWidth;
+    const auto totalHeight = contentHeight + (scrolls ? scrollBarThickness : 0);
 
-    if (! displaySettings.optionsDrawerOpen)
-        return;
+    const auto top = getHeight() - totalHeight;
+    optionsViewport->setBounds (0, top, viewportWidth, totalHeight);
 
-    const auto drawerTop = barTop - optionsDrawerHeight;
-    optionsDrawer->setBounds (0, drawerTop, getWidth(), optionsDrawerHeight);
+    // Beside the main bar's row, not the top of the options area: the button
+    // belongs to that row and should not move when the drawer opens.
+    showHideOptionsButton->setBounds (viewportWidth + barPadding,
+                                      getHeight() - controlHeight - barPadding,
+                                      optionsButtonWidth,
+                                      controlHeight);
 
-    const auto fixedRange = minimumDb->isVisible();
-    flow (*optionsDrawer, getWidth() - 20, controlHeight,
-          { { amplitudeRangeLabel.get(), amplitudeRangeMode.get(), 72, 90 },
-            { maximumDbLabel.get(), fixedRange ? maximumDb.get() : nullptr, fixedRange ? 82 : 0, fixedRange ? 110 : 0 },
-            { minimumDbLabel.get(), fixedRange ? minimumDb.get() : nullptr, fixedRange ? 82 : 0, fixedRange ? 110 : 0 },
-            { nullptr, fixedRange ? nullptr : automaticRangeLabel.get(), 0, fixedRange ? 0 : 150 },
-            { captureDurationLabel.get(), captureDuration.get(), 100, 90 },
-            { nullptr, captureAction.get(), 0, 95 },
-            { nullptr, captureStatusLabel.get(), 0, 200 },
-            { comparisonModeLabel.get(), comparisonMode.get(), 82, 100 },
-            { baselineLabel.get(), baselineDisplay.get(), 82, 100 },
-            { nullptr, peakEnvelope.get(), 0, 125 },
-            { nullptr, setReferenceAction.get(), 0, 105 },
-            { nullptr, clearReferenceAction.get(), 0, 90 },
-            { nullptr, referenceStatusLabel.get(), 0, 240 } });
+    optionsContent->setBounds (0, 0, std::max (viewportWidth, requiredWidth), contentHeight);
+
+    auto area = optionsContent->getLocalBounds();
+    optionsDrawer->setVisible (drawerOpen);
+    if (drawerOpen)
+    {
+        optionsDrawer->setBounds (area.removeFromTop (optionsDrawerHeight));
+        drawerRow.performLayout (optionsDrawer->getLocalBounds().reduced (barPadding).toFloat());
+    }
+
+    mainOptionsBar->setBounds (area);
+    mainRow.performLayout (mainOptionsBar->getLocalBounds().reduced (barPadding).toFloat());
+
+    return totalHeight;
 }
 
 void SpectrumCanvas::refreshState() {}
 
 void SpectrumCanvas::paint (Graphics& g)
 {
+    // The bars scroll inside optionsViewport, so paint the strip the viewport
+    // and the pinned Options button occupy rather than the bars' own bounds,
+    // which are in the scrolling content's coordinates.
+    const auto top = optionsViewport->getY();
     g.setColour (findColour (ThemeColours::componentBackground));
-    g.fillRect (mainOptionsBar->getBounds());
-    if (displaySettings.optionsDrawerOpen)
-    {
-        g.fillRect (optionsDrawer->getBounds());
-        g.setColour (findColour (ThemeColours::controlPanelText).withAlpha (0.25f));
-        g.drawHorizontalLine (optionsDrawer->getY(), 0.0f,
-                              static_cast<float> (getWidth()));
-    }
+    g.fillRect (0, top, getWidth(), getHeight() - top);
+
+    g.setColour (findColour (ThemeColours::defaultText).withAlpha (0.4f));
+    g.drawHorizontalLine (top, 0.0f, static_cast<float> (getWidth()));
+
+    g.drawVerticalLine (optionsViewport->getRight() + 1, top, getHeight());
 }
 
 void SpectrumCanvas::setOptionsDrawerOpen (bool shouldBeOpen)
@@ -1189,6 +1340,7 @@ void CanvasPlot::lookAndFeelChanged()
     plt->setBackgroundColour (findColour (ThemeColours::componentBackground));
     plt->setGridColour (findColour (ThemeColours::controlPanelText).withAlpha (0.5f));
     plt->setAxisColour (findColour (ThemeColours::controlPanelText));
+    cursorLabel->setColour (Label::textColourId, findColour (ThemeColours::controlPanelText));
 
     chanColors[0] = findColour (ThemeColours::defaultText);
     plotPowerSpectrum();

@@ -31,7 +31,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "SpectrumDisplaySettings.h"
 #include "SpectrumViewer.h"
 
+#include <array>
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 class SpectrumCanvas;
 
@@ -337,6 +340,14 @@ public:
 
     CanvasPlot* getPlotPtr() { return canvasPlot.get(); };
 
+#if BUILD_TESTS
+    Component* getMainOptionsBarForTesting() const noexcept { return mainOptionsBar.get(); }
+    Component* getOptionsDrawerForTesting() const noexcept { return optionsDrawer.get(); }
+    Component* getOptionsContentForTesting() const noexcept { return optionsContent.get(); }
+    Component* getOptionsViewportForTesting() const noexcept { return optionsViewport.get(); }
+    Component* getViewportForTesting() const noexcept { return viewport.get(); }
+#endif
+
     void comboBoxChanged (ComboBox* comboBox) override;
     void sliderValueChanged (Slider* slider) override;
     void buttonClicked (Button* button) override;
@@ -355,30 +366,94 @@ private:
         SpectrumCanvas& owner;
     };
 
+    // The options bars keep their natural width and scroll horizontally when
+    // the canvas is narrower, so every height here is fixed and known.
+    static constexpr int controlHeight = 22;
+    static constexpr int controlSpacing = 12;
+    static constexpr int groupSpacing = 10;
+    static constexpr int groupPadding = 8;
+    // Room the group outline leaves for the title it draws inline at the top.
+    static constexpr int groupTitleHeight = 14;
+    static constexpr int groupRowGap = 6;
+    static constexpr int barPadding = 10;
+    static constexpr int optionsButtonWidth = 64;
+    static constexpr int scrollBarThickness = 12;
+    // A group is a title over two rows of controls; the main bar is one row.
+    static constexpr int groupHeight =
+        groupTitleHeight + 2 * controlHeight + groupRowGap + groupPadding;
+    static constexpr int optionsBarHeight = 2 * barPadding + controlHeight;
+    static constexpr int optionsDrawerHeight = 2 * barPadding + groupHeight;
+
+    /** One titled group of related controls in the options drawer.
+
+        The contents sit on two rows rather than one, which roughly halves how
+        wide the group has to be and so fits far more into a narrow canvas
+        before the drawer has to scroll. Controls that hide themselves - the
+        fixed-range sliders - drop out of both the measured width and the
+        layout, and a group with nothing showing takes no space at all. */
+    class ControlGroup final : public GroupComponent
+    {
+    public:
+        static constexpr int rowCount = 2;
+
+        explicit ControlGroup (const String& titleText);
+
+        /** Adds a label/control pair to one of the group's rows. A null label
+            gives a bare control. */
+        void addPair (int row, Label* label, Component* control,
+                      int labelWidth, int controlWidth);
+
+        /** Width the visible contents need. Zero when nothing is showing. */
+        int getPreferredWidth() const;
+
+        void lookAndFeelChanged() override;
+        void resized() override;
+
+    private:
+        struct Entry
+        {
+            int row;
+            Label* label;
+            Component* control;
+            int labelWidth;
+            int controlWidth;
+
+            bool isShowing() const { return control != nullptr && control->isVisible(); }
+            int width() const { return labelWidth + controlWidth; }
+        };
+
+        /** Width each row's visible entries need, gaps included. */
+        std::array<int, rowCount> getRowWidths() const;
+
+        std::vector<Entry> entries;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ControlGroup);
+    };
+
     void updateStatus();
 
     void setDisplayType (DisplayType type);
     void createControls();
-    void layOutControls();
+    void createControlGroups();
+
+    /** Positions the options area and returns the height it occupies. */
+    int layOutControls();
     void updateAmplitudeRangeControls();
     void applyAmplitudeRangeToPlot();
     void applyFrequencyRange();
     void refreshNyquistRangeItem();
-
-    // Laid out as a flow of label/control pairs, so a narrow canvas wraps
-    // instead of clipping. Widths are per control; heights are uniform.
-    static constexpr int optionsBarHeight = 44;
-    static constexpr int optionsDrawerHeight = 88;
-    static constexpr int controlHeight = 20;
-    static constexpr int controlSpacing = 12;
-    static constexpr int rowSpacing = 8;
-    static constexpr int optionsButtonWidth = 78;
 
     SpectrumViewer* processor;
     SpectrumDisplaySettings& displaySettings;
 
     std::unique_ptr<Viewport> viewport;
     std::unique_ptr<CanvasPlot> canvasPlot;
+
+    // The options area keeps its natural width and scrolls horizontally rather
+    // than compressing controls, so both bars live inside one viewport. The
+    // drawer sits above the main bar and they scroll together.
+    std::unique_ptr<Viewport> optionsViewport;
+    std::unique_ptr<Component> optionsContent;
     std::unique_ptr<Component> mainOptionsBar;
     std::unique_ptr<Component> optionsDrawer;
     std::unique_ptr<Button> showHideOptionsButton;
@@ -412,6 +487,9 @@ private:
     std::unique_ptr<UtilityButton> setReferenceAction;
     std::unique_ptr<UtilityButton> clearReferenceAction;
     std::unique_ptr<Label> referenceStatusLabel;
+
+    // The drawer's controls belong to these, in the order they are laid out.
+    std::vector<std::unique_ptr<ControlGroup>> controlGroups;
 
     Array<Range<int>> freqRanges;
     StatusTimer statusTimer { *this };

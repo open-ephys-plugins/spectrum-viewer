@@ -32,14 +32,14 @@ SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
     // Stream and channel selection change the processor's input route, so they
     // belong in the signal chain. Every display control lives on the canvas.
     addSelectedStreamParameterEditor (Parameter::PROCESSOR_SCOPE, "active_stream", 15, 28);
-    getParameterEditor ("active_stream")->setBounds (15, 28, 210, 18);
+    getParameterEditor ("active_stream")->setBounds (15, 35, 210, 20);
 
     addSelectedChannelsParameterEditor (Parameter::STREAM_SCOPE, "Channels", 15, 53);
-    getParameterEditor ("Channels")->setBounds (15, 53, 210, 18);
+    getParameterEditor ("Channels")->setBounds (15, 70, 210, 20);
 
     readinessLabel = std::make_unique<Label> ("AnalysisReadiness", "Stopped");
-    readinessLabel->setFont (FontOptions ("Inter", "Regular", 12.0f));
-    readinessLabel->setBounds (15, 78, 210, 18);
+    readinessLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    readinessLabel->setBounds (15, 100, 210, 18);
     addAndMakeVisible (readinessLabel.get());
 
     startTimerHz (4);

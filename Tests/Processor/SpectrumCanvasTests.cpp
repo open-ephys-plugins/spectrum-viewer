@@ -153,6 +153,102 @@ protected:
     std::int64_t nextSample = 0;
 };
 
+/** Every visible descendant must lie inside its parent, at every level. */
+void expectNothingClipped (Component& parent, const String& path)
+{
+    for (auto* child : parent.getChildren())
+    {
+        if (! child->isVisible())
+            continue;
+
+        const auto where = path + " > "
+                           + (child->getName().isEmpty() ? String ("(unnamed)")
+                                                         : child->getName());
+        EXPECT_TRUE (parent.getLocalBounds().contains (child->getBounds()))
+            << where << " at " << child->getBounds().toString()
+            << " escapes " << parent.getLocalBounds().toString();
+        expectNothingClipped (*child, where);
+    }
+}
+
+TEST_F (SpectrumCanvasTests, OptionsScrollInsteadOfClippingAsTheCanvasNarrows)
+{
+    auto* optionsViewport = canvas->getOptionsViewportForTesting();
+    auto* optionsContent = canvas->getOptionsContentForTesting();
+    auto* mainBar = canvas->getMainOptionsBarForTesting();
+    auto* drawer = canvas->getOptionsDrawerForTesting();
+    auto* plotViewport = canvas->getViewportForTesting();
+    ASSERT_NE (optionsViewport, nullptr);
+    ASSERT_NE (optionsContent, nullptr);
+    ASSERT_NE (mainBar, nullptr);
+    ASSERT_NE (drawer, nullptr);
+    ASSERT_NE (plotViewport, nullptr);
+
+    canvas->setOptionsDrawerOpen (true);
+    ASSERT_TRUE (drawer->isVisible());
+
+    // The widest case fits outright; the narrowest is far below the ~1220 px
+    // the fixed-position layout needed before it began clipping controls.
+    auto everScrolled = false;
+    for (const auto width : { 1920, 1400, 1220, 1100, 900, 700, 560, 420 })
+    {
+        canvas->setBounds (0, 0, width, 700);
+        const auto place = "at " + String (width) + " px";
+
+        // Controls keep their natural size; the content grows instead.
+        expectNothingClipped (*optionsContent, place + " options");
+        EXPECT_GE (optionsContent->getWidth(), optionsViewport->getWidth()) << place;
+        EXPECT_EQ (mainBar->getWidth(), optionsContent->getWidth()) << place;
+        EXPECT_EQ (drawer->getWidth(), optionsContent->getWidth()) << place;
+        EXPECT_EQ (drawer->getBottom(), mainBar->getY()) << place;
+
+        if (optionsContent->getWidth() > optionsViewport->getWidth())
+            everScrolled = true;
+
+        // The viewport and the pinned Options button stay inside the canvas,
+        // and the plot keeps whatever height is left.
+        EXPECT_TRUE (canvas->getLocalBounds().contains (optionsViewport->getBounds()))
+            << place << ": " << optionsViewport->getBounds().toString();
+        EXPECT_LE (optionsViewport->getRight(), canvas->getWidth()) << place;
+        EXPECT_EQ (optionsViewport->getBottom(), canvas->getHeight()) << place;
+        EXPECT_EQ (plotViewport->getBottom(), optionsViewport->getY()) << place;
+        EXPECT_GT (plotViewport->getHeight(), 0) << place;
+    }
+
+    EXPECT_TRUE (everScrolled) << "the narrow cases should have needed scrolling";
+}
+
+TEST_F (SpectrumCanvasTests, FixedRangeSlidersJoinTheAmplitudeGroupWithoutClipping)
+{
+    auto* optionsContent = canvas->getOptionsContentForTesting();
+    auto* optionsViewport = canvas->getOptionsViewportForTesting();
+    ASSERT_NE (optionsContent, nullptr);
+    ASSERT_NE (optionsViewport, nullptr);
+
+    canvas->setOptionsDrawerOpen (true);
+
+    // Narrow enough that the content sits at its required width rather than
+    // being stretched to fill the viewport, so the growth below is visible.
+    constexpr int narrow = 500;
+    canvas->setBounds (0, 0, narrow, 700);
+    ASSERT_GT (optionsContent->getWidth(), optionsViewport->getWidth());
+    const auto automaticWidth = optionsContent->getWidth();
+
+    // Switching to a fixed dB range reveals two sliders that are hidden in
+    // automatic mode, so the options need more room than they did.
+    displaySettings.amplitudeRangeModeId = 2;
+    canvas->applyDisplaySettings();
+    canvas->setBounds (0, 0, narrow, 700);
+    EXPECT_GT (optionsContent->getWidth(), automaticWidth);
+
+    for (const auto width : { 1920, 1220, 900, 700, 480 })
+    {
+        canvas->setBounds (0, 0, width, 700);
+        expectNothingClipped (*optionsContent, "fixed range at " + String (width) + " px");
+        EXPECT_GE (optionsContent->getWidth(), optionsViewport->getWidth());
+    }
+}
+
 TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
 {
     ASSERT_TRUE (processor->startAcquisition());
