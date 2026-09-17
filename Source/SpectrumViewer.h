@@ -230,14 +230,22 @@ public:
         return requestedCaptureId.load (std::memory_order_relaxed);
     }
 
+    /** Returns true while the worker holds a completed capture that can become
+        the reference. Gate the reference controls on this rather than on the
+        frozen state alone: freezing only means the accumulation finished. */
+    bool hasRetainedCapture() const noexcept
+    {
+        return retainedCaptureId.load (std::memory_order_acquire) != 0;
+    }
+
     /** Marks the completed frozen capture as the comparison reference.
 
         The reference lives until acquisition stops, which releases it along
         with the rest of the acquisition state.
 
         A true return means the request was accepted, not that it was applied:
-        the worker applies it, and drops it if the frozen capture was never
-        retained. getDroppedReferenceRequestCount() reports that. */
+        the worker applies it, and drops it if the frozen capture was released
+        in between. getDroppedReferenceRequestCount() reports that. */
     bool setCurrentCaptureAsReference() noexcept;
     void clearSpectrumReference() noexcept;
     void setSpectrumComparisonMode (spectrumviewer::SpectrumComparisonMode mode) noexcept;
@@ -431,7 +439,7 @@ private:
     void clearAcquisitionState();
     bool stopWorkerSafely (int timeoutMilliseconds) noexcept;
     void applyReferenceRequest() noexcept;
-    void finalizeCapturedSpectrum();
+    bool finalizeCapturedSpectrum();
     bool publishCapturedSpectrum (bool complete) noexcept;
     bool publishReducedSpectrum (const float* planarPsd,
                                  std::size_t channelCount,
@@ -449,7 +457,12 @@ private:
 
     Array<int> channels;
 
-    static constexpr std::size_t INPUT_QUEUE_CAPACITY = 8;
+    // Depth in whole callback blocks, and the only thing standing between a
+    // worker stall and a discontinuity. A Fine capture assembles 2 s windows,
+    // and one dropped block anywhere inside a window resets history and throws
+    // that whole window away, so the queue has to absorb a complete
+    // estimate-reduce-baseline burst without overflowing.
+    static constexpr std::size_t INPUT_QUEUE_CAPACITY = 32;
     // GenericProcessor reports JUCE's nominal 128-sample graph quantum, not an
     // upper bound for stream payloads. Reserve enough room for the largest
     // callback supported by the GUI's audio settings while retaining a larger
@@ -519,6 +532,8 @@ private:
         SpectrumCaptureState::frozen
     };
     std::atomic<std::uint64_t> requestedCaptureId { 0 };
+    // Nonzero only once the worker owns a CapturedSpectrum for that id.
+    std::atomic<std::uint64_t> retainedCaptureId { 0 };
     std::atomic<std::size_t> captureTargetWindows { 0 };
     std::atomic<std::size_t> captureIncludedWindows { 0 };
     std::atomic<double> captureWindowSeconds { 0.0 };
@@ -529,6 +544,8 @@ private:
     std::uint64_t nextCaptureId = 1;
 
     // The following capture fields are owned exclusively by the worker thread.
+    // The sample span is anchored on included windows, so it always runs
+    // forward and satisfies CapturedSpectrum's metadata contract.
     std::int64_t captureFirstSample = 0;
     std::int64_t captureLastSampleExclusive = 0;
     std::uint64_t captureLastFrameSequence = 0;

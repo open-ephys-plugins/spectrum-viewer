@@ -26,6 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "BacklogSheddingPolicy.h"
 #include "SpectrumViewerEditor.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -378,15 +379,16 @@ void SpectrumViewer::applyReferenceRequest() noexcept
                                == SpectrumCaptureState::frozen;
 }
 
-void SpectrumViewer::finalizeCapturedSpectrum()
+bool SpectrumViewer::finalizeCapturedSpectrum()
 {
-    if (activeAnalysis == nullptr || ! activeAnalysis->isCaptureRuntime()
-        || completedCapture != nullptr)
-        return;
+    if (activeAnalysis == nullptr || ! activeAnalysis->isCaptureRuntime())
+        return false;
+    if (completedCapture != nullptr)
+        return true;
 
     auto* accumulator = activeAnalysis->getCaptureAccumulator();
     if (accumulator == nullptr || ! accumulator->isComplete())
-        return;
+        return false;
 
     try
     {
@@ -425,8 +427,20 @@ void SpectrumViewer::finalizeCapturedSpectrum()
     }
     catch (const std::exception& error)
     {
-        LOGE ("Unable to retain completed spectrum capture: ", error.what());
+        LOGE ("Unable to retain completed spectrum capture: ", error.what(),
+              " (windows ", accumulator->getIncludedWindowCount(), "/",
+              accumulator->getTargetWindowCount(),
+              ", channels ", accumulator->getChannelCount(),
+              ", bins ", accumulator->getBinCount(),
+              ", samples ", captureFirstSample, " to ", captureLastSampleExclusive, ")");
+        return false;
     }
+
+    // Published only after the capture exists, so a nonzero id read anywhere
+    // else is a promise that setCurrentCaptureAsReference() can be honoured.
+    retainedCaptureId.store (completedCapture->getCaptureId(),
+                             std::memory_order_release);
+    return true;
 }
 
 bool SpectrumViewer::publishReducedSpectrum (
@@ -745,14 +759,6 @@ void SpectrumViewer::run()
                                                           block.numSamples,
                                                           block.firstSample,
                                                           block.configurationGeneration);
-                    if (appendResult.status
-                            == spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::accepted
-                        && activeAnalysis->isCaptureRuntime()
-                        && ! captureHasFirstSample)
-                    {
-                        captureFirstSample = block.firstSample;
-                        captureHasFirstSample = true;
-                    }
                 };
                 const auto popped = fifo->tryPop (appendBlock);
 
@@ -760,8 +766,19 @@ void SpectrumViewer::run()
                     break;
 
                 consumedBlock = true;
-                const auto sheddingAction = sheddingPolicy.inputBlockDequeued (
-                    fifo->getNumReady() > 0);
+
+                // Shedding is only sound for live display frames, which are
+                // replaceable latest-state. A capture window is 2 s of data the
+                // average will never see again, so discarding one does not make
+                // the capture catch up - it makes it stall. Back-pressure for a
+                // capture is the input queue alone.
+                const auto accumulatingCapture = activeAnalysis->isCaptureRuntime();
+                if (accumulatingCapture)
+                    sheddingPolicy.reset();
+                const auto sheddingAction =
+                    accumulatingCapture
+                        ? spectrumviewer::BacklogSheddingPolicy::Action::processAll
+                        : sheddingPolicy.inputBlockDequeued (fifo->getNumReady() > 0);
                 if (appendResult.status != spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::accepted)
                 {
                     if (appendResult.status == spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::configurationMismatch)
@@ -800,26 +817,49 @@ void SpectrumViewer::run()
                                                    frame.numChannels,
                                                    frame.numBins))
                             return;
-                        captureLastSampleExclusive = frame.firstSample
-                                                     + static_cast<std::int64_t> (
-                                                         frame.descriptor.windowSampleCount);
+                        // The analyzed span is anchored on included windows,
+                        // not on arriving blocks: CapturedSpectrum rejects a
+                        // span that does not run forward, and a discontinuity
+                        // can move the source's sample numbering backwards.
+                        const auto windowEndSample =
+                            frame.firstSample
+                            + static_cast<std::int64_t> (frame.descriptor.windowSampleCount);
+                        if (! captureHasFirstSample
+                            || frame.firstSample < captureFirstSample)
+                        {
+                            captureFirstSample = frame.firstSample;
+                            captureLastSampleExclusive = windowEndSample;
+                            captureHasFirstSample = true;
+                        }
+                        else
+                            captureLastSampleExclusive =
+                                std::max (captureLastSampleExclusive, windowEndSample);
                         captureLastFrameSequence = frame.sequence;
                         captureIncludedWindows.store (
                             accumulator->getIncludedWindowCount(),
                             std::memory_order_release);
+                        // Spanned against analyzed seconds is the stall signal:
+                        // non-overlapping windows make them equal unless data
+                        // was lost between them.
                         captureWallSpanSeconds.store (
                             static_cast<double> (captureLastSampleExclusive
                                                  - captureFirstSample)
                                 / frame.descriptor.sampleRateHz,
                             std::memory_order_relaxed);
                         const auto complete = accumulator->isComplete();
-                        if (complete)
-                            finalizeCapturedSpectrum();
-                        const auto published = publishCapturedSpectrum (complete);
+                        const auto retained = complete && finalizeCapturedSpectrum();
+                        const auto published = (! complete || retained)
+                                               && publishCapturedSpectrum (complete);
                         if (complete)
                         {
-                            captureCompletionPending = ! published;
-                            captureState.store (SpectrumCaptureState::frozen,
+                            captureCompletionPending = retained && ! published;
+                            // Freezing is what enables the reference controls.
+                            // Without a retained capture there is nothing
+                            // behind them, so report the failure now instead of
+                            // silently dropping the request after the click.
+                            captureState.store (retained
+                                                    ? SpectrumCaptureState::frozen
+                                                    : SpectrumCaptureState::failed,
                                                 std::memory_order_release);
                         }
                         return;
@@ -890,11 +930,14 @@ void SpectrumViewer::adoptPreparedAnalysis()
         configurationFailures.fetch_add (1, std::memory_order_relaxed);
         if (result.captureId != 0)
         {
-            captureState.store (
+            // Only a retained capture may report frozen; see the capture
+            // completion path in run().
+            const auto retained =
                 activeAnalysis != nullptr && activeAnalysis->isCaptureRuntime()
-                    ? SpectrumCaptureState::frozen
-                    : SpectrumCaptureState::failed,
-                std::memory_order_release);
+                && retainedCaptureId.load (std::memory_order_acquire) != 0;
+            captureState.store (retained ? SpectrumCaptureState::frozen
+                                         : SpectrumCaptureState::failed,
+                                std::memory_order_release);
         }
         else if (captureState.load (std::memory_order_relaxed)
                  == SpectrumCaptureState::restoringLive)
@@ -942,6 +985,7 @@ void SpectrumViewer::adoptPreparedAnalysis()
     if (activeAnalysis->isCaptureRuntime())
     {
         completedCapture.reset();
+        retainedCaptureId.store (0, std::memory_order_release);
         const auto& descriptor = activeAnalysis->getConfiguration().getFrameDescriptor();
         captureWindowSeconds.store (
             static_cast<double> (descriptor.windowSampleCount)
@@ -1136,6 +1180,7 @@ void SpectrumViewer::discardInvalidatedInputRoute() noexcept
     // does survive; its compatibility is re-evaluated against whatever
     // selection comes next.
     completedCapture.reset();
+    retainedCaptureId.store (0, std::memory_order_release);
     captureHasFirstSample = false;
     captureCompletionPending = false;
     captureFirstSample = 0;
@@ -1258,6 +1303,7 @@ bool SpectrumViewer::startAcquisition()
         inputRouteInvalidated.store (false, std::memory_order_relaxed);
         droppedReferenceRequests.store (0, std::memory_order_relaxed);
         requestedCaptureId.store (0, std::memory_order_relaxed);
+        retainedCaptureId.store (0, std::memory_order_relaxed);
         captureWindowSeconds.store (0.0, std::memory_order_relaxed);
         captureTargetWindows.store (0, std::memory_order_relaxed);
         captureIncludedWindows.store (0, std::memory_order_relaxed);
@@ -1367,6 +1413,7 @@ void SpectrumViewer::clearAcquisitionState()
         spectrumviewer::SpectrumReferenceCompatibility::noReference,
         std::memory_order_relaxed);
     completedCapture.reset();
+    retainedCaptureId.store (0, std::memory_order_relaxed);
     spectrumReference.reset();
     analysisReadiness.store (SpectrumAnalysisReadiness::stopped, std::memory_order_release);
 }
@@ -1421,7 +1468,10 @@ bool SpectrumViewer::setCurrentCaptureAsReference() noexcept
 {
     if (captureState.load (std::memory_order_acquire) != SpectrumCaptureState::frozen)
         return false;
-    const auto captureId = requestedCaptureId.load (std::memory_order_acquire);
+    // Name the capture the worker actually holds, not the one that was last
+    // requested: a requested id with no CapturedSpectrum behind it would be
+    // consumed by applyReferenceRequest() and dropped.
+    const auto captureId = retainedCaptureId.load (std::memory_order_acquire);
     if (captureId == 0)
         return false;
     // Captures use the Fine estimator. Keep the restored live analysis

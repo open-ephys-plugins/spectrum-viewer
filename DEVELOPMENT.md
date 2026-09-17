@@ -115,8 +115,29 @@ Live spectral frames are replaceable state. The worker reduces full-resolution
 linear PSDs to display-width mean and peak products, and the canvas consumes
 only the newest complete frame. If analysis falls behind, the worker retains
 the newest eligible window and records sequence gaps and shedding counters.
-Capture completion is different: a final frozen result remains pending until a
-frame slot is available, so it cannot be silently lost.
+
+Capture is different in both directions. Backlog shedding is suspended while a
+capture runtime is active: a shed capture window is two seconds of data the
+average will never see, so discarding one does not help the worker catch up, it
+stalls the capture. The only back-pressure for a capture is the input queue, and
+an input block dropped there resets window history, which costs a whole window.
+Size `INPUT_QUEUE_CAPACITY` to absorb a complete estimate, reduce and baseline
+burst rather than trimming it. Capture completion is likewise not replaceable: a
+final frozen result remains pending until a frame slot is available, so it
+cannot be silently lost.
+
+A capture reports `frozen` only once the worker owns the `CapturedSpectrum` it
+would hand to the reference. If the result cannot be retained the state is
+`failed` instead, because `frozen` is what enables the reference controls.
+`hasRetainedCapture()` is the gate the UI uses, and
+`setCurrentCaptureAsReference()` names the retained capture rather than the last
+requested one.
+
+A capture's sample span is anchored on the windows it included, never on
+arriving blocks. `CapturedSpectrum` rejects a span that does not run forward,
+and source sample numbering is not guaranteed to run forward across a
+discontinuity, so an anchor taken from a block can outlive the numbering it came
+from and discard an otherwise complete capture.
 
 Stopping acquisition first prevents new callback entry, waits for callbacks
 already in flight, then asks the analysis worker to stop. Expensive runtime
@@ -185,6 +206,10 @@ criterion, including SciPy golden values.
   or generation changes.
 - Keep queue overflow and backlog shedding observable through counters and frame
   metadata.
+- Shed only live display frames. Never shed, and never silently drop, a window
+  that a capture is accumulating.
+- Do not advertise a state the user can act on unless the data behind it exists.
+  A frozen capture must be a retained capture.
 - Keep numerical dependencies in-tree. Do not reintroduce BLAS or LAPACK; the CI
   `ldd` and `otool` checks enforce this.
 

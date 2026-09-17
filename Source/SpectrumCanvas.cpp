@@ -1140,26 +1140,40 @@ void SpectrumCanvas::updateStatus()
     switch (capture)
     {
         case SpectrumCaptureState::preparing:
-            captureAction->setButtonText ("Cancel");
+            captureAction->setLabel ("Cancel");
             captureAction->setTooltip ("Cancel this capture and return to the live spectrum");
             captureStatusLabel->setText ("Preparing Fine...", dontSendNotification);
             captureStatusLabel->setTooltip (
                 "Preparing 2 s, NW=3, K=4 non-overlapping Fine analysis");
             break;
         case SpectrumCaptureState::capturing:
-            captureAction->setButtonText ("Cancel");
+        {
+            captureAction->setLabel ("Cancel");
             captureAction->setTooltip ("Cancel this capture and return to the live spectrum");
+            const auto lostWindows = processor->getCaptureFailedWindowCount()
+                                     + processor->getCaptureShedWindowCount()
+                                     + processor->getCaptureDiscontinuityCount();
+            // Analyzed against elapsed, live: a capture losing windows to input
+            // gaps otherwise looks exactly like one that is simply slow.
             captureStatusLabel->setText (
                 "Fine " + String (processor->getCaptureIncludedWindowCount()) + "/"
                     + String (processor->getCaptureTargetWindowCount()) + " ("
-                    + String (processor->getCaptureAnalyzedSeconds(), 0) + " s)",
+                    + String (processor->getCaptureAnalyzedSeconds(), 0) + "/"
+                    + String (processor->getCaptureWallSpanSeconds(), 0) + " s)"
+                    + (lostWindows > 0 ? " !" : ""),
                 dontSendNotification);
             captureStatusLabel->setTooltip (
-                "2 s, NW=3, K=4 non-overlapping Fine spectra");
+                "2 s, NW=3, K=4 non-overlapping Fine spectra; analyzed / elapsed "
+                "seconds; failed "
+                + String (processor->getCaptureFailedWindowCount()) + ", shed "
+                + String (processor->getCaptureShedWindowCount())
+                + ", discontinuities "
+                + String (processor->getCaptureDiscontinuityCount()));
             break;
+        }
         case SpectrumCaptureState::frozen:
         {
-            captureAction->setButtonText ("Go Live");
+            captureAction->setLabel ("Go Live");
             captureAction->setTooltip ("Discard the frozen result and resume the live spectrum");
             const auto warning = processor->getCaptureFailedWindowCount()
                                      + processor->getCaptureShedWindowCount()
@@ -1179,18 +1193,21 @@ void SpectrumCanvas::updateStatus()
             break;
         }
         case SpectrumCaptureState::restoringLive:
-            captureAction->setButtonText ("Restoring...");
+            captureAction->setLabel ("Restoring...");
             captureAction->setTooltip ("Preparing the live analysis");
             captureStatusLabel->setText ("Frozen", dontSendNotification);
             break;
         case SpectrumCaptureState::failed:
-            captureAction->setButtonText ("Retry");
+            captureAction->setLabel ("Retry");
             captureAction->setTooltip ("Retry the spectrum capture");
             captureStatusLabel->setText ("Capture failed", dontSendNotification);
+            captureStatusLabel->setTooltip (
+                "The capture could not be prepared or could not be retained. "
+                "Retry, or select fewer channels if memory is short.");
             break;
         case SpectrumCaptureState::live:
         default:
-            captureAction->setButtonText ("Capture");
+            captureAction->setLabel ("Capture");
             captureAction->setTooltip ("Average Fine spectra, then freeze the result");
             captureStatusLabel->setText ("Live", dontSendNotification);
             break;
@@ -1210,7 +1227,8 @@ void SpectrumCanvas::updateStatus()
             sendNotification);
     }
 
-    setReferenceAction->setEnabled (capture == SpectrumCaptureState::frozen);
+    setReferenceAction->setEnabled (capture == SpectrumCaptureState::frozen
+                                    && processor->hasRetainedCapture());
     clearReferenceAction->setEnabled (processor->hasSpectrumReference()
                                       || referenceRequestWasDropped);
     comparisonMode->setEnabled (processor->hasSpectrumReference());
