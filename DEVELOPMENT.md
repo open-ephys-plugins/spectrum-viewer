@@ -183,6 +183,20 @@ Three details are not negotiable, and each one fails silently if changed:
   concurrently, so no global or function-local static state, and no
   `std::uniform_real_distribution`, whose output is implementation-defined and
   would make tapers differ between standard libraries.
+- The stall test must compare the current residual against the *previous*
+  iterate's, not against the running best. An improving iteration has just
+  assigned the running best that same value, so comparing with it compares a
+  value against itself, stops refinement after one solve on every matrix, and
+  leaves `solverInfo` unable to report anything. No test can catch this: the
+  mistake is the variable passed at the call site, and how many solves a pair
+  needs is platform-dependent, so a correct solver reaches the residual floor
+  in two solves on some targets and later on others.
+
+A success status means the solve ran, not that the vectors are usable. Each
+eigenpair whose residual stalls above 1e-13 is counted in `solverInfo`, and
+`largestResidual` carries the value that judgement was made on. `DpssTapers`
+requires both `succeeded()` and `solverInfo == 0`; treating the status alone as
+the contract silently accepts unconverged tapers.
 
 Accuracy targets, checked by `Tests/SelectedTridiagonalEigensolverTests.cpp`:
 normalized residual below 1e-13 and orthonormality below 5e-12 at the

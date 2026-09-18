@@ -430,16 +430,27 @@ namespace numerics
             std::vector<double> candidate (order);
             std::vector<double> best (order);
 
-            // Deliberately near-unreachable, so the loop below is governed by
-            // the stall test rather than by a guessed floor. An earlier version
-            // stopped at 8*eps*sqrt(order), which at order 15000 is 2.2e-13 --
-            // comfortably above the 1e-13 residual the unit tests require at
-            // production scale, so vectors were accepted while still improving.
-            const auto achievableResidual =
+            // The bisected shift carries an error of about 2*eps*||T||, which
+            // floors the achievable residual near machine precision. This is
+            // where further solves only add rounding; it is a stop condition,
+            // not the bar a vector has to clear.
+            const auto refinementFloor =
                 4.0 * std::numeric_limits<double>::epsilon();
+
+            // The bar a vector does have to clear. The measured residual is
+            // 2.5e-15 at order 60000, so this leaves more than an order of
+            // magnitude before a pair is reported through solverInfo.
+            constexpr auto residualAcceptance = 1.0e-13;
+
+            // Inverse iteration reaches the floor in a few solves when the shift
+            // is close. The cap only bounds pathological cases.
+            constexpr auto maximumRefinementSolves = 16;
+
             const auto pivotFloor = std::numeric_limits<double>::epsilon()
                                     * std::max (scale.norm, 1.0);
             auto unconverged = 0;
+            auto largestResidual = 0.0;
+            auto refinementSolveCount = 0;
 
             for (std::size_t pair = 0; pair < eigenpairCount; ++pair)
             {
@@ -449,11 +460,12 @@ namespace numerics
 
                 fillStartVector (candidate, static_cast<std::uint64_t> (pair) + 1u);
                 auto bestResidual = std::numeric_limits<double>::infinity();
-                auto converged = false;
+                auto previousResidual = std::numeric_limits<double>::infinity();
 
-                for (int iteration = 0; iteration < 8; ++iteration)
+                for (int iteration = 0; iteration < maximumRefinementSolves; ++iteration)
                 {
                     solveShifted (factorization, candidate);
+                    ++refinementSolveCount;
 
                     // Reorthogonalize inside the loop, not only at the end.
                     // This is what stops the iterate collapsing back onto a
@@ -488,25 +500,25 @@ namespace numerics
                         std::copy (candidate.begin(), candidate.end(), best.begin());
                     }
 
-                    if (bestResidual <= achievableResidual)
-                    {
-                        converged = true;
+                    if (bestResidual <= refinementFloor)
                         break;
-                    }
 
-                    // Keep solving while the residual is still falling
-                    // materially. Once it plateaus, the remaining error is in
-                    // the shift rather than the vector and further solves only
-                    // add rounding.
-                    if (iteration > 0 && currentResidual > bestResidual * 0.9)
-                    {
-                        converged = true;
+                    // Against the previous iterate, not against bestResidual.
+                    // An improving step has just assigned bestResidual, so
+                    // comparing with it compares a value against itself and
+                    // stops after one refinement on every matrix.
+                    if (iteration > 0 && currentResidual > previousResidual * 0.9)
                         break;
-                    }
+
+                    previousResidual = currentResidual;
                 }
 
-                if (! converged)
+                // Stalling is a legitimate exit - the shift error floors the
+                // residual - but it is not convergence. Only the residual
+                // actually achieved decides whether the vector is usable.
+                if (! (bestResidual <= residualAcceptance))
                     ++unconverged;
+                largestResidual = std::max (largestResidual, bestResidual);
 
                 std::copy (best.begin(), best.end(),
                            result.eigenvectors.begin()
@@ -529,6 +541,8 @@ namespace numerics
             result.order = order;
             result.eigenpairCount = eigenpairCount;
             result.solverInfo = unconverged;
+            result.largestResidual = largestResidual;
+            result.refinementSolveCount = refinementSolveCount;
             result.status = SymmetricTridiagonalEigenStatus::success;
             return result;
         }

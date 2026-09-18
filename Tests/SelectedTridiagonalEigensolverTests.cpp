@@ -60,6 +60,14 @@ void expectValidEigenpairs (const std::vector<double>& diagonal,
         << spectrumviewer::numerics::getSymmetricTridiagonalEigenStatusDescription (
                result.status)
         << ", solver info " << result.solverInfo;
+    // A success status only means the solve ran. This is the assertion that
+    // catches inverse iteration stopping before the vectors are usable.
+    ASSERT_EQ (result.solverInfo, 0)
+        << "largest residual " << result.largestResidual;
+    // Solves per eigenpair are platform-dependent - the residual plateaus after
+    // two on some targets and later on others - so only the bounds are pinned.
+    EXPECT_GE (result.refinementSolveCount, static_cast<int> (count));
+    EXPECT_LE (result.refinementSolveCount, 16 * static_cast<int> (count));
     ASSERT_EQ (result.order, diagonal.size());
     ASSERT_EQ (result.eigenpairCount, count);
     ASSERT_EQ (result.eigenvalues.size(), count);

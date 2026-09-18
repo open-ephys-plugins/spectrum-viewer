@@ -189,7 +189,9 @@ DpssTaperBank generateDpssTapers (std::size_t sampleCount,
 
         auto eigenpairs = numerics::findLargestSymmetricTridiagonalEigenpairs (
             diagonal, offDiagonal, taperCount);
-        if (! eigenpairs.succeeded())
+        // solverInfo is part of the contract, not a diagnostic: a success
+        // status only means the solve ran, not that every vector converged.
+        if (! eigenpairs.succeeded() || eigenpairs.solverInfo != 0)
         {
             bank.status = DpssGenerationStatus::eigenSolverFailure;
             bank.eigenSolverInfo = eigenpairs.solverInfo;
