@@ -1,42 +1,86 @@
 name: mac
 
 on:
+  workflow_dispatch:
+    inputs:
+      fftw_ref:
+        description: OpenEphysFFTW branch, tag, or SHA to build against
+        required: false
+        default: float-batched-r2c
   push:
     branches:
-      - '**' # Runs on push to any branch
+      - main
     tags:
       - '*' # Runs on any tag push
   pull_request:
     branches:
       - main # Runs on pull requests targeting the main branch
 
+env:
+  # Restore this default to main after the prerequisite FFTW PR merges.
+  OPENEPHYS_FFTW_REF: ${{ inputs.fftw_ref || 'float-batched-r2c' }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
 
   build-mac:
 
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-    runs-on: macos-latest
+    runs-on: macos-26
+    timeout-minutes: 60
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
     - name: setup
       run: |
         cd ../..
-        git clone https://github.com/open-ephys/plugin-GUI.git --branch main
-        cd plugin-GUI/Build && cmake -G "Xcode" ..
+        git clone --depth 1 https://github.com/open-ephys/plugin-GUI.git --branch main
+        cd plugin-GUI/Build && cmake -G "Xcode" -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" ..
         cd ../..
         mkdir OEPlugins && cd OEPlugins
-        git clone https://github.com/open-ephys-plugins/OpenEphysFFTW.git --branch main
+        git clone --depth 1 https://github.com/open-ephys-plugins/OpenEphysFFTW.git --branch "$OPENEPHYS_FFTW_REF"
         cd OpenEphysFFTW/Build
-        cmake -G "Xcode" ..
+        cmake -G "Xcode" -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" ..
         xcodebuild -target install -configuration Release
     - name: build
       run: |
         cd Build
-        cmake -G "Xcode" ..
+        cmake -G "Xcode" -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=../../../OEPlugins/OpenEphysFFTW ..
         xcodebuild -configuration Release
-#    - name: test
-#      run: cd build && ctest
+    - name: test
+      run: ctest --test-dir Build -C Release --output-on-failure
+    - name: validate
+      run: |
+        binary=Build/Release/spectrum-viewer.bundle/Contents/MacOS/spectrum-viewer
+        test -f "$binary"
+        archs=$(lipo -archs "$binary")
+        echo "$archs" | grep -q x86_64
+        echo "$archs" | grep -q arm64
+        # The plugin must stay free of external numerical libraries.
+        if otool -L "$binary" | grep -Eiq 'openblas|lapack|blas|mkl|gfortran|quadmath'; then
+          echo "Spectrum Viewer has an unexpected numerical-library dependency"
+          exit 1
+        fi
+    - name: package test artifact
+      run: |
+        mkdir -p ci-artifact/plugins
+        cp -R Build/Release/spectrum-viewer.bundle ci-artifact/plugins/
+        mkdir -p ci-artifact/plugins/spectrum-viewer.bundle/Contents/Resources
+        cp THIRD_PARTY_NOTICES.md ci-artifact/plugins/spectrum-viewer.bundle/Contents/Resources/
+    - name: upload test artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SpectrumViewer-mac-${{ github.sha }}
+        path: ci-artifact
+        if-no-files-found: error
+        retention-days: 14
     - name: codesign_deploy
       if: github.ref == 'refs/heads/main'
       env:
@@ -57,6 +101,8 @@ jobs:
 
         mkdir plugins 
         cp -r $build_dir/*.bundle plugins
+        mkdir -p plugins/spectrum-viewer.bundle/Contents/Resources
+        cp THIRD_PARTY_NOTICES.md plugins/spectrum-viewer.bundle/Contents/Resources/
 
         # Turn our base64-encoded certificate back to a regular .p12 file
         echo $MACOS_CERTIFICATE | base64 --decode > certificate.p12

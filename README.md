@@ -15,6 +15,13 @@ The Spectrum Viewer plugin is not included by default in the Open Ephys GUI. To 
 
 Instructions for using the Spectrum Viewer plugin are available [here](https://open-ephys.github.io/gui-docs/User-Manual/Plugins/Spectrum-Viewer.html).
 
+The **Capture** control accumulates 10, 30, or 60 seconds of non-overlapping
+two-second Fine spectra to reduce estimator variance. It averages calibrated
+linear PSDs, updates progressively, and freezes the completed result until
+**Live** is selected. The status reports analyzed versus elapsed span and flags
+failed, shed, or discontinuous windows; captured data is not saved in session
+configuration.
+
 ## Building from source
 
 First, follow the instructions on [this page](https://open-ephys.github.io/gui-docs/Developer-Guide/Compiling-the-GUI.html) to build the Open Ephys GUI.
@@ -23,7 +30,14 @@ First, follow the instructions on [this page](https://open-ephys.github.io/gui-d
 
 This plugin depends on the `main` branch of the [OpenEphysFFTW](https://github.com/open-ephys-plugins/OpenEphysFFTW/tree/main) library, which must be built and installed first.
 
-Be sure to the `OpenEphysFFTW` and `spectrum-viewer` repositories into a directory at the same level as the `plugin-GUI`, e.g.:
+DPSS taper generation uses a plugin-private symmetric-tridiagonal eigensolver, so
+the plugin has no BLAS or LAPACK dependency and CMake configure downloads nothing.
+
+Contributors should start with the [developer guide](DEVELOPMENT.md), which maps
+the runtime data flow, source files, thread boundaries, and real-time invariants.
+
+Clone the `OpenEphysFFTW` and `spectrum-viewer` repositories into a directory at
+the same level as `plugin-GUI`, e.g.:
  
 ```
 Code
