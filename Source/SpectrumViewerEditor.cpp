@@ -27,138 +27,108 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "SpectrumViewer.h"
 
 SpectrumViewerEditor::SpectrumViewerEditor (GenericProcessor* p)
-    : VisualizerEditor (p, "Power Spectrum", 220)
+    : VisualizerEditor (p, "Power Spectrum", 230)
 {
+    // Stream and channel selection change the processor's input route, so they
+    // belong in the signal chain. Every display control lives on the canvas.
     addSelectedStreamParameterEditor (Parameter::PROCESSOR_SCOPE, "active_stream", 15, 28);
-    getParameterEditor ("active_stream")->setSize (210, 18);
+    getParameterEditor ("active_stream")->setBounds (15, 35, 210, 20);
 
     addSelectedChannelsParameterEditor (Parameter::STREAM_SCOPE, "Channels", 15, 53);
-    getParameterEditor ("Channels")->setSize (210, 18);
+    getParameterEditor ("Channels")->setBounds (15, 70, 210, 20);
 
-    displayType = std::make_unique<ComboBox> ("Display Type");
-    displayType->setBounds (15, 78, 100, 18);
-    displayType->addListener (this);
-    displayType->addItemList ({ "Power Spectrum", "Spectrogram" }, 1);
-    displayType->setSelectedId (1, dontSendNotification);
-    addAndMakeVisible (displayType.get());
+    readinessLabel = std::make_unique<Label> ("AnalysisReadiness", "Stopped");
+    readinessLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
+    readinessLabel->setBounds (15, 100, 210, 18);
+    addAndMakeVisible (readinessLabel.get());
 
-    displayLabel = std::make_unique<Label> ("DisplayTypeLabel", "Display");
-    displayLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    displayLabel->setBounds (123, 78, 80, 18);
-    addAndMakeVisible (displayLabel.get());
+    startTimerHz (4);
+}
 
-    freqRanges.add (Range (0, 100));
-    freqRanges.add (Range (0, 500));
-    freqRanges.add (Range (0, 1000));
-    frequencyRange = std::make_unique<ComboBox> ("FreqRange");
-    frequencyRange->setBounds (15, 103, 100, 18);
-    frequencyRange->addListener (this);
-    frequencyRange->addItemList ({ "0 - 100", "0 - 500", "0 - 1000" }, 1);
-    frequencyRange->setSelectedId (3, dontSendNotification);
-    addAndMakeVisible (frequencyRange.get());
+SpectrumViewerEditor::~SpectrumViewerEditor()
+{
+    stopTimer();
 
-    frequencyLabel = std::make_unique<Label> ("FreqRangeLabel", "Freq. Range");
-    frequencyLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    frequencyLabel->setBounds (123, 103, 80, 18);
-    addAndMakeVisible (frequencyLabel.get());
+    // The canvas writes into displaySettings, which is a member of this class
+    // and is therefore destroyed before the base class's canvas pointer.
+    // Destroy the canvas first so it can never outlive what it writes to.
+    canvas.reset();
 }
 
 Visualizer* SpectrumViewerEditor::createNewCanvas()
 {
-    // Create a new canvas and pass the processor ptr
-    auto sp = (SpectrumViewer*) getProcessor();
-    auto spectrumCanvas = new SpectrumCanvas (sp);
-
-    // Set frequency range for canvas
-    Range<int> range = freqRanges[frequencyRange->getSelectedItemIndex()];
-    spectrumCanvas->getPlotPtr()->setFrequencyRange (range.getStart(), range.getEnd(), sp->getFreqStep());
-
-    // Set display type for canvas
-    auto type = (DisplayType) displayType->getSelectedId();
-    spectrumCanvas->setDisplayType (type);
-
-    return spectrumCanvas;
+    // The canvas reads its initial state from displaySettings and writes every
+    // change back, so there is nothing to push into it here.
+    return new SpectrumCanvas (static_cast<SpectrumViewer*> (getProcessor()),
+                               displaySettings);
 }
 
 void SpectrumViewerEditor::startAcquisition()
 {
-    frequencyRange->setEnabled (false);
     enable();
 }
 
 void SpectrumViewerEditor::stopAcquisition()
 {
-    frequencyRange->setEnabled (true);
     disable();
 }
 
-void SpectrumViewerEditor::comboBoxChanged (ComboBox* cb)
+void SpectrumViewerEditor::timerCallback()
 {
-    auto sc = static_cast<SpectrumCanvas*> (canvas.get());
+    const auto* processor = static_cast<SpectrumViewer*> (getProcessor());
 
-    if (cb == displayType.get())
+    String text;
+    switch (processor->getAnalysisReadiness())
     {
-        auto type = (DisplayType) displayType->getSelectedId();
-
-        if (! sc)
-            return;
-
-        sc->setDisplayType (type);
+        case SpectrumAnalysisReadiness::preparing:
+            text = "Preparing analysis...";
+            break;
+        case SpectrumAnalysisReadiness::warmingUp:
+            text = "Warming up " + String (processor->getWarmupSampleCount()) + "/"
+                   + String (processor->getWarmupTargetSampleCount());
+            break;
+        case SpectrumAnalysisReadiness::live:
+            text = processor->isAnalysisConfigurationPending()
+                       ? "Live (preparing new profile...)"
+                       : "Live";
+            break;
+        case SpectrumAnalysisReadiness::configurationFailed:
+            text = processor->hasActiveAnalysis()
+                       ? "Live (new profile failed)"
+                       : "Analysis configuration failed";
+            break;
+        case SpectrumAnalysisReadiness::invalidSelection:
+            text = "Select a stream and channels";
+            break;
+        case SpectrumAnalysisReadiness::stopped:
+        default:
+            text = "Stopped";
+            break;
     }
-    else if (cb == frequencyRange.get())
-    {
-        Range<int> range = freqRanges[cb->getSelectedItemIndex()];
-
-        // Send frequency range update to processor
-        auto processor = static_cast<SpectrumViewer*> (getProcessor());
-        processor->setFrequencyRange (range);
-
-        // Send frequency range update to canvas plot
-        if (sc != nullptr)
-        {
-            sc->getPlotPtr()->setFrequencyRange (range.getStart(),
-                                                 range.getEnd(),
-                                                 processor->getFreqStep());
-        }
-    }
+    readinessLabel->setText (text, dontSendNotification);
 }
 
 void SpectrumViewerEditor::selectedStreamHasChanged()
 {
-    if (getProcessor()->getDataStreams().size() > 0)
-    {
-        auto stream = getProcessor()->getDataStream (getCurrentStream());
-        // Add or change the currently selected stream's max frequency
-        float maxFreq = stream->getSampleRate() / 2;
-
-        freqRanges.set (3, Range (0, (int) maxFreq));
-
-        if (frequencyRange->getNumItems() == 4)
-        {
-            int selectedId = frequencyRange->getSelectedId();
-            frequencyRange->changeItemText (4, "0 - " + String (maxFreq));
-
-            if (selectedId == 4)
-            {
-                frequencyRange->setText ("0 - " + String (maxFreq), sendNotification);
-            }
-        }
-        else
-            frequencyRange->addItem ("0 - " + String (maxFreq), 4);
-    }
+    // The canvas owns the frequency-range control, so it refreshes the Nyquist
+    // entry itself from the processor's active stream.
+    if (auto* spectrumCanvas = static_cast<SpectrumCanvas*> (canvas.get()))
+        spectrumCanvas->updateSettings();
 }
 
 void SpectrumViewerEditor::saveVisualizerEditorParameters (XmlElement* xml)
 {
-    xml->setAttribute ("display_type", displayType->getSelectedId());
-    xml->setAttribute ("frequency_range", frequencyRange->getSelectedId());
+    // Serialize the values, never the controls: the canvas may never have been
+    // created, and its controls would then not exist to read.
+    displaySettings.writeTo (*xml);
 }
 
 void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
 {
-    int selectedType = xml->getIntAttribute ("display_type", 1);
-    displayType->setSelectedId (selectedType, sendNotification);
+    displaySettings.readFrom (*xml);
 
-    int selectedRange = xml->getIntAttribute ("frequency_range", 3);
-    frequencyRange->setSelectedId (selectedRange, sendNotification);
+    // Loading can happen after the visualizer has been opened, so an existing
+    // canvas has to pick the values up.
+    if (auto* spectrumCanvas = static_cast<SpectrumCanvas*> (canvas.get()))
+        spectrumCanvas->applyDisplaySettings();
 }
