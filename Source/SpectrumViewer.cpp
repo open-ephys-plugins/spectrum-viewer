@@ -78,6 +78,52 @@ private:
 };
 } // namespace
 
+void SpectrumViewer::TransportDiagnostics::reset() noexcept
+{
+    for (auto* counter : { &droppedInputBlocks, &droppedInputSamples, &rejectedInputBlocks,
+                           &invalidMappedInputBlocks, &invalidWorkerInputBlocks,
+                           &inputDiscontinuities, &failedSpectrumWindows, &shedSpectrumWindows,
+                           &unconfiguredInputBlocks, &unconfiguredInputSamples,
+                           &staleConfigurationBlocks, &configurationFailures,
+                           &droppedReferenceRequests })
+        counter->store (0, std::memory_order_relaxed);
+}
+
+void SpectrumViewer::CaptureRuntimeState::resetProgress() noexcept
+{
+    // Release, so a reader that sees zero windows also sees the counters
+    // below it cleared rather than left over from the previous capture.
+    includedWindows.store (0, std::memory_order_release);
+    wallSpanSeconds.store (0.0, std::memory_order_relaxed);
+    failedWindows.store (0, std::memory_order_relaxed);
+    shedWindows.store (0, std::memory_order_relaxed);
+    discontinuities.store (0, std::memory_order_relaxed);
+}
+
+void SpectrumViewer::CaptureRuntimeState::resetWindowTracking() noexcept
+{
+    firstSample = 0;
+    lastSampleExclusive = 0;
+    lastFrameSequence = 0;
+    lastPublishedDisplaySettings = 0;
+    lastPublishedComparisonSettings = 0;
+    hasFirstSample = false;
+    completionPending = false;
+}
+
+void SpectrumViewer::CaptureRuntimeState::reset() noexcept
+{
+    // Withdraw the promise before releasing what it promised: retainedId
+    // nonzero means `completed` exists.
+    retainedId.store (0, std::memory_order_release);
+    completed.reset();
+    resetProgress();
+    resetWindowTracking();
+    targetWindows.store (0, std::memory_order_relaxed);
+    windowSeconds.store (0.0, std::memory_order_relaxed);
+    state.store (SpectrumCaptureState::live, std::memory_order_release);
+}
+
 SpectrumViewer::SpectrumViewer (
     spectrumviewer::AsyncSpectrumAnalysis::Builder configurationBuilder)
     : GenericProcessor ("Spectrum Viewer"),
@@ -348,12 +394,12 @@ void SpectrumViewer::applyReferenceRequest() noexcept
             std::memory_order_relaxed);
         referenceCaptureId.store (0, std::memory_order_release);
     }
-    else if (completedCapture != nullptr
-             && completedCapture->getCaptureId() == request)
+    else if (capture.completed != nullptr
+             && capture.completed->getCaptureId() == request)
     {
-        spectrumReference = completedCapture;
+        spectrumReference = capture.completed;
         referenceCapturedAtMilliseconds.store (
-            completedCapture->getCapturedAtUnixMilliseconds(),
+            capture.completed->getCapturedAtUnixMilliseconds(),
             std::memory_order_relaxed);
         referenceCompatibility.store (
             spectrumviewer::SpectrumReferenceCompatibility::compatible,
@@ -367,12 +413,12 @@ void SpectrumViewer::applyReferenceRequest() noexcept
         // exchange above has already consumed the request, so without this
         // counter the UI would keep showing the reference controls it enabled
         // on the click and never learn that nothing was set.
-        droppedReferenceRequests.fetch_add (1, std::memory_order_release);
+        diagnostics.droppedReferenceRequests.fetch_add (1, std::memory_order_release);
         LOGE ("Spectrum Viewer could not set capture ", request,
               " as the reference because it was not retained");
     }
 
-    captureCompletionPending = captureState.load (std::memory_order_relaxed)
+    capture.completionPending = capture.state.load (std::memory_order_relaxed)
                                == SpectrumCaptureState::frozen;
 }
 
@@ -380,7 +426,7 @@ bool SpectrumViewer::finalizeCapturedSpectrum()
 {
     if (activeAnalysis == nullptr || ! activeAnalysis->isCaptureRuntime())
         return false;
-    if (completedCapture != nullptr)
+    if (capture.completed != nullptr)
         return true;
 
     auto* accumulator = activeAnalysis->getCaptureAccumulator();
@@ -403,15 +449,15 @@ bool SpectrumViewer::finalizeCapturedSpectrum()
         spectrumviewer::SpectrumCaptureQuality quality;
         quality.includedWindowCount = accumulator->getIncludedWindowCount();
         quality.targetWindowCount = accumulator->getTargetWindowCount();
-        quality.firstSample = captureFirstSample;
-        quality.lastSampleExclusive = captureLastSampleExclusive;
+        quality.firstSample = capture.firstSample;
+        quality.lastSampleExclusive = capture.lastSampleExclusive;
         quality.failedWindowCount = pipeline.getFailedWindowCount()
                                     + accumulator->getRejectedWindowCount();
         quality.shedWindowCount = pipeline.getShedWindowCount();
         quality.discontinuityCount = pipeline.getDiscontinuityCount();
 
         const auto& frameFifo = activeAnalysis->getFrameFifo();
-        completedCapture = std::make_shared<const spectrumviewer::CapturedSpectrum> (
+        capture.completed = std::make_shared<const spectrumviewer::CapturedSpectrum> (
             activeAnalysis->getCaptureId(),
             Time::currentTimeMillis(),
             activeAnalysis->getConfiguration().getFrameDescriptor(),
@@ -429,13 +475,13 @@ bool SpectrumViewer::finalizeCapturedSpectrum()
               accumulator->getTargetWindowCount(),
               ", channels ", accumulator->getChannelCount(),
               ", bins ", accumulator->getBinCount(),
-              ", samples ", captureFirstSample, " to ", captureLastSampleExclusive, ")");
+              ", samples ", capture.firstSample, " to ", capture.lastSampleExclusive, ")");
         return false;
     }
 
     // Published only after the capture exists, so a nonzero id read anywhere
     // else is a promise that setCurrentCaptureAsReference() can be honoured.
-    retainedCaptureId.store (completedCapture->getCaptureId(),
+    capture.retainedId.store (capture.completed->getCaptureId(),
                              std::memory_order_release);
     return true;
 }
@@ -447,7 +493,7 @@ bool SpectrumViewer::publishReducedSpectrum (
     const spectrumviewer::SpectrumFrameDescriptor& descriptor,
     std::int64_t firstSample,
     std::uint64_t sequence,
-    spectrumviewer::SpectrumCaptureFrameStatus capture) noexcept
+    spectrumviewer::SpectrumCaptureFrameStatus captureStatus) noexcept
 {
     if (activeAnalysis == nullptr)
         return false;
@@ -570,7 +616,7 @@ bool SpectrumViewer::publishReducedSpectrum (
                                      reduced.frequencyScale,
                                      reduced.minimumFrequencyHz,
                                      reduced.maximumFrequencyHz,
-                                     capture,
+                                     captureStatus,
                                      comparisonData,
                                      comparison,
                                      baselineDb);
@@ -582,7 +628,7 @@ bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
         return false;
     auto* accumulator = activeAnalysis->getCaptureAccumulator();
     if (accumulator == nullptr || accumulator->getIncludedWindowCount() == 0
-        || ! captureHasFirstSample)
+        || ! capture.hasFirstSample)
         return false;
     const auto& descriptor = activeAnalysis->getConfiguration().getFrameDescriptor();
 
@@ -592,7 +638,7 @@ bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
     status.captureId = activeAnalysis->getCaptureId();
     status.includedWindowCount = accumulator->getIncludedWindowCount();
     status.targetWindowCount = accumulator->getTargetWindowCount();
-    status.lastSampleExclusive = captureLastSampleExclusive;
+    status.lastSampleExclusive = capture.lastSampleExclusive;
     const auto& pipeline = activeAnalysis->getPipeline();
     status.failedWindowCount = pipeline.getFailedWindowCount()
                                + accumulator->getRejectedWindowCount();
@@ -604,8 +650,8 @@ bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
         accumulator->getChannelCount(),
         accumulator->getBinCount(),
         descriptor,
-        captureFirstSample,
-        captureLastFrameSequence,
+        capture.firstSample,
+        capture.lastFrameSequence,
         status);
     if (published)
     {
@@ -616,8 +662,8 @@ bool SpectrumViewer::publishCapturedSpectrum (bool complete) noexcept
         DisplaySettings settings;
         if (tryReadDisplaySettings (settings))
         {
-            captureLastPublishedDisplaySettings = settings.sequence;
-            captureLastPublishedComparisonSettings = comparisonSettingsSequence.load (
+            capture.lastPublishedDisplaySettings = settings.sequence;
+            capture.lastPublishedComparisonSettings = comparisonSettingsSequence.load (
                 std::memory_order_acquire);
         }
     }
@@ -638,7 +684,7 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
     InputRouteSnapshot route;
     if (! readInputRoute (route))
     {
-        invalidMappedInputBlocks.fetch_add (1, std::memory_order_relaxed);
+        diagnostics.invalidMappedInputBlocks.fetch_add (1, std::memory_order_relaxed);
         return;
     }
 
@@ -651,7 +697,7 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
     // carries, so it must stay below this guard.
     if (route.channelCount == 0)
     {
-        unconfiguredInputBlocks.fetch_add (1, std::memory_order_relaxed);
+        diagnostics.unconfiguredInputBlocks.fetch_add (1, std::memory_order_relaxed);
         return;
     }
 
@@ -662,8 +708,8 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
 
     if (route.generation == 0)
     {
-        unconfiguredInputBlocks.fetch_add (1, std::memory_order_relaxed);
-        unconfiguredInputSamples.fetch_add (incomingSampleCount, std::memory_order_relaxed);
+        diagnostics.unconfiguredInputBlocks.fetch_add (1, std::memory_order_relaxed);
+        diagnostics.unconfiguredInputSamples.fetch_add (incomingSampleCount, std::memory_order_relaxed);
         return;
     }
 
@@ -674,7 +720,7 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
         const auto globalChannel = route.globalChannelIndices[channel];
         if (globalChannel < 0 || globalChannel >= continuousBuffer.getNumChannels())
         {
-            invalidMappedInputBlocks.fetch_add (1, std::memory_order_relaxed);
+            diagnostics.invalidMappedInputBlocks.fetch_add (1, std::memory_order_relaxed);
             return;
         }
 
@@ -687,9 +733,9 @@ void SpectrumViewer::process (AudioBuffer<float>& continuousBuffer)
                          getFirstSampleNumberForBlock (route.streamId),
                          route.generation))
     {
-        droppedInputBlocks.store (fifo->getDroppedBlockCount(), std::memory_order_relaxed);
-        droppedInputSamples.store (fifo->getDroppedSampleCount(), std::memory_order_relaxed);
-        rejectedInputBlocks.store (fifo->getRejectedBlockCount(), std::memory_order_relaxed);
+        diagnostics.droppedInputBlocks.store (fifo->getDroppedBlockCount(), std::memory_order_relaxed);
+        diagnostics.droppedInputSamples.store (fifo->getDroppedSampleCount(), std::memory_order_relaxed);
+        diagnostics.rejectedInputBlocks.store (fifo->getRejectedBlockCount(), std::memory_order_relaxed);
     }
 }
 
@@ -702,218 +748,276 @@ void SpectrumViewer::run()
         discardInvalidatedInputRoute();
         adoptPreparedAnalysis();
         applyReferenceRequest();
-        if (activeAnalysis != nullptr && activeAnalysis->isCaptureRuntime()
-            && captureState.load (std::memory_order_acquire)
-                   == SpectrumCaptureState::frozen)
-        {
-            const auto displayVersion = displaySettingsSequence.load (std::memory_order_acquire);
-            const auto comparisonVersion = comparisonSettingsSequence.load (
-                std::memory_order_acquire);
-            const auto& frameFifo = activeAnalysis->getFrameFifo();
-            if ((displayVersion & 1u) == 0u
-                && (captureCompletionPending
-                    || displayVersion != captureLastPublishedDisplaySettings
-                    || comparisonVersion != captureLastPublishedComparisonSettings)
-                && frameFifo.getNumReady() < frameFifo.getCapacity())
-                captureCompletionPending = ! publishCapturedSpectrum (true);
-        }
-        bool consumedBlock = false;
-        auto* fifo = inputFifo.get();
-        auto* pipeline = activeAnalysis != nullptr ? &activeAnalysis->getPipeline() : nullptr;
-        spectrumviewer::BacklogSheddingPolicy sheddingPolicy;
-
-        if (fifo != nullptr && pipeline != nullptr)
-        {
-            while (! threadShouldExit())
-            {
-                adoptPreparedAnalysis();
-                pipeline = activeAnalysis != nullptr ? &activeAnalysis->getPipeline() : nullptr;
-                if (pipeline == nullptr)
-                    break;
-
-                if (activeAnalysis->isCaptureRuntime()
-                    && captureState.load (std::memory_order_acquire)
-                           != SpectrumCaptureState::capturing)
-                {
-                    const auto popped = fifo->tryPop ([] (const auto&) {});
-                    if (! popped)
-                        break;
-                    consumedBlock = true;
-                    continue;
-                }
-
-                spectrumviewer::SpectrumAnalysisPipeline::AppendResult appendResult;
-                const auto appendBlock = [&] (const auto& block)
-                {
-                    std::array<const float*, MAX_CHANS> channelData {};
-                    for (std::size_t channel = 0; channel < block.numChannels; ++channel)
-                        channelData[channel] = block.getChannelData (channel);
-
-                    // appendBlock copies the complete block. Returning from this
-                    // callback releases the FIFO slot before any FFT work begins.
-                    appendResult = pipeline->appendBlock (channelData.data(),
-                                                          block.numChannels,
-                                                          block.numSamples,
-                                                          block.firstSample,
-                                                          block.configurationGeneration);
-                };
-                const auto popped = fifo->tryPop (appendBlock);
-
-                if (! popped)
-                    break;
-
-                consumedBlock = true;
-
-                // Shedding is only sound for live display frames, which are
-                // replaceable latest-state. A capture window is 2 s of data the
-                // average will never see again, so discarding one does not make
-                // the capture catch up - it makes it stall. Back-pressure for a
-                // capture is the input queue alone.
-                const auto accumulatingCapture = activeAnalysis->isCaptureRuntime();
-                if (accumulatingCapture)
-                    sheddingPolicy.reset();
-                const auto sheddingAction =
-                    accumulatingCapture
-                        ? spectrumviewer::BacklogSheddingPolicy::Action::processAll
-                        : sheddingPolicy.inputBlockDequeued (fifo->getNumReady() > 0);
-                if (appendResult.status != spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::accepted)
-                {
-                    if (appendResult.status == spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::configurationMismatch)
-                    {
-                        staleConfigurationBlocks.fetch_add (1, std::memory_order_relaxed);
-                        continue;
-                    }
-
-                    // LOGE takes a global lock and writes to two streams, and a
-                    // systematic shape mismatch would hit this for every block.
-                    // The counter carries the rate; the log only needs to say it
-                    // is happening, so it thins out to powers of two.
-                    const auto rejected = invalidWorkerInputBlocks.fetch_add (
-                                              1, std::memory_order_relaxed)
-                                          + 1;
-                    if ((rejected & (rejected - 1)) == 0)
-                        LOGE ("Spectrum Viewer worker rejected an invalid FIFO block (",
-                              rejected, " so far)");
-                    continue;
-                }
-
-                if (appendResult.discontinuity)
-                    inputDiscontinuities.store (pipeline->getDiscontinuityCount(), std::memory_order_relaxed);
-
-                if (sheddingAction
-                    != spectrumviewer::BacklogSheddingPolicy::Action::processAll)
-                {
-                    const auto shed = sheddingAction
-                                              == spectrumviewer::BacklogSheddingPolicy::Action::discardAll
-                                          ? pipeline->discardReadyFrames()
-                                          : pipeline->discardReadyFramesExceptLatest();
-                    shedSpectrumWindows.fetch_add (shed, std::memory_order_relaxed);
-                    if (sheddingAction
-                        == spectrumviewer::BacklogSheddingPolicy::Action::discardAll)
-                        continue;
-                }
-
-                const auto publishFrame = [this] (const auto& frame)
-                {
-                    if (activeAnalysis->isCaptureRuntime())
-                    {
-                        auto* accumulator = activeAnalysis->getCaptureAccumulator();
-                        if (accumulator == nullptr
-                            || ! accumulator->add (frame.getChannelData (0),
-                                                   frame.numChannels,
-                                                   frame.numBins))
-                            return;
-                        // The analyzed span is anchored on included windows,
-                        // not on arriving blocks: CapturedSpectrum rejects a
-                        // span that does not run forward, and a discontinuity
-                        // can move the source's sample numbering backwards.
-                        const auto windowEndSample =
-                            frame.firstSample
-                            + static_cast<std::int64_t> (frame.descriptor.windowSampleCount);
-                        if (! captureHasFirstSample
-                            || frame.firstSample < captureFirstSample)
-                        {
-                            captureFirstSample = frame.firstSample;
-                            captureLastSampleExclusive = windowEndSample;
-                            captureHasFirstSample = true;
-                        }
-                        else
-                            captureLastSampleExclusive =
-                                std::max (captureLastSampleExclusive, windowEndSample);
-                        captureLastFrameSequence = frame.sequence;
-                        captureIncludedWindows.store (
-                            accumulator->getIncludedWindowCount(),
-                            std::memory_order_release);
-                        // Spanned against analyzed seconds is the stall signal:
-                        // non-overlapping windows make them equal unless data
-                        // was lost between them.
-                        captureWallSpanSeconds.store (
-                            static_cast<double> (captureLastSampleExclusive
-                                                 - captureFirstSample)
-                                / frame.descriptor.sampleRateHz,
-                            std::memory_order_relaxed);
-                        const auto complete = accumulator->isComplete();
-                        const auto retained = complete && finalizeCapturedSpectrum();
-                        const auto published = (! complete || retained)
-                                               && publishCapturedSpectrum (complete);
-                        if (complete)
-                        {
-                            captureCompletionPending = retained && ! published;
-                            // Freezing is what enables the reference controls.
-                            // Without a retained capture there is nothing
-                            // behind them, so report the failure now instead of
-                            // silently dropping the request after the click.
-                            captureState.store (retained
-                                                    ? SpectrumCaptureState::frozen
-                                                    : SpectrumCaptureState::failed,
-                                                std::memory_order_release);
-                        }
-                        return;
-                    }
-
-                    publishReducedSpectrum (frame.getChannelData (0),
-                                            frame.numChannels,
-                                            frame.numBins,
-                                            frame.descriptor,
-                                            frame.firstSample,
-                                            frame.sequence);
-                };
-                auto maximumFrames = std::numeric_limits<std::size_t>::max();
-                if (activeAnalysis->isCaptureRuntime())
-                {
-                    const auto* accumulator = activeAnalysis->getCaptureAccumulator();
-                    maximumFrames = accumulator->getTargetWindowCount()
-                                    - accumulator->getIncludedWindowCount();
-                }
-                pipeline->consumeReadyFrames (publishFrame, maximumFrames);
-                failedSpectrumWindows.store (pipeline->getFailedWindowCount(), std::memory_order_relaxed);
-                if (activeAnalysis->isCaptureRuntime())
-                {
-                    captureFailedWindows.store (
-                        pipeline->getFailedWindowCount()
-                            + activeAnalysis->getCaptureAccumulator()->getRejectedWindowCount(),
-                        std::memory_order_relaxed);
-                    captureShedWindows.store (pipeline->getShedWindowCount(),
-                                              std::memory_order_relaxed);
-                    captureDiscontinuities.store (pipeline->getDiscontinuityCount(),
-                                                  std::memory_order_relaxed);
-                }
-
-                if (analysisReadiness.load (std::memory_order_relaxed)
-                    == SpectrumAnalysisReadiness::warmingUp)
-                {
-                    warmupSampleCount.store (pipeline->getBufferedSampleCount(), std::memory_order_relaxed);
-                    if (appendResult.windowsReady > 0)
-                        analysisReadiness.store (SpectrumAnalysisReadiness::live, std::memory_order_release);
-                }
-            }
-        }
-
-        // Thread::notify() takes a mutex in JUCE 8, so the audio callback must not
-        // use it. A short worker-only timed wait avoids both callback locks and spin.
-        if (! consumedBlock)
-            wait (2.0);
+        republishFrozenCapture();
+        if (! processQueuedInput())
+            waitForInput();
     }
+}
+
+void SpectrumViewer::republishFrozenCapture() noexcept
+{
+    // A frozen capture receives no new windows, but it still has to be reduced
+    // again whenever the display settings or the comparison change.
+    if (activeAnalysis == nullptr || ! activeAnalysis->isCaptureRuntime()
+        || capture.state.load (std::memory_order_acquire) != SpectrumCaptureState::frozen)
+        return;
+
+    const auto displayVersion = displaySettingsSequence.load (std::memory_order_acquire);
+    const auto comparisonVersion = comparisonSettingsSequence.load (
+        std::memory_order_acquire);
+    const auto& frameFifo = activeAnalysis->getFrameFifo();
+    if ((displayVersion & 1u) == 0u
+        && (capture.completionPending
+            || displayVersion != capture.lastPublishedDisplaySettings
+            || comparisonVersion != capture.lastPublishedComparisonSettings)
+        && frameFifo.getNumReady() < frameFifo.getCapacity())
+        capture.completionPending = ! publishCapturedSpectrum (true);
+}
+
+bool SpectrumViewer::processQueuedInput()
+{
+    auto* fifo = inputFifo.get();
+    if (fifo == nullptr || activeAnalysis == nullptr)
+        return false;
+
+    bool consumedBlock = false;
+    spectrumviewer::BacklogSheddingPolicy sheddingPolicy;
+    while (! threadShouldExit())
+    {
+        // A replacement can finish between blocks, and the next block belongs
+        // to it rather than to the runtime it replaced.
+        adoptPreparedAnalysis();
+        if (activeAnalysis == nullptr)
+            break;
+
+        if (activeAnalysis->isCaptureRuntime()
+            && capture.state.load (std::memory_order_acquire)
+                   != SpectrumCaptureState::capturing)
+        {
+            if (! drainHeldCaptureBlock (*fifo))
+                break;
+            consumedBlock = true;
+            continue;
+        }
+
+        auto& pipeline = activeAnalysis->getPipeline();
+        spectrumviewer::SpectrumAnalysisPipeline::AppendResult appended;
+        const auto appendBlock = [&] (const auto& block)
+        {
+            std::array<const float*, MAX_CHANS> channelData {};
+            for (std::size_t channel = 0; channel < block.numChannels; ++channel)
+                channelData[channel] = block.getChannelData (channel);
+
+            // appendBlock copies the complete block. Returning from this
+            // callback releases the FIFO slot before any FFT work begins.
+            appended = pipeline.appendBlock (channelData.data(),
+                                             block.numChannels,
+                                             block.numSamples,
+                                             block.firstSample,
+                                             block.configurationGeneration);
+        };
+        if (! fifo->tryPop (appendBlock))
+            break;
+        consumedBlock = true;
+
+        // Chosen before the block is judged: the policy tracks the queue, and a
+        // rejected block was dequeued like any other.
+        const auto sheddingAction = chooseSheddingAction (sheddingPolicy, *fifo);
+        if (appended.status != spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::accepted)
+        {
+            recordRejectedBlock (appended.status);
+            continue;
+        }
+
+        if (appended.discontinuity)
+            diagnostics.inputDiscontinuities.store (pipeline.getDiscontinuityCount(),
+                                                    std::memory_order_relaxed);
+
+        if (! shedObsoleteWindows (sheddingAction))
+            continue;
+
+        publishReadyFrames();
+        updateWindowCounters();
+        trackWarmup (appended);
+    }
+    return consumedBlock;
+}
+
+bool SpectrumViewer::drainHeldCaptureBlock (spectrumviewer::SampleBlockFifo& fifo)
+{
+    // Nothing analyses input while a capture is frozen on screen or the live
+    // runtime is still being built, but the queue has to keep moving or the
+    // callback would start dropping blocks.
+    return fifo.tryPop ([] (const auto&) {});
+}
+
+spectrumviewer::BacklogSheddingPolicy::Action SpectrumViewer::chooseSheddingAction (
+    spectrumviewer::BacklogSheddingPolicy& policy,
+    spectrumviewer::SampleBlockFifo& fifo)
+{
+    // Shedding is only sound for live display frames, which are replaceable
+    // latest-state. A capture window is 2 s of data the average will never see
+    // again, so discarding one does not make the capture catch up - it makes it
+    // stall. Back-pressure for a capture is the input queue alone.
+    if (activeAnalysis->isCaptureRuntime())
+    {
+        policy.reset();
+        return spectrumviewer::BacklogSheddingPolicy::Action::processAll;
+    }
+    return policy.inputBlockDequeued (fifo.getNumReady() > 0);
+}
+
+void SpectrumViewer::recordRejectedBlock (
+    spectrumviewer::SpectrumAnalysisPipeline::AppendStatus status)
+{
+    if (status == spectrumviewer::SpectrumAnalysisPipeline::AppendStatus::configurationMismatch)
+    {
+        diagnostics.staleConfigurationBlocks.fetch_add (1, std::memory_order_relaxed);
+        return;
+    }
+
+    // LOGE takes a global lock and writes to two streams, and a systematic
+    // shape mismatch would hit this for every block. The counter carries the
+    // rate; the log only needs to say it is happening, so it thins out to
+    // powers of two.
+    const auto rejected = diagnostics.invalidWorkerInputBlocks.fetch_add (
+                              1, std::memory_order_relaxed)
+                          + 1;
+    if ((rejected & (rejected - 1)) == 0)
+        LOGE ("Spectrum Viewer worker rejected an invalid FIFO block (",
+              rejected, " so far)");
+}
+
+bool SpectrumViewer::shedObsoleteWindows (spectrumviewer::BacklogSheddingPolicy::Action action)
+{
+    using Action = spectrumviewer::BacklogSheddingPolicy::Action;
+    if (action == Action::processAll)
+        return true;
+
+    auto& pipeline = activeAnalysis->getPipeline();
+    const auto shed = action == Action::discardAll
+                          ? pipeline.discardReadyFrames()
+                          : pipeline.discardReadyFramesExceptLatest();
+    diagnostics.shedSpectrumWindows.fetch_add (shed, std::memory_order_relaxed);
+    return action != Action::discardAll;
+}
+
+void SpectrumViewer::publishReadyFrames()
+{
+    const auto publishFrame = [this] (const auto& frame)
+    {
+        if (activeAnalysis->isCaptureRuntime())
+        {
+            addCaptureWindow (frame);
+            return;
+        }
+
+        publishReducedSpectrum (frame.getChannelData (0),
+                                frame.numChannels,
+                                frame.numBins,
+                                frame.descriptor,
+                                frame.firstSample,
+                                frame.sequence);
+    };
+
+    // A capture takes exactly its target number of windows.
+    auto maximumFrames = std::numeric_limits<std::size_t>::max();
+    if (activeAnalysis->isCaptureRuntime())
+    {
+        const auto* accumulator = activeAnalysis->getCaptureAccumulator();
+        maximumFrames = accumulator->getTargetWindowCount()
+                        - accumulator->getIncludedWindowCount();
+    }
+    activeAnalysis->getPipeline().consumeReadyFrames (publishFrame, maximumFrames);
+}
+
+void SpectrumViewer::addCaptureWindow (
+    const spectrumviewer::SpectrumAnalysisPipeline::FrameView& frame)
+{
+    auto* accumulator = activeAnalysis->getCaptureAccumulator();
+    if (accumulator == nullptr
+        || ! accumulator->add (frame.getChannelData (0),
+                               frame.numChannels,
+                               frame.numBins))
+        return;
+
+    // The analyzed span is anchored on included windows, not on arriving
+    // blocks: CapturedSpectrum rejects a span that does not run forward, and a
+    // discontinuity can move the source's sample numbering backwards.
+    const auto windowEndSample =
+        frame.firstSample
+        + static_cast<std::int64_t> (frame.descriptor.windowSampleCount);
+    if (! capture.hasFirstSample
+        || frame.firstSample < capture.firstSample)
+    {
+        capture.firstSample = frame.firstSample;
+        capture.lastSampleExclusive = windowEndSample;
+        capture.hasFirstSample = true;
+    }
+    else
+        capture.lastSampleExclusive =
+            std::max (capture.lastSampleExclusive, windowEndSample);
+    capture.lastFrameSequence = frame.sequence;
+    capture.includedWindows.store (accumulator->getIncludedWindowCount(),
+                                   std::memory_order_release);
+    // Spanned against analyzed seconds is the stall signal: non-overlapping
+    // windows make them equal unless data was lost between them.
+    capture.wallSpanSeconds.store (
+        static_cast<double> (capture.lastSampleExclusive - capture.firstSample)
+            / frame.descriptor.sampleRateHz,
+        std::memory_order_relaxed);
+
+    const auto complete = accumulator->isComplete();
+    const auto retained = complete && finalizeCapturedSpectrum();
+    const auto published = (! complete || retained)
+                           && publishCapturedSpectrum (complete);
+    if (complete)
+    {
+        capture.completionPending = retained && ! published;
+        // Freezing is what enables the reference controls. Without a retained
+        // capture there is nothing behind them, so report the failure now
+        // instead of silently dropping the request after the click.
+        capture.state.store (retained ? SpectrumCaptureState::frozen
+                                      : SpectrumCaptureState::failed,
+                             std::memory_order_release);
+    }
+}
+
+void SpectrumViewer::updateWindowCounters() noexcept
+{
+    auto& pipeline = activeAnalysis->getPipeline();
+    diagnostics.failedSpectrumWindows.store (pipeline.getFailedWindowCount(),
+                                             std::memory_order_relaxed);
+    if (! activeAnalysis->isCaptureRuntime())
+        return;
+
+    capture.failedWindows.store (
+        pipeline.getFailedWindowCount()
+            + activeAnalysis->getCaptureAccumulator()->getRejectedWindowCount(),
+        std::memory_order_relaxed);
+    capture.shedWindows.store (pipeline.getShedWindowCount(), std::memory_order_relaxed);
+    capture.discontinuities.store (pipeline.getDiscontinuityCount(),
+                                   std::memory_order_relaxed);
+}
+
+void SpectrumViewer::trackWarmup (
+    const spectrumviewer::SpectrumAnalysisPipeline::AppendResult& appended) noexcept
+{
+    if (analysisReadiness.load (std::memory_order_relaxed)
+        != SpectrumAnalysisReadiness::warmingUp)
+        return;
+
+    warmupSampleCount.store (activeAnalysis->getPipeline().getBufferedSampleCount(),
+                             std::memory_order_relaxed);
+    if (appended.windowsReady > 0)
+        analysisReadiness.store (SpectrumAnalysisReadiness::live, std::memory_order_release);
+}
+
+void SpectrumViewer::waitForInput()
+{
+    // Thread::notify() takes a mutex in JUCE 8, so the audio callback must not
+    // use it. A short worker-only timed wait avoids both callback locks and spin.
+    wait (2.0);
 }
 
 void SpectrumViewer::adoptPreparedAnalysis()
@@ -933,21 +1037,21 @@ void SpectrumViewer::adoptPreparedAnalysis()
     configurationPending.store (false, std::memory_order_release);
     if (! result.succeeded())
     {
-        configurationFailures.fetch_add (1, std::memory_order_relaxed);
+        diagnostics.configurationFailures.fetch_add (1, std::memory_order_relaxed);
         if (result.captureId != 0)
         {
             // Only a retained capture may report frozen; see the capture
             // completion path in run().
             const auto retained =
                 activeAnalysis != nullptr && activeAnalysis->isCaptureRuntime()
-                && retainedCaptureId.load (std::memory_order_acquire) != 0;
-            captureState.store (retained ? SpectrumCaptureState::frozen
+                && capture.retainedId.load (std::memory_order_acquire) != 0;
+            capture.state.store (retained ? SpectrumCaptureState::frozen
                                          : SpectrumCaptureState::failed,
                                 std::memory_order_release);
         }
-        else if (captureState.load (std::memory_order_relaxed)
+        else if (capture.state.load (std::memory_order_relaxed)
                  == SpectrumCaptureState::restoringLive)
-            captureState.store (replacementFailureCaptureState.load (
+            capture.state.store (capture.replacementFailureState.load (
                                     std::memory_order_relaxed),
                                 std::memory_order_release);
         if (activeAnalysis == nullptr)
@@ -975,38 +1079,30 @@ void SpectrumViewer::adoptPreparedAnalysis()
         static_cast<float> (activeAnalysis->getConfiguration().getFrameDescriptor().binWidthHz),
         std::memory_order_release);
 
-    captureHasFirstSample = false;
-    captureCompletionPending = false;
-    captureFirstSample = 0;
-    captureLastSampleExclusive = 0;
-    captureLastFrameSequence = 0;
-    captureLastPublishedDisplaySettings = displaySettingsSequence.load (std::memory_order_acquire);
-    captureLastPublishedComparisonSettings = comparisonSettingsSequence.load (
+    capture.resetWindowTracking();
+    capture.lastPublishedDisplaySettings = displaySettingsSequence.load (std::memory_order_acquire);
+    capture.lastPublishedComparisonSettings = comparisonSettingsSequence.load (
         std::memory_order_acquire);
-    captureIncludedWindows.store (0, std::memory_order_release);
-    captureWallSpanSeconds.store (0.0, std::memory_order_relaxed);
-    captureFailedWindows.store (0, std::memory_order_relaxed);
-    captureShedWindows.store (0, std::memory_order_relaxed);
-    captureDiscontinuities.store (0, std::memory_order_relaxed);
+    capture.resetProgress();
     if (activeAnalysis->isCaptureRuntime())
     {
-        completedCapture.reset();
-        retainedCaptureId.store (0, std::memory_order_release);
+        capture.completed.reset();
+        capture.retainedId.store (0, std::memory_order_release);
         const auto& descriptor = activeAnalysis->getConfiguration().getFrameDescriptor();
-        captureWindowSeconds.store (
+        capture.windowSeconds.store (
             static_cast<double> (descriptor.windowSampleCount)
                 / descriptor.sampleRateHz,
             std::memory_order_relaxed);
-        requestedCaptureId.store (activeAnalysis->getCaptureId(), std::memory_order_release);
-        captureTargetWindows.store (
+        capture.requestedId.store (activeAnalysis->getCaptureId(), std::memory_order_release);
+        capture.targetWindows.store (
             activeAnalysis->getCaptureAccumulator()->getTargetWindowCount(),
             std::memory_order_release);
-        captureState.store (SpectrumCaptureState::capturing, std::memory_order_release);
+        capture.state.store (SpectrumCaptureState::capturing, std::memory_order_release);
     }
     else
     {
-        captureTargetWindows.store (0, std::memory_order_release);
-        captureState.store (SpectrumCaptureState::live, std::memory_order_release);
+        capture.targetWindows.store (0, std::memory_order_release);
+        capture.state.store (SpectrumCaptureState::live, std::memory_order_release);
     }
 
     // Publication of the generation is the callback's permission to enqueue
@@ -1119,18 +1215,18 @@ void SpectrumViewer::requestInputRouteReplacement()
     // that the configuration requested below is about to replace.
     inputRouteInvalidated.store (false, std::memory_order_release);
 
-    const auto state = captureState.load (std::memory_order_acquire);
+    const auto state = capture.state.load (std::memory_order_acquire);
     if (state != SpectrumCaptureState::live
         && state != SpectrumCaptureState::failed)
     {
-        replacementFailureCaptureState.store (
+        capture.replacementFailureState.store (
             state == SpectrumCaptureState::capturing
                 ? SpectrumCaptureState::capturing
                 : state == SpectrumCaptureState::frozen
                       ? SpectrumCaptureState::frozen
                       : SpectrumCaptureState::live,
             std::memory_order_relaxed);
-        captureState.store (SpectrumCaptureState::restoringLive,
+        capture.state.store (SpectrumCaptureState::restoringLive,
                             std::memory_order_release);
     }
     requestAnalysisConfiguration (false);
@@ -1185,21 +1281,7 @@ void SpectrumViewer::discardInvalidatedInputRoute() noexcept
     // cannot outlive the runtime. The reference is a standalone snapshot and
     // does survive; its compatibility is re-evaluated against whatever
     // selection comes next.
-    completedCapture.reset();
-    retainedCaptureId.store (0, std::memory_order_release);
-    captureHasFirstSample = false;
-    captureCompletionPending = false;
-    captureFirstSample = 0;
-    captureLastSampleExclusive = 0;
-    captureLastFrameSequence = 0;
-    captureTargetWindows.store (0, std::memory_order_relaxed);
-    captureIncludedWindows.store (0, std::memory_order_relaxed);
-    captureWindowSeconds.store (0.0, std::memory_order_relaxed);
-    captureWallSpanSeconds.store (0.0, std::memory_order_relaxed);
-    captureFailedWindows.store (0, std::memory_order_relaxed);
-    captureShedWindows.store (0, std::memory_order_relaxed);
-    captureDiscontinuities.store (0, std::memory_order_relaxed);
-    captureState.store (SpectrumCaptureState::live, std::memory_order_release);
+    capture.reset();
 
     // The message thread can make the selection valid again between the
     // command and this teardown. That configuration request owns the readiness
@@ -1295,37 +1377,18 @@ bool SpectrumViewer::startAcquisition()
                            0);
         activeConfigurationGeneration.store (0, std::memory_order_release);
         activeBinWidthHz.store (0.0f, std::memory_order_release);
-        droppedInputBlocks.store (0, std::memory_order_relaxed);
-        droppedInputSamples.store (0, std::memory_order_relaxed);
-        rejectedInputBlocks.store (0, std::memory_order_relaxed);
-        invalidMappedInputBlocks.store (0, std::memory_order_relaxed);
-        invalidWorkerInputBlocks.store (0, std::memory_order_relaxed);
-        inputDiscontinuities.store (0, std::memory_order_relaxed);
-        failedSpectrumWindows.store (0, std::memory_order_relaxed);
-        shedSpectrumWindows.store (0, std::memory_order_relaxed);
-        unconfiguredInputBlocks.store (0, std::memory_order_relaxed);
-        unconfiguredInputSamples.store (0, std::memory_order_relaxed);
-        staleConfigurationBlocks.store (0, std::memory_order_relaxed);
-        configurationFailures.store (0, std::memory_order_relaxed);
+        diagnostics.reset();
         inputRouteInvalidated.store (false, std::memory_order_relaxed);
-        droppedReferenceRequests.store (0, std::memory_order_relaxed);
-        requestedCaptureId.store (0, std::memory_order_relaxed);
-        retainedCaptureId.store (0, std::memory_order_relaxed);
-        captureWindowSeconds.store (0.0, std::memory_order_relaxed);
-        captureTargetWindows.store (0, std::memory_order_relaxed);
-        captureIncludedWindows.store (0, std::memory_order_relaxed);
-        captureWallSpanSeconds.store (0.0, std::memory_order_relaxed);
-        captureFailedWindows.store (0, std::memory_order_relaxed);
-        captureShedWindows.store (0, std::memory_order_relaxed);
-        captureDiscontinuities.store (0, std::memory_order_relaxed);
-        captureState.store (SpectrumCaptureState::live, std::memory_order_release);
+        // The worker is not running yet, so the capture's worker-only fields
+        // are safe to reset from here.
+        capture.reset();
+        capture.requestedId.store (0, std::memory_order_relaxed);
         referenceRequest.store (0, std::memory_order_relaxed);
         referenceCaptureId.store (0, std::memory_order_relaxed);
         referenceCapturedAtMilliseconds.store (0, std::memory_order_relaxed);
         referenceCompatibility.store (
             spectrumviewer::SpectrumReferenceCompatibility::noReference,
             std::memory_order_relaxed);
-        completedCapture.reset();
         spectrumReference.reset();
         warmupSampleCount.store (0, std::memory_order_relaxed);
         warmupTargetSampleCount.store (0, std::memory_order_relaxed);
@@ -1405,22 +1468,13 @@ void SpectrumViewer::clearAcquisitionState()
     // The worker is gone by the time this runs, so an armed teardown command
     // would otherwise survive to fire against the next acquisition.
     inputRouteInvalidated.store (false, std::memory_order_relaxed);
-    captureTargetWindows.store (0, std::memory_order_relaxed);
-    captureIncludedWindows.store (0, std::memory_order_relaxed);
-    captureWindowSeconds.store (0.0, std::memory_order_relaxed);
-    captureWallSpanSeconds.store (0.0, std::memory_order_relaxed);
-    captureFailedWindows.store (0, std::memory_order_relaxed);
-    captureShedWindows.store (0, std::memory_order_relaxed);
-    captureDiscontinuities.store (0, std::memory_order_relaxed);
-    captureState.store (SpectrumCaptureState::live, std::memory_order_release);
+    capture.reset();
     referenceRequest.store (0, std::memory_order_relaxed);
     referenceCaptureId.store (0, std::memory_order_relaxed);
     referenceCapturedAtMilliseconds.store (0, std::memory_order_relaxed);
     referenceCompatibility.store (
         spectrumviewer::SpectrumReferenceCompatibility::noReference,
         std::memory_order_relaxed);
-    completedCapture.reset();
-    retainedCaptureId.store (0, std::memory_order_relaxed);
     spectrumReference.reset();
     analysisReadiness.store (SpectrumAnalysisReadiness::stopped, std::memory_order_release);
 }
@@ -1440,45 +1494,41 @@ void SpectrumViewer::setAnalysisProfile (SpectrumAnalysisProfile profile)
     tfrParams.nFreqs = int ((tfrParams.freqEnd - tfrParams.freqStart) / tfrParams.freqStep);
 
     if (acquisitionRunning.load (std::memory_order_acquire)
-        && (captureState.load (std::memory_order_acquire) == SpectrumCaptureState::live
-            || captureState.load (std::memory_order_acquire) == SpectrumCaptureState::failed))
+        && (capture.state.load (std::memory_order_acquire) == SpectrumCaptureState::live
+            || capture.state.load (std::memory_order_acquire) == SpectrumCaptureState::failed))
         requestAnalysisConfiguration();
 }
 
 bool SpectrumViewer::startSpectrumCapture (double durationSeconds)
 {
-    const auto captureWindowSeconds = getProfileSettings (
+    const auto fineWindowSeconds = getProfileSettings (
         SpectrumAnalysisProfile::fine).windowSeconds;
     if (! acquisitionRunning.load (std::memory_order_acquire)
         || ! std::isfinite (durationSeconds) || durationSeconds <= 0.0)
         return false;
 
-    const auto target = std::ceil (durationSeconds / captureWindowSeconds);
+    const auto target = std::ceil (durationSeconds / fineWindowSeconds);
     if (target < 1.0
         || target > static_cast<double> (std::numeric_limits<std::size_t>::max()))
         return false;
 
-    requestedCaptureId.store (nextCaptureId++, std::memory_order_release);
-    captureTargetWindows.store (static_cast<std::size_t> (target),
-                                std::memory_order_release);
-    captureIncludedWindows.store (0, std::memory_order_release);
-    captureWallSpanSeconds.store (0.0, std::memory_order_relaxed);
-    captureFailedWindows.store (0, std::memory_order_relaxed);
-    captureShedWindows.store (0, std::memory_order_relaxed);
-    captureDiscontinuities.store (0, std::memory_order_relaxed);
-    captureState.store (SpectrumCaptureState::preparing, std::memory_order_release);
+    capture.requestedId.store (nextCaptureId++, std::memory_order_release);
+    capture.targetWindows.store (static_cast<std::size_t> (target),
+                                 std::memory_order_release);
+    capture.resetProgress();
+    capture.state.store (SpectrumCaptureState::preparing, std::memory_order_release);
     requestAnalysisConfiguration (true);
     return true;
 }
 
 bool SpectrumViewer::setCurrentCaptureAsReference() noexcept
 {
-    if (captureState.load (std::memory_order_acquire) != SpectrumCaptureState::frozen)
+    if (capture.state.load (std::memory_order_acquire) != SpectrumCaptureState::frozen)
         return false;
     // Name the capture the worker actually holds, not the one that was last
     // requested: a requested id with no CapturedSpectrum behind it would be
     // consumed by applyReferenceRequest() and dropped.
-    const auto captureId = retainedCaptureId.load (std::memory_order_acquire);
+    const auto captureId = capture.retainedId.load (std::memory_order_acquire);
     if (captureId == 0)
         return false;
     // Captures use the Fine estimator. Keep the restored live analysis
@@ -1509,20 +1559,20 @@ void SpectrumViewer::setSpectrumComparisonMode (
 
 void SpectrumViewer::cancelSpectrumCapture()
 {
-    const auto state = captureState.load (std::memory_order_acquire);
+    const auto state = capture.state.load (std::memory_order_acquire);
     if (state == SpectrumCaptureState::live
         || state == SpectrumCaptureState::restoringLive)
         return;
 
     if (! acquisitionRunning.load (std::memory_order_acquire))
     {
-        captureState.store (SpectrumCaptureState::live, std::memory_order_release);
+        capture.state.store (SpectrumCaptureState::live, std::memory_order_release);
         return;
     }
 
-    replacementFailureCaptureState.store (SpectrumCaptureState::frozen,
+    capture.replacementFailureState.store (SpectrumCaptureState::frozen,
                                            std::memory_order_relaxed);
-    captureState.store (SpectrumCaptureState::restoringLive,
+    capture.state.store (SpectrumCaptureState::restoringLive,
                         std::memory_order_release);
     requestAnalysisConfiguration (false);
 }
@@ -1549,9 +1599,9 @@ void SpectrumViewer::requestAnalysisConfiguration (bool forCapture)
         || hopSamples > windowSamples)
     {
         configurationPending.store (false, std::memory_order_release);
-        configurationFailures.fetch_add (1, std::memory_order_relaxed);
+        diagnostics.configurationFailures.fetch_add (1, std::memory_order_relaxed);
         if (forCapture)
-            captureState.store (SpectrumCaptureState::failed,
+            capture.state.store (SpectrumCaptureState::failed,
                                 std::memory_order_release);
         if (! hasActiveAnalysis())
             analysisReadiness.store (SpectrumAnalysisReadiness::configurationFailed,
@@ -1572,8 +1622,8 @@ void SpectrumViewer::requestAnalysisConfiguration (bool forCapture)
     request.outputQueueCapacity = OUTPUT_QUEUE_CAPACITY;
     if (forCapture)
     {
-        request.captureId = requestedCaptureId.load (std::memory_order_acquire);
-        request.captureTargetWindowCount = captureTargetWindows.load (
+        request.captureId = capture.requestedId.load (std::memory_order_acquire);
+        request.captureTargetWindowCount = capture.targetWindows.load (
             std::memory_order_acquire);
     }
     request.sourceChannelIndices.assign (

@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <ProcessorHeaders.h>
 
 #include "AsyncSpectrumAnalysis.h"
+#include "BacklogSheddingPolicy.h"
 #include "SampleBlockFifo.h"
 
 #include <algorithm>
@@ -186,48 +187,48 @@ public:
 
     SpectrumCaptureState getCaptureState() const noexcept
     {
-        return captureState.load (std::memory_order_acquire);
+        return capture.state.load (std::memory_order_acquire);
     }
 
     std::size_t getCaptureIncludedWindowCount() const noexcept
     {
-        return captureIncludedWindows.load (std::memory_order_relaxed);
+        return capture.includedWindows.load (std::memory_order_relaxed);
     }
 
     std::size_t getCaptureTargetWindowCount() const noexcept
     {
-        return captureTargetWindows.load (std::memory_order_relaxed);
+        return capture.targetWindows.load (std::memory_order_relaxed);
     }
 
     double getCaptureAnalyzedSeconds() const noexcept
     {
         return static_cast<double> (getCaptureIncludedWindowCount())
-               * captureWindowSeconds.load (std::memory_order_relaxed);
+               * capture.windowSeconds.load (std::memory_order_relaxed);
     }
 
     double getCaptureWallSpanSeconds() const noexcept
     {
-        return captureWallSpanSeconds.load (std::memory_order_relaxed);
+        return capture.wallSpanSeconds.load (std::memory_order_relaxed);
     }
 
     std::uint64_t getCaptureFailedWindowCount() const noexcept
     {
-        return captureFailedWindows.load (std::memory_order_relaxed);
+        return capture.failedWindows.load (std::memory_order_relaxed);
     }
 
     std::uint64_t getCaptureShedWindowCount() const noexcept
     {
-        return captureShedWindows.load (std::memory_order_relaxed);
+        return capture.shedWindows.load (std::memory_order_relaxed);
     }
 
     std::uint64_t getCaptureDiscontinuityCount() const noexcept
     {
-        return captureDiscontinuities.load (std::memory_order_relaxed);
+        return capture.discontinuities.load (std::memory_order_relaxed);
     }
 
     std::uint64_t getCaptureId() const noexcept
     {
-        return requestedCaptureId.load (std::memory_order_relaxed);
+        return capture.requestedId.load (std::memory_order_relaxed);
     }
 
     /** Returns true while the worker holds a completed capture that can become
@@ -235,7 +236,7 @@ public:
         frozen state alone: freezing only means the accumulation finished. */
     bool hasRetainedCapture() const noexcept
     {
-        return retainedCaptureId.load (std::memory_order_acquire) != 0;
+        return capture.retainedId.load (std::memory_order_acquire) != 0;
     }
 
     /** Marks the completed frozen capture as the comparison reference.
@@ -306,61 +307,61 @@ public:
     }
 
     /** Returns whole input blocks dropped because the worker queue was full. */
-    std::uint64_t getDroppedInputBlockCount() const noexcept { return droppedInputBlocks.load (std::memory_order_relaxed); }
+    std::uint64_t getDroppedInputBlockCount() const noexcept { return diagnostics.droppedInputBlocks.load (std::memory_order_relaxed); }
 
     /** Returns input samples discarded as part of full-queue block drops. */
-    std::uint64_t getDroppedInputSampleCount() const noexcept { return droppedInputSamples.load (std::memory_order_relaxed); }
+    std::uint64_t getDroppedInputSampleCount() const noexcept { return diagnostics.droppedInputSamples.load (std::memory_order_relaxed); }
 
     /** Returns input blocks rejected because their shape or channel mapping was
         invalid, whether the callback or the worker caught it. */
     std::uint64_t getRejectedInputBlockCount() const noexcept
     {
-        return rejectedInputBlocks.load (std::memory_order_relaxed)
-               + invalidMappedInputBlocks.load (std::memory_order_relaxed)
-               + invalidWorkerInputBlocks.load (std::memory_order_relaxed);
+        return diagnostics.rejectedInputBlocks.load (std::memory_order_relaxed)
+               + diagnostics.invalidMappedInputBlocks.load (std::memory_order_relaxed)
+               + diagnostics.invalidWorkerInputBlocks.load (std::memory_order_relaxed);
     }
 
     /** Returns sample-index gaps or overlaps observed by the worker. */
-    std::uint64_t getInputDiscontinuityCount() const noexcept { return inputDiscontinuities.load (std::memory_order_relaxed); }
+    std::uint64_t getInputDiscontinuityCount() const noexcept { return diagnostics.inputDiscontinuities.load (std::memory_order_relaxed); }
 
     /** Returns analysis windows rejected because samples were non-finite. */
-    std::uint64_t getFailedSpectrumWindowCount() const noexcept { return failedSpectrumWindows.load (std::memory_order_relaxed); }
+    std::uint64_t getFailedSpectrumWindowCount() const noexcept { return diagnostics.failedSpectrumWindows.load (std::memory_order_relaxed); }
 
     /** Returns obsolete analysis windows skipped while the input queue was backlogged. */
     std::uint64_t getShedSpectrumWindowCount() const noexcept
     {
-        return shedSpectrumWindows.load (std::memory_order_relaxed);
+        return diagnostics.shedSpectrumWindows.load (std::memory_order_relaxed);
     }
 
     /** Returns callback blocks ignored while no prepared runtime was active. */
     std::uint64_t getUnconfiguredInputBlockCount() const noexcept
     {
-        return unconfiguredInputBlocks.load (std::memory_order_relaxed);
+        return diagnostics.unconfiguredInputBlocks.load (std::memory_order_relaxed);
     }
 
     /** Returns samples ignored while initial configuration was being prepared. */
     std::uint64_t getUnconfiguredInputSampleCount() const noexcept
     {
-        return unconfiguredInputSamples.load (std::memory_order_relaxed);
+        return diagnostics.unconfiguredInputSamples.load (std::memory_order_relaxed);
     }
 
     /** Returns queued blocks discarded across configuration-generation boundaries. */
     std::uint64_t getStaleConfigurationBlockCount() const noexcept
     {
-        return staleConfigurationBlocks.load (std::memory_order_relaxed);
+        return diagnostics.staleConfigurationBlocks.load (std::memory_order_relaxed);
     }
 
     /** Returns asynchronous configuration attempts that failed. */
     std::uint64_t getConfigurationFailureCount() const noexcept
     {
-        return configurationFailures.load (std::memory_order_relaxed);
+        return diagnostics.configurationFailures.load (std::memory_order_relaxed);
     }
 
     /** Returns reference requests the worker accepted but could not apply,
         because the frozen capture they named was never retained. */
     std::uint64_t getDroppedReferenceRequestCount() const noexcept
     {
-        return droppedReferenceRequests.load (std::memory_order_acquire);
+        return diagnostics.droppedReferenceRequests.load (std::memory_order_acquire);
     }
 
     /** Consumes all pending display frames and passes only the newest complete frame to consumer. */
@@ -438,6 +439,22 @@ private:
     void clearAcquisitionState();
     bool stopWorkerSafely (int timeoutMilliseconds) noexcept;
     void applyReferenceRequest() noexcept;
+
+    // The steps of run(), in the order it takes them. All worker only.
+    void republishFrozenCapture() noexcept;
+    bool processQueuedInput();
+    bool drainHeldCaptureBlock (spectrumviewer::SampleBlockFifo& fifo);
+    spectrumviewer::BacklogSheddingPolicy::Action chooseSheddingAction (
+        spectrumviewer::BacklogSheddingPolicy& policy,
+        spectrumviewer::SampleBlockFifo& fifo);
+    void recordRejectedBlock (spectrumviewer::SpectrumAnalysisPipeline::AppendStatus status);
+    bool shedObsoleteWindows (spectrumviewer::BacklogSheddingPolicy::Action action);
+    void publishReadyFrames();
+    void addCaptureWindow (const spectrumviewer::SpectrumAnalysisPipeline::FrameView& frame);
+    void updateWindowCounters() noexcept;
+    void trackWarmup (const spectrumviewer::SpectrumAnalysisPipeline::AppendResult& appended) noexcept;
+    void waitForInput();
+
     bool finalizeCapturedSpectrum();
     bool publishCapturedSpectrum (bool complete) noexcept;
     bool publishReducedSpectrum (const float* planarPsd,
@@ -446,7 +463,7 @@ private:
                                  const spectrumviewer::SpectrumFrameDescriptor& descriptor,
                                  std::int64_t firstSample,
                                  std::uint64_t sequence,
-                                 spectrumviewer::SpectrumCaptureFrameStatus capture = {}) noexcept;
+                                 spectrumviewer::SpectrumCaptureFrameStatus captureStatus = {}) noexcept;
     std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> tryGetDisplayAnalysis() const noexcept
     {
         std::unique_lock<std::mutex> lock (displayAnalysisMutex, std::try_to_lock);
@@ -515,53 +532,89 @@ private:
     std::atomic<std::size_t> activeAudioCallbacks { 0 };
     std::atomic<std::size_t> warmupSampleCount { 0 };
     std::atomic<std::size_t> warmupTargetSampleCount { 0 };
-    std::atomic<std::uint64_t> droppedInputBlocks { 0 };
-    std::atomic<std::uint64_t> droppedInputSamples { 0 };
-    std::atomic<std::uint64_t> rejectedInputBlocks { 0 };
-    std::atomic<std::uint64_t> invalidMappedInputBlocks { 0 };
-    // Worker-side counterpart of the two above. Kept separate because
-    // rejectedInputBlocks is overwritten from the FIFO's own count.
-    std::atomic<std::uint64_t> invalidWorkerInputBlocks { 0 };
-    std::atomic<std::uint64_t> inputDiscontinuities { 0 };
-    std::atomic<std::uint64_t> failedSpectrumWindows { 0 };
-    std::atomic<std::uint64_t> shedSpectrumWindows { 0 };
-    std::atomic<std::uint64_t> unconfiguredInputBlocks { 0 };
-    std::atomic<std::uint64_t> unconfiguredInputSamples { 0 };
-    std::atomic<std::uint64_t> staleConfigurationBlocks { 0 };
-    std::atomic<std::uint64_t> configurationFailures { 0 };
-    std::atomic<SpectrumCaptureState> captureState { SpectrumCaptureState::live };
-    std::atomic<SpectrumCaptureState> replacementFailureCaptureState {
-        SpectrumCaptureState::frozen
-    };
-    std::atomic<std::uint64_t> requestedCaptureId { 0 };
-    // Nonzero only once the worker owns a CapturedSpectrum for that id.
-    std::atomic<std::uint64_t> retainedCaptureId { 0 };
-    std::atomic<std::size_t> captureTargetWindows { 0 };
-    std::atomic<std::size_t> captureIncludedWindows { 0 };
-    std::atomic<double> captureWindowSeconds { 0.0 };
-    std::atomic<double> captureWallSpanSeconds { 0.0 };
-    std::atomic<std::uint64_t> captureFailedWindows { 0 };
-    std::atomic<std::uint64_t> captureShedWindows { 0 };
-    std::atomic<std::uint64_t> captureDiscontinuities { 0 };
-    std::uint64_t nextCaptureId = 1;
 
-    // The following capture fields are owned exclusively by the worker thread.
-    // The sample span is anchored on included windows, so it always runs
-    // forward and satisfies CapturedSpectrum's metadata contract.
-    std::int64_t captureFirstSample = 0;
-    std::int64_t captureLastSampleExclusive = 0;
-    std::uint64_t captureLastFrameSequence = 0;
-    std::uint64_t captureLastPublishedDisplaySettings = 0;
-    std::uint64_t captureLastPublishedComparisonSettings = 0;
-    bool captureHasFirstSample = false;
-    bool captureCompletionPending = false;
+    /** Counts of input and analysis windows the pipeline lost, rejected or
+        skipped. The callback and the worker write them and the message thread
+        reads them. Reset when acquisition starts and kept after it stops, so a
+        run can still be inspected once it is over. */
+    struct TransportDiagnostics
+    {
+        std::atomic<std::uint64_t> droppedInputBlocks { 0 };
+        std::atomic<std::uint64_t> droppedInputSamples { 0 };
+        std::atomic<std::uint64_t> rejectedInputBlocks { 0 };
+        std::atomic<std::uint64_t> invalidMappedInputBlocks { 0 };
+        // Worker-side counterpart of the two above. Kept separate because
+        // rejectedInputBlocks is overwritten from the FIFO's own count.
+        std::atomic<std::uint64_t> invalidWorkerInputBlocks { 0 };
+        std::atomic<std::uint64_t> inputDiscontinuities { 0 };
+        std::atomic<std::uint64_t> failedSpectrumWindows { 0 };
+        std::atomic<std::uint64_t> shedSpectrumWindows { 0 };
+        std::atomic<std::uint64_t> unconfiguredInputBlocks { 0 };
+        std::atomic<std::uint64_t> unconfiguredInputSamples { 0 };
+        std::atomic<std::uint64_t> staleConfigurationBlocks { 0 };
+        std::atomic<std::uint64_t> configurationFailures { 0 };
+        std::atomic<std::uint64_t> droppedReferenceRequests { 0 };
+
+        void reset() noexcept;
+    };
+
+    /** The capture in progress or on screen.
+
+        The atomics are published to the message thread. The fields after them
+        belong to the worker alone, so only reset() touches them from anywhere
+        else, and only while the worker is stopped. */
+    struct CaptureRuntimeState
+    {
+        std::atomic<SpectrumCaptureState> state { SpectrumCaptureState::live };
+        // What state becomes if the runtime replacing a capture fails to build.
+        std::atomic<SpectrumCaptureState> replacementFailureState {
+            SpectrumCaptureState::frozen
+        };
+        std::atomic<std::uint64_t> requestedId { 0 };
+        // Nonzero only once the worker owns `completed` for that id.
+        std::atomic<std::uint64_t> retainedId { 0 };
+        std::atomic<std::size_t> targetWindows { 0 };
+        std::atomic<std::size_t> includedWindows { 0 };
+        std::atomic<double> windowSeconds { 0.0 };
+        std::atomic<double> wallSpanSeconds { 0.0 };
+        std::atomic<std::uint64_t> failedWindows { 0 };
+        std::atomic<std::uint64_t> shedWindows { 0 };
+        std::atomic<std::uint64_t> discontinuities { 0 };
+
+        // Worker only. The sample span is anchored on included windows, so it
+        // always runs forward and satisfies CapturedSpectrum's metadata
+        // contract.
+        std::shared_ptr<const spectrumviewer::CapturedSpectrum> completed;
+        std::int64_t firstSample = 0;
+        std::int64_t lastSampleExclusive = 0;
+        std::uint64_t lastFrameSequence = 0;
+        std::uint64_t lastPublishedDisplaySettings = 0;
+        std::uint64_t lastPublishedComparisonSettings = 0;
+        bool hasFirstSample = false;
+        bool completionPending = false;
+
+        /** Zeroes the progress and quality counts an accumulation reports.
+            Atomics only, so any thread may call it. */
+        void resetProgress() noexcept;
+
+        /** Forgets the analysed span and publication watermarks of the
+            previous runtime. Worker only. */
+        void resetWindowTracking() noexcept;
+
+        /** Back to live with nothing captured, retained or in progress. Does
+            not touch requestedId, which numbers requests across runtimes. */
+        void reset() noexcept;
+    };
+
+    TransportDiagnostics diagnostics;
+    CaptureRuntimeState capture;
+    std::uint64_t nextCaptureId = 1;
 
     // Reference commands are published by the message thread and applied by
     // the spectrum worker. Spectral arrays remain worker-owned and immutable.
     static constexpr std::uint64_t CLEAR_REFERENCE_REQUEST =
         std::numeric_limits<std::uint64_t>::max();
     std::atomic<std::uint64_t> referenceRequest { 0 };
-    std::atomic<std::uint64_t> droppedReferenceRequests { 0 };
     std::atomic<std::uint64_t> comparisonSettingsSequence { 0 };
     std::atomic<spectrumviewer::SpectrumComparisonMode> comparisonMode {
         spectrumviewer::SpectrumComparisonMode::absolute
@@ -571,7 +624,6 @@ private:
     };
     std::atomic<std::uint64_t> referenceCaptureId { 0 };
     std::atomic<std::int64_t> referenceCapturedAtMilliseconds { 0 };
-    std::shared_ptr<const spectrumviewer::CapturedSpectrum> completedCapture;
     std::shared_ptr<const spectrumviewer::CapturedSpectrum> spectrumReference;
 
     uint16 activeStream = 0;
