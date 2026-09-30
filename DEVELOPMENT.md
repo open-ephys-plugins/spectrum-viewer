@@ -120,6 +120,12 @@ rejections in `getRejectedInputBlockCount()`. Its log line thins out to powers
 of two, because `LOGE` takes a global lock and a systematic mismatch would
 otherwise log every block.
 
+The spectrogram is a secondary view and deliberately narrow. It draws the first
+selected channel's displayed mean trace, one image row per display column, so it
+follows background removal but not the fit overlay, peak envelope, or reference
+comparison. In spectrogram mode the canvas asks the worker for as many display
+columns as the image has physical pixel rows, rather than the plot's width.
+
 Capture is different in both directions. Backlog shedding is suspended while a
 capture runtime is active: a shed capture window is two seconds of data the
 average will never see, so discarding one does not help the worker catch up, it

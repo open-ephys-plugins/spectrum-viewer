@@ -261,6 +261,25 @@ private:
         frequency scale. Does nothing when neither has changed. */
     void refreshPlotFrequencies();
 
+    /** Tells the worker how many display columns to reduce to: the plot's
+        width for the power spectrum, the image's height for the spectrogram,
+        where each column becomes one row. */
+    void publishDisplayColumnCount();
+
+    /** Where the spectrogram image is drawn, in this component's coordinates.
+        The frequency axis sits to its left and the channel caption above it. */
+    Rectangle<int> getSpectrogramArea() const noexcept;
+
+    /** Matches the spectrogram image's height to its drawn area in physical
+        pixels, so the frequency axis stays sharp on a scaled display. The width
+        stays at spectrogramHistoryColumns. Keeps the history already drawn. */
+    void resizeSpectrogramImage();
+
+    // One column per frame, stretched across the drawn area. Fixed rather than
+    // matched to the area, so the same number of frames is on screen at any
+    // window width.
+    static constexpr int spectrogramHistoryColumns = 1000;
+
     std::vector<Colour> chanColors = { Colour (200, 200, 200),
                                        Colour (230, 159, 0),
                                        Colour (86, 180, 233),
@@ -322,8 +341,13 @@ private:
     double pendingRangeElapsedSeconds = 0.0;
     bool hasFrameTiming = false;
 
-    /** Image to draw*/
+    /** Spectrogram history; the newest column is at x = 0. It shows the first
+        selected channel only. */
     std::unique_ptr<Image> spectrogramImg;
+
+    // The viridis colour map, sampled once rather than rebuilt as a gradient
+    // and evaluated per pixel on every frame.
+    std::array<Colour, 256> spectrogramPalette;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CanvasPlot);
 };

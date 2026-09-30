@@ -531,7 +531,11 @@ void SpectrumCanvas::createControls()
     addAndMakeVisible (optionsViewport.get());
 
     displayLabel = makeLabel ("DisplayTypeLabel", "Display");
-    displayType = makeComboBox ("Display Type", { "Power Spectrum", "Spectrogram" });
+    displayType = makeComboBox (
+        "Display Type", { "Power Spectrum", "Spectrogram" },
+        "The spectrogram shows the first selected channel only. Background removal "
+        "applies to it; the background fit, peak envelope and reference comparison "
+        "are drawn on the power spectrum only.");
 
     frequencyLabel = makeLabel ("FreqRangeLabel", "Frequency range");
     frequencyRange = makeComboBox ("FreqRange", { "0 - 100", "0 - 500", "0 - 1000", "Full" });
@@ -1363,7 +1367,16 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
 
     activeChannels = processor->getActiveChans();
 
-    spectrogramImg = std::make_unique<Image> (Image::RGB, 1000, 1000, true, SoftwareImageType());
+    ColourGradient viridis (Colour::fromRGB (68, 1, 84), 0.0f, 0.0f,
+                            Colour::fromRGB (253, 231, 37), 1.0f, 0.0f, false);
+    viridis.addColour (0.33, Colour::fromRGB (49, 104, 142));
+    viridis.addColour (0.66, Colour::fromRGB (53, 183, 121));
+    for (std::size_t index = 0; index < spectrogramPalette.size(); ++index)
+        spectrogramPalette[index] = viridis.getColourAtPosition (
+            static_cast<double> (index) / static_cast<double> (spectrogramPalette.size() - 1));
+
+    // Sized properly once the component has bounds; see resized().
+    resizeSpectrogramImage();
     setOpaque (true);
 
     currPower.resize (MAX_CHANS);
@@ -1397,10 +1410,52 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
 void CanvasPlot::resized()
 {
     plt->setBounds (20, 30, getWidth() - legendWidth - 40, getHeight() - 50);
-    processor->setDisplayColumnCount (
-        static_cast<std::size_t> (std::max (1, plt->getDrawingWidth())));
+    resizeSpectrogramImage();
+    publishDisplayColumnCount();
     clearButton->setBounds (plt->getRight() - 80, plt->getY(), 60, 20);
     cursorLabel->setBounds (plt->getX() + 60, plt->getY(), 560, 20);
+}
+
+void CanvasPlot::publishDisplayColumnCount()
+{
+    // Before the first layout, or while squeezed to nothing, there is no area
+    // to size to. Publishing a count anyway would have the worker reduce every
+    // frame to a single column until the next resize, so keep the last one.
+    const auto columns = displayType == SPECTROGRAM
+                             ? (getSpectrogramArea().isEmpty() ? 0 : spectrogramImg->getHeight())
+                             : plt->getDrawingWidth();
+    if (columns > 0)
+        processor->setDisplayColumnCount (static_cast<std::size_t> (columns));
+}
+
+Rectangle<int> CanvasPlot::getSpectrogramArea() const noexcept
+{
+    return getLocalBounds()
+        .withTrimmedLeft (60)
+        .withTrimmedRight (10)
+        .withTrimmedTop (30)
+        .withTrimmedBottom (10);
+}
+
+void CanvasPlot::resizeSpectrogramImage()
+{
+    const auto area = getSpectrogramArea();
+    const auto scale = std::max (1.0f, Component::getApproximateScaleFactorForComponent (this));
+    const auto height = std::max (1, roundToInt (static_cast<float> (area.getHeight()) * scale));
+    if (spectrogramImg != nullptr && spectrogramImg->getHeight() == height)
+        return;
+
+    auto resizedImage = std::make_unique<Image> (Image::RGB, spectrogramHistoryColumns, height,
+                                                 true, SoftwareImageType());
+    if (spectrogramImg != nullptr)
+    {
+        // Keep the history rather than blanking it on every window drag. The
+        // width is fixed, so this only rescales to the new frequency
+        // resolution; every column stays the same frame.
+        Graphics graphics (*resizedImage);
+        graphics.drawImage (*spectrogramImg, resizedImage->getBounds().toFloat());
+    }
+    spectrogramImg = std::move (resizedImage);
 }
 
 void CanvasPlot::lookAndFeelChanged()
@@ -1475,6 +1530,9 @@ void CanvasPlot::setDisplayType (DisplayType type)
         clearButton->setVisible (true);
     }
 
+    // The two displays want different column counts, and switching need not
+    // change this component's bounds, so resized() cannot be relied on here.
+    publishDisplayColumnCount();
     clear();
     repaint();
 }
@@ -1919,28 +1977,37 @@ void CanvasPlot::drawSpectrogram()
     if (! std::isfinite (colourSpan) || colourSpan <= 0.0f)
         return;
 
-    auto imageWidth = spectrogramImg->getWidth() - 1;
-    auto imageHeight = spectrogramImg->getHeight();
+    const auto imageWidth = spectrogramImg->getWidth();
+    const auto imageHeight = spectrogramImg->getHeight();
 
-    // first, shuffle our image rightwards by 1 pixel..
-    spectrogramImg->moveImageSection (1, 0, 0, 0, imageWidth, imageHeight);
+    // Scroll the history one column right; the newest column goes at x = 0.
+    spectrogramImg->moveImageSection (1, 0, 0, 0, imageWidth - 1, imageHeight);
 
-    ColourGradient colours (Colour::fromRGB (68, 1, 84), 0.0f, 0.0f,
-                            Colour::fromRGB (253, 231, 37), 1.0f, 0.0f, false);
-    colours.addColour (0.33, Colour::fromRGB (49, 104, 142));
-    colours.addColour (0.66, Colour::fromRGB (53, 183, 121));
+    // Only the first selected channel is drawn; paint() says so on screen.
     const auto& channelDb = displayedPower[0];
+    const auto lastBin = static_cast<int> (channelDb.size()) - 1;
+    const auto lastRow = std::max (1, imageHeight - 1);
+    const auto lastColour = static_cast<float> (spectrogramPalette.size() - 1);
 
-    for (auto y = 0; y < imageHeight - 1; ++y)
+    // One BitmapData for the whole column. setPixelAt() constructs one per
+    // call, which at a row per physical pixel was most of this function.
+    Image::BitmapData column (*spectrogramImg, 0, 0, 1, imageHeight,
+                              Image::BitmapData::writeOnly);
+    for (auto y = 0; y < imageHeight; ++y)
     {
-        auto skewedProportionY = 1.0f - (float) y / (float) imageHeight;
-        auto dataIndex = (size_t) jlimit (0, (int) (channelDb.size() - 1), (int) (skewedProportionY * (channelDb.size() - 1)));
-        const auto valueDb = channelDb[dataIndex];
+        // Row 0 is the top of the image and so shows the highest column. The
+        // reduced columns are already spaced for the frequency scale, so a
+        // linear row-to-column map is correct for both linear and log axes.
+        const auto fromBottom = static_cast<float> (lastRow - y) / static_cast<float> (lastRow);
+        const auto dataIndex = jlimit (0, lastBin, roundToInt (fromBottom * static_cast<float> (lastBin)));
+        const auto valueDb = channelDb[static_cast<std::size_t> (dataIndex)];
         const auto level = std::isfinite (valueDb)
                                ? jlimit (0.0f, 1.0f,
                                          (valueDb - colourRange.minimum) / colourSpan)
                                : 0.0f;
-        spectrogramImg->setPixelAt (0, y, colours.getColourAtPosition (level));
+        column.setPixelColour (0, y,
+                               spectrogramPalette[static_cast<std::size_t> (
+                                   roundToInt (level * lastColour))]);
     }
 
     repaint();
@@ -1986,15 +2053,26 @@ void CanvasPlot::paint (Graphics& g)
     {
         g.setColour (findColour (ThemeColours::controlPanelText));
 
-        int w = 50;
-        int h = getHeight();
+        const auto area = getSpectrogramArea();
+        const auto axisX = static_cast<float> (area.getX() - 13);
+        const auto areaTop = static_cast<float> (area.getY());
+        const auto areaBottom = static_cast<float> (area.getBottom());
+        const auto tickLabelWidth = area.getX() - 25;
+        constexpr int tickLabelHeight = 20;
 
-        int padding = 10;
+        // Only the first selected channel is drawn, and the legend is not, so
+        // name it here rather than leave the selection to imply all of them.
+        if (! activeChannels.isEmpty())
+        {
+            g.setFont (FontOptions ("Inter", "Regular", 13.0f));
+            g.drawText ((hasFrameTiming ? processor->getChanName (activeStreamId, activeChannels[0])
+                                        : processor->getChanName (activeChannels[0]))
+                            + (activeChannels.size() > 1 ? " (first selected channel)" : ""),
+                        area.getX(), area.getY() - 25, area.getWidth(), 20,
+                        Justification::centredLeft, true);
+        }
 
-        g.drawLine (w - 3, padding, w - 3, h - padding, 2.0);
-
-        int ticklabelWidth = 60;
-        int tickLabelHeight = 20;
+        g.drawLine (axisX, areaTop, axisX, areaBottom, 2.0f);
 
         g.setFont (FontOptions ("Inter", "Regular", 12.0f));
 
@@ -2029,9 +2107,8 @@ void CanvasPlot::paint (Graphics& g)
                                          - std::log10 (displayMinimumFrequencyHz))
                                             / (std::log10 (displayMaximumFrequencyHz)
                                                - std::log10 (displayMinimumFrequencyHz));
-            const auto ytickloc = static_cast<float> (h - padding)
-                                  - fraction * static_cast<float> (h - 2 * padding);
-            g.drawLine (w - 13, ytickloc, w - 3, ytickloc, 2.0);
+            const auto ytickloc = areaBottom - fraction * (areaBottom - areaTop);
+            g.drawLine (axisX - 10.0f, ytickloc, axisX, ytickloc, 2.0f);
 
             const auto yTick = frequency >= 1000.0f
                                    ? String (frequency / 1000.0f, 0) + "k"
@@ -2039,19 +2116,17 @@ void CanvasPlot::paint (Graphics& g)
 
             g.drawText (yTick,
                         0,
-                        ytickloc - tickLabelHeight / 2,
-                        w - 15,
+                        roundToInt (ytickloc) - tickLabelHeight / 2,
+                        tickLabelWidth,
                         tickLabelHeight,
                         Justification::right,
                         false);
         }
 
-        auto imgBounds = getLocalBounds();
-        imgBounds.setLeft (60);
-        imgBounds.setRight (getWidth() - 10);
-        imgBounds.setBottom (getHeight() - 10);
-        imgBounds.setTop (10);
-        g.drawImage (*spectrogramImg, imgBounds.toFloat());
+        // Stretched across the area, so the scroll speed follows the window
+        // width. Vertically the image already matches the area's physical
+        // pixels; see resizeSpectrogramImage().
+        g.drawImage (*spectrogramImg, area.toFloat());
     }
 }
 

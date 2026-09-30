@@ -22,6 +22,10 @@ linear PSDs, updates progressively, and freezes the completed result until
 failed, shed, or discontinuous windows; captured data is not saved in session
 configuration.
 
+The **Spectrogram** display shows the first selected channel only. Background
+removal applies to it; the background fit, peak envelope, and reference
+comparison are drawn on the power spectrum only.
+
 ## Building from source
 
 First, follow the instructions on [this page](https://open-ephys.github.io/gui-docs/Developer-Guide/Compiling-the-GUI.html) to build the Open Ephys GUI.
