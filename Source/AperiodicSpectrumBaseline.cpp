@@ -110,7 +110,17 @@ bool AperiodicSpectrumBaseline::estimate (
         }
 
         if (validKnots < 2)
-            return false;
+        {
+            // Too little usable power in this channel to fit a background.
+            // Returning false here would discard the fits already written for
+            // earlier channels and every later one, so one silent channel
+            // would remove the background from all of them. Mark only this
+            // channel as having none.
+            std::fill_n (planarBaselineDb + channel * outputBinCount,
+                         outputBinCount,
+                         std::numeric_limits<float>::quiet_NaN());
+            continue;
+        }
 
         smoothedKnotValuesDb[0] = knotValuesDb[0];
         smoothedKnotValuesDb[validKnots - 1] = knotValuesDb[validKnots - 1];
@@ -131,6 +141,13 @@ bool AperiodicSpectrumBaseline::estimate (
                 && frequency <= maximumFrequency)
             {
                 const auto logFrequency = static_cast<float> (std::log (frequency));
+                // The walk below only moves forward, which keeps it linear for
+                // the ascending frequencies the display reducer produces. An
+                // output that goes backwards restarts it, so ordering affects
+                // speed only; without this it would interpolate between the
+                // wrong knots.
+                if (logFrequency < knotLogFrequencies[upperKnot - 1])
+                    upperKnot = 1;
                 while (upperKnot + 1 < validKnots
                        && knotLogFrequencies[upperKnot] < logFrequency)
                     ++upperKnot;

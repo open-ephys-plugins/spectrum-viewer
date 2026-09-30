@@ -78,7 +78,8 @@ SingleTaperPeriodogram::SingleTaperPeriodogram (std::size_t numChannels,
       centredTimeSquareSum (0.0),
       mode (detrendMode),
       taperCoefficients (std::move (taper)),
-      psd (checkedOutputSize (numChannels, binCount))
+      psd (checkedOutputSize (numChannels, binCount)),
+      workingPsd (psd.size())
 {
     const auto checkedChannels = checkedInt (channelCount, "Channel count is out of range");
     const auto checkedSamples = checkedInt (sampleCount, "Sample count is out of range");
@@ -182,7 +183,7 @@ bool SingleTaperPeriodogram::compute (const ChannelSampleView* channels,
     for (std::size_t channel = 0; channel < channelCount; ++channel)
     {
         const auto* fftOutput = transform->getOutputPointer (static_cast<int> (channel));
-        auto* output = psd.data() + channel * binCount;
+        auto* output = workingPsd.data() + channel * binCount;
         for (std::size_t bin = 0; bin < binCount; ++bin)
         {
             const auto real = static_cast<double> (fftOutput[bin].real());
@@ -191,9 +192,20 @@ bool SingleTaperPeriodogram::compute (const ChannelSampleView* channels,
             const auto isNyquist = hasNyquistBin && bin == sampleCount / 2;
             if (bin != 0 && ! isNyquist)
                 power *= 2.0;
+            // Finite float input can still square past float range. The
+            // narrowing cast would turn that into infinity, which the
+            // display cannot place on a dB axis. Same rule as the multitaper
+            // estimator.
+            if (! std::isfinite (power)
+                || power > static_cast<double> (std::numeric_limits<float>::max()))
+                return false;
             output[bin] = static_cast<float> (power);
         }
     }
+
+    // Written aside and swapped in, so a rejection above never leaves some
+    // channels updated and others not.
+    psd.swap (workingPsd);
     return true;
 }
 } // namespace spectrumviewer

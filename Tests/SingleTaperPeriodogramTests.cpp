@@ -174,4 +174,25 @@ TEST (SingleTaperPeriodogramTests, RejectsMalformedAndNonFiniteViewsWithoutAlloc
     samples[4] = std::numeric_limits<float>::quiet_NaN();
     EXPECT_FALSE (estimator.compute (&view, 1));
 }
+
+TEST (SingleTaperPeriodogramTests, RejectsPowerBeyondFloatRangeAndKeepsLastOutput)
+{
+    constexpr std::size_t size = 64;
+    const std::vector<float> taper (size, 1.0f);
+    // No detrending, so a constant stays in the DC bin at full magnitude.
+    SingleTaperPeriodogram estimator (1, size, 1000.0, taper, DetrendMode::none);
+    std::vector<float> samples (size, 1.0f);
+    const ChannelSampleView view { samples.data(), size, nullptr, 0 };
+    ASSERT_TRUE (estimator.compute (&view, 1));
+    const std::vector<float> valid (estimator.getChannelData (0),
+                                    estimator.getChannelData (0) + estimator.getBinCount());
+
+    // Finite input whose DC power, (64 * 1e30)^2 / (1000 * 64), is far past
+    // float range: the narrowing cast would have published infinity.
+    std::fill (samples.begin(), samples.end(), 1.0e30f);
+    EXPECT_FALSE (estimator.compute (&view, 1));
+    EXPECT_EQ (std::vector<float> (estimator.getChannelData (0),
+                                   estimator.getChannelData (0) + estimator.getBinCount()),
+               valid);
+}
 } // namespace

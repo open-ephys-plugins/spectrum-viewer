@@ -35,6 +35,19 @@ public:
     AperiodicSpectrumBaseline (std::size_t maximumInputBins,
                                std::size_t maximumOutputBins);
 
+    /** Fits each channel of a full one-sided planarPsd, numBins per channel,
+        and evaluates the fit in dB at outputFrequenciesHz into
+        planarBaselineDb, outputBinCount per channel.
+
+        Returns false for invalid arguments, including a sample rate or window
+        that leaves no band between 10 Hz (or two bins) and Nyquist to fit;
+        nothing is written then. Otherwise every
+        output value is written. A value is NaN where there is no fit: a
+        non-finite frequency, one outside the fitted band, or a channel with too
+        little positive power to fit, which does not affect the other channels.
+
+        outputFrequenciesHz may be in any order. Ascending order, as the
+        display reducer produces, is the fast path. */
     bool estimate (const float* planarPsd,
                    std::size_t numChannels,
                    std::size_t numBins,

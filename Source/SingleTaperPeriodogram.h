@@ -50,7 +50,8 @@ public:
                             DetrendMode detrendMode,
                             unsigned int planningFlags = 0U /* FFTW_MEASURE */);
 
-    /** Returns false for malformed views or non-finite input; output is then stale. */
+    /** Returns false for malformed views, non-finite input, or a power that
+        does not fit in a float. The previous output is then left unchanged. */
     bool compute (const ChannelSampleView* channels, std::size_t numChannels) noexcept;
 
     const float* getChannelData (std::size_t channel) const noexcept
@@ -78,6 +79,7 @@ private:
     DetrendMode mode;
     std::vector<float> taperCoefficients;
     std::vector<float> psd;
+    std::vector<float> workingPsd;
     std::unique_ptr<FFTWRealToComplexBatchFloat> transform;
 };
 } // namespace spectrumviewer
