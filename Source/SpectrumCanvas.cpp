@@ -147,13 +147,42 @@ void FrequencyPlot::plot (std::vector<float> x,
         return;
     }
 
-    lineSeries.push_back ({ std::move (x), std::move (y), colour, width, opacity });
+    auto& series = nextLineSeries();
+    series.x = std::move (x);
+    series.y = std::move (y);
+    series.colour = colour;
+    series.width = width;
+    series.opacity = opacity;
     repaint (drawComponent->getBounds());
+}
+
+void FrequencyPlot::plotLine (const std::vector<float>& x,
+                              const std::vector<float>& y,
+                              Colour colour,
+                              float width,
+                              float opacity)
+{
+    auto& series = nextLineSeries();
+    // assign() keeps the existing capacity, which is what makes a redraw of
+    // the same number of points allocation-free.
+    series.x.assign (x.begin(), x.end());
+    series.y.assign (y.begin(), y.end());
+    series.colour = colour;
+    series.width = width;
+    series.opacity = opacity;
+    repaint (drawComponent->getBounds());
+}
+
+FrequencyPlot::LineSeries& FrequencyPlot::nextLineSeries()
+{
+    if (lineSeriesCount == lineSeries.size())
+        lineSeries.emplace_back();
+    return lineSeries[lineSeriesCount++];
 }
 
 void FrequencyPlot::clear()
 {
-    lineSeries.clear();
+    lineSeriesCount = 0;
     InteractivePlot::clear();
 }
 
@@ -163,6 +192,13 @@ void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
                                       float minimumDb,
                                       float maximumDb)
 {
+    // Called every frame, and usually only the amplitude range has moved. The
+    // tick labels and axis title below allocate, so rebuild them only when
+    // the frequency axis itself changes.
+    const auto frequencyAxisChanged = ! frequencyAxisValid
+                                      || scale != frequencyScale
+                                      || minimumHz != minimumFrequencyHz
+                                      || maximumHz != maximumFrequencyHz;
     frequencyScale = scale;
     minimumFrequencyHz = minimumHz;
     maximumFrequencyHz = maximumHz;
@@ -176,6 +212,11 @@ void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
                                  : std::log10 (maximumHz);
     XYRange range { axisMinimum, axisMaximum, minimumDb, maximumDb };
     setRange (range);
+    repaint();
+    if (! frequencyAxisChanged)
+        return;
+
+    frequencyAxisValid = true;
     logarithmicTickPositions.clear();
     logarithmicTickLabels.clear();
     if (scale == spectrumviewer::FrequencyScale::logarithmic)
@@ -196,7 +237,6 @@ void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
         }
     }
     xAxis->setVisible (scale == spectrumviewer::FrequencyScale::linear);
-    repaint();
     xlabel (scale == spectrumviewer::FrequencyScale::linear
                 ? "Frequency (Hz)"
                 : "Frequency (Hz, log scale)");
@@ -219,8 +259,9 @@ void FrequencyPlot::paintOverChildren (Graphics& graphics)
         graphics.saveState();
         graphics.reduceClipRegion (drawingBounds);
 
-        for (const auto& series : lineSeries)
+        for (std::size_t seriesIndex = 0; seriesIndex < lineSeriesCount; ++seriesIndex)
         {
+            const auto& series = lineSeries[seriesIndex];
             const auto pointCount = std::min (series.x.size(), series.y.size());
             Path path;
             auto continuing = false;
@@ -281,12 +322,21 @@ std::vector<float> FrequencyPlot::transformFrequencies (
     const std::vector<float>& frequencies,
     spectrumviewer::FrequencyScale scale)
 {
-    if (scale == spectrumviewer::FrequencyScale::linear)
-        return frequencies;
-    std::vector<float> transformed (frequencies.size());
-    std::transform (frequencies.begin(), frequencies.end(), transformed.begin(), [] (float frequency)
-                    { return std::log10 (frequency); });
+    std::vector<float> transformed;
+    transformFrequencies (frequencies, scale, transformed);
     return transformed;
+}
+
+void FrequencyPlot::transformFrequencies (const std::vector<float>& frequencies,
+                                          spectrumviewer::FrequencyScale scale,
+                                          std::vector<float>& transformed)
+{
+    transformed.resize (frequencies.size());
+    if (scale == spectrumviewer::FrequencyScale::linear)
+        std::copy (frequencies.begin(), frequencies.end(), transformed.begin());
+    else
+        std::transform (frequencies.begin(), frequencies.end(), transformed.begin(), [] (float frequency)
+                        { return std::log10 (frequency); });
 }
 
 float FrequencyPlot::frequencyAt (Point<int> point) const noexcept
@@ -1383,6 +1433,7 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
     {
         xvalues.push_back (i * freqStep);
     }
+    plotFrequenciesStale = true;
 
     const auto amplitude = amplitudeRange.getCurrentRange();
     XYRange range { (float) freqStart_, (float) freqEnd_,
@@ -1433,7 +1484,10 @@ void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
     plt->clear();
     updateAmplitudeAxisLabel();
 
-    const auto plotFrequencies = plt->transformFrequencies (xvalues, frequencyScale);
+    // This runs at the refresh rate with up to four series per channel, so
+    // nothing here may allocate in steady state: the axis is cached, and
+    // plotLine() copies into storage the plot kept from the previous frame.
+    refreshPlotFrequencies();
     const auto showingDelta = comparisonStatus.mode
                                   == spectrumviewer::SpectrumComparisonMode::deltaDb
                               && comparisonStatus.hasComparisonData();
@@ -1441,11 +1495,11 @@ void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
                                   && aperiodicDisplayMode
                                          == spectrumviewer::AperiodicDisplayMode::show;
     if (showingDelta)
-        plt->plot (plotFrequencies,
-                   std::vector<float> (xvalues.size(), 0.0f),
-                   findColour (ThemeColours::controlPanelText),
-                   1.0f,
-                   0.5f);
+        plt->plotLine (plotFrequencies,
+                       zeroLine,
+                       findColour (ThemeColours::controlPanelText),
+                       1.0f,
+                       0.5f);
     // activeChannels is bounded to MAX_CHANS by beginSpectrumFrame and by the
     // Channels parameter, but the trace and colour arrays are indexed directly
     // below, so make that bound explicit rather than assumed.
@@ -1455,17 +1509,17 @@ void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
     for (std::size_t i = 0; i < traceCount; i++)
     {
         if (showingDelta)
-            plt->plot (plotFrequencies, currComparison[i], chanColors[i], 1.5f);
+            plt->plotLine (plotFrequencies, currComparison[i], chanColors[i], 1.5f);
         else
         {
             if (comparisonStatus.mode == spectrumviewer::SpectrumComparisonMode::overlay
                 && comparisonStatus.hasComparisonData())
-                plt->plot (plotFrequencies, currComparison[i], chanColors[i], 1.0f, 0.55f);
+                plt->plotLine (plotFrequencies, currComparison[i], chanColors[i], 1.0f, 0.55f);
             if (showingAperiodic && currBaselineDb[i].size() == xvalues.size())
-                plt->plot (plotFrequencies, currBaselineDb[i], chanColors[i], 2.0f, 0.55f);
+                plt->plotLine (plotFrequencies, currBaselineDb[i], chanColors[i], 2.0f, 0.55f);
             if (peakEnvelopeVisible)
-                plt->plot (plotFrequencies, displayedPeakPower[i], chanColors[i], 1.0f, 0.35f);
-            plt->plot (plotFrequencies, displayedPower[i], chanColors[i], 1.5f);
+                plt->plotLine (plotFrequencies, displayedPeakPower[i], chanColors[i], 1.0f, 0.35f);
+            plt->plotLine (plotFrequencies, displayedPower[i], chanColors[i], 1.5f);
         }
     }
 
@@ -1514,8 +1568,15 @@ void CanvasPlot::updatePowerSpectrum (const float* meanPsd,
     comparisonStatus = comparison;
     displayMinimumFrequencyHz = static_cast<float> (minimumFrequencyHz);
     displayMaximumFrequencyHz = static_cast<float> (maximumFrequencyHz);
-    if (channelIndex == 0)
+    // Every frame carries its frequencies, but they only differ when the range,
+    // scale or plot width changed. Checking keeps the cached plot axis valid.
+    if (channelIndex == 0
+        && (xvalues.size() != valueCount
+            || ! std::equal (xvalues.begin(), xvalues.end(), frequenciesHz)))
+    {
         xvalues.assign (frequenciesHz, frequenciesHz + valueCount);
+        plotFrequenciesStale = true;
+    }
     auto& channelUnit = channelUnits[static_cast<std::size_t> (channelIndex)];
     if (channelUnit != unit)
     {
@@ -1563,7 +1624,9 @@ void CanvasPlot::updatePowerSpectrum (const float* meanPsd,
                                  ? 10.0f * std::log10 (peak)
                                  : std::numeric_limits<float>::quiet_NaN();
     }
-    rebuildDisplayedTraces();
+    // Only this channel's inputs changed. Rebuilding all of them here would
+    // copy every channel's traces once per channel, per frame.
+    rebuildDisplayedTrace (static_cast<std::size_t> (channelIndex));
 }
 
 void CanvasPlot::setAmplitudeDisplay (SpectrumAmplitudeDisplay display)
@@ -1592,21 +1655,39 @@ void CanvasPlot::setPeakEnvelopeVisible (bool shouldBeVisible)
 
 void CanvasPlot::rebuildDisplayedTraces()
 {
+    for (std::size_t channel = 0; channel < currPower.size(); ++channel)
+        rebuildDisplayedTrace (channel);
+}
+
+void CanvasPlot::rebuildDisplayedTrace (std::size_t channel)
+{
+    if (channel >= currPower.size())
+        return;
+
     const auto remove = aperiodicDisplayMode
                             == spectrumviewer::AperiodicDisplayMode::remove
                         && ! comparisonStatus.hasComparisonData();
-    for (std::size_t channel = 0; channel < currPower.size(); ++channel)
+    // Copy-assignment reuses the destination's capacity.
+    displayedPower[channel] = currPower[channel];
+    displayedPeakPower[channel] = currPeakPower[channel];
+    if (! remove || currBaselineDb[channel].size() != currPower[channel].size())
+        return;
+    for (std::size_t bin = 0; bin < currPower[channel].size(); ++bin)
     {
-        displayedPower[channel] = currPower[channel];
-        displayedPeakPower[channel] = currPeakPower[channel];
-        if (! remove || currBaselineDb[channel].size() != currPower[channel].size())
-            continue;
-        for (std::size_t bin = 0; bin < currPower[channel].size(); ++bin)
-        {
-            displayedPower[channel][bin] -= currBaselineDb[channel][bin];
-            displayedPeakPower[channel][bin] -= currBaselineDb[channel][bin];
-        }
+        displayedPower[channel][bin] -= currBaselineDb[channel][bin];
+        displayedPeakPower[channel][bin] -= currBaselineDb[channel][bin];
     }
+}
+
+void CanvasPlot::refreshPlotFrequencies()
+{
+    if (! plotFrequenciesStale && plotFrequenciesScale == frequencyScale)
+        return;
+
+    FrequencyPlot::transformFrequencies (xvalues, frequencyScale, plotFrequencies);
+    zeroLine.assign (xvalues.size(), 0.0f);
+    plotFrequenciesScale = frequencyScale;
+    plotFrequenciesStale = false;
 }
 
 void CanvasPlot::setAmplitudeRangeMode (spectrumviewer::AmplitudeRangeMode mode)
@@ -1650,15 +1731,23 @@ void CanvasPlot::beginSpectrumFrame (std::uint64_t configurationGeneration,
     frameChannelCount = std::min (channelCount, currPower.size());
     if (sourceChannelIndices != nullptr)
     {
-        Array<int> frameChannels;
-        for (std::size_t channel = 0; channel < frameChannelCount; ++channel)
-            frameChannels.add (sourceChannelIndices[channel]);
-        const auto legendChanged = activeStreamId != sourceStreamId
-                                   || activeChannels != frameChannels;
-        activeChannels = std::move (frameChannels);
-        activeStreamId = sourceStreamId;
+        // Compared in place: the legend is the same on almost every frame, and
+        // building an Array to compare against would allocate on each one.
+        auto legendChanged = activeStreamId != sourceStreamId
+                             || static_cast<std::size_t> (activeChannels.size())
+                                    != frameChannelCount;
+        for (std::size_t channel = 0; ! legendChanged && channel < frameChannelCount; ++channel)
+            legendChanged = activeChannels.getUnchecked (static_cast<int> (channel))
+                            != sourceChannelIndices[channel];
+
         if (legendChanged)
+        {
+            activeChannels.clearQuick();
+            for (std::size_t channel = 0; channel < frameChannelCount; ++channel)
+                activeChannels.add (sourceChannelIndices[channel]);
+            activeStreamId = sourceStreamId;
             repaint();
+        }
     }
     auto elapsedFrames = std::uint64_t { 1 };
     if (hasFrameTiming && configurationGeneration == lastConfigurationGeneration)

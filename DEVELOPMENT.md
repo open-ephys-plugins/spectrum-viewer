@@ -224,6 +224,9 @@ criterion, including SciPy golden values.
   or generation changes.
 - Keep queue overflow and backlog shedding observable through counters and frame
   metadata.
+- Do not allocate per frame in the canvas render path. Pass traces to
+  `FrequencyPlot::plotLine()`, which reuses the previous frame's storage, not to
+  `plot()`, which the base class makes take its vectors by value.
 - Shed only live display frames. Never shed, and never silently drop, a window
   that a capture is accumulating.
 - Do not advertise a state the user can act on unless the data behind it exists.

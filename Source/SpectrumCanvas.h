@@ -50,6 +50,20 @@ public:
                float width = 1.0f,
                float opacity = 1.0f,
                PlotType type = PlotType::LINE) override;
+
+    /** Adds a line series drawn from vectors the caller keeps.
+
+        plot() has to take its arguments by value because the base class does,
+        which costs two allocations per series per frame. This copies into
+        series storage kept from the previous frame instead, so a steady-state
+        redraw does not allocate. */
+    void plotLine (const std::vector<float>& x,
+                   const std::vector<float>& y,
+                   Colour colour,
+                   float width = 1.0f,
+                   float opacity = 1.0f);
+
+    /** Removes every series. Their storage is kept for the next frame. */
     void clear();
 
     void setFrequencyAxis (spectrumviewer::FrequencyScale scale,
@@ -61,6 +75,12 @@ public:
     static std::vector<float> transformFrequencies (
         const std::vector<float>& frequencies,
         spectrumviewer::FrequencyScale scale);
+
+    /** As above, into existing storage, so a caller that keeps the result
+        does not allocate when the axis is recomputed. */
+    static void transformFrequencies (const std::vector<float>& frequencies,
+                                      spectrumviewer::FrequencyScale scale,
+                                      std::vector<float>& transformed);
     float frequencyAt (Point<int> point) const noexcept;
     int getDrawingWidth() const noexcept { return drawComponent->getWidth(); }
     void paintOverChildren (Graphics& graphics) override;
@@ -88,7 +108,12 @@ private:
         float opacity = 1.0f;
     };
 
+    LineSeries& nextLineSeries();
+
+    // Only the first lineSeriesCount entries are drawn. The rest are retained
+    // storage, so clearing and replotting the same traces reuses it.
     std::vector<LineSeries> lineSeries;
+    std::size_t lineSeriesCount = 0;
     spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
     float minimumFrequencyHz = 0.0f;
     float maximumFrequencyHz = 1.0f;
@@ -96,6 +121,9 @@ private:
     float maximumAmplitude = 60.0f;
     std::vector<float> logarithmicTickPositions;
     std::vector<String> logarithmicTickLabels;
+    // The frequency axis rarely changes between frames, but the amplitude
+    // range does. False until the first setFrequencyAxis() call.
+    bool frequencyAxisValid = false;
 };
 
 class TESTABLE CanvasPlot : public Component,
@@ -227,6 +255,11 @@ public:
 private:
     void updateAmplitudeAxisLabel();
     void rebuildDisplayedTraces();
+    void rebuildDisplayedTrace (std::size_t channel);
+
+    /** Brings plotFrequencies and zeroLine up to date with xvalues and the
+        frequency scale. Does nothing when neither has changed. */
+    void refreshPlotFrequencies();
 
     std::vector<Colour> chanColors = { Colour (200, 200, 200),
                                        Colour (230, 159, 0),
@@ -257,6 +290,14 @@ private:
     spectrumviewer::SpectrumComparisonFrameStatus comparisonStatus;
 
     std::vector<float> xvalues;
+
+    // xvalues on the plotted axis, and a 0 dB line for the delta view. Both
+    // are derived from xvalues and cached, since they change only when the
+    // bins or the scale do and are otherwise rebuilt every frame.
+    std::vector<float> plotFrequencies;
+    std::vector<float> zeroLine;
+    spectrumviewer::FrequencyScale plotFrequenciesScale = spectrumviewer::FrequencyScale::linear;
+    bool plotFrequenciesStale = true;
 
     std::unique_ptr<FrequencyPlot> plt;
     std::unique_ptr<Label> cursorLabel;
