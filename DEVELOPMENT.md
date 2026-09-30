@@ -115,6 +115,10 @@ Live spectral frames are replaceable state. The worker reduces full-resolution
 linear PSDs to display-width mean and peak products, and the canvas consumes
 only the newest complete frame. If analysis falls behind, the worker retains
 the newest eligible window and records sequence gaps and shedding counters.
+A malformed block the pipeline rejects is counted with the callback's
+rejections in `getRejectedInputBlockCount()`. Its log line thins out to powers
+of two, because `LOGE` takes a global lock and a systematic mismatch would
+otherwise log every block.
 
 Capture is different in both directions. Backlog shedding is suspended while a
 capture runtime is active: a shed capture window is two seconds of data the

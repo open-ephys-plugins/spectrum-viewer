@@ -787,7 +787,16 @@ void SpectrumViewer::run()
                         continue;
                     }
 
-                    LOGE ("Spectrum Viewer worker rejected an invalid FIFO block");
+                    // LOGE takes a global lock and writes to two streams, and a
+                    // systematic shape mismatch would hit this for every block.
+                    // The counter carries the rate; the log only needs to say it
+                    // is happening, so it thins out to powers of two.
+                    const auto rejected = invalidWorkerInputBlocks.fetch_add (
+                                              1, std::memory_order_relaxed)
+                                          + 1;
+                    if ((rejected & (rejected - 1)) == 0)
+                        LOGE ("Spectrum Viewer worker rejected an invalid FIFO block (",
+                              rejected, " so far)");
                     continue;
                 }
 
@@ -1293,6 +1302,7 @@ bool SpectrumViewer::startAcquisition()
         droppedInputSamples.store (0, std::memory_order_relaxed);
         rejectedInputBlocks.store (0, std::memory_order_relaxed);
         invalidMappedInputBlocks.store (0, std::memory_order_relaxed);
+        invalidWorkerInputBlocks.store (0, std::memory_order_relaxed);
         inputDiscontinuities.store (0, std::memory_order_relaxed);
         failedSpectrumWindows.store (0, std::memory_order_relaxed);
         shedSpectrumWindows.store (0, std::memory_order_relaxed);

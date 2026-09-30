@@ -311,11 +311,13 @@ public:
     /** Returns input samples discarded as part of full-queue block drops. */
     std::uint64_t getDroppedInputSampleCount() const noexcept { return droppedInputSamples.load (std::memory_order_relaxed); }
 
-    /** Returns input blocks rejected because their shape or channel mapping was invalid. */
+    /** Returns input blocks rejected because their shape or channel mapping was
+        invalid, whether the callback or the worker caught it. */
     std::uint64_t getRejectedInputBlockCount() const noexcept
     {
         return rejectedInputBlocks.load (std::memory_order_relaxed)
-               + invalidMappedInputBlocks.load (std::memory_order_relaxed);
+               + invalidMappedInputBlocks.load (std::memory_order_relaxed)
+               + invalidWorkerInputBlocks.load (std::memory_order_relaxed);
     }
 
     /** Returns sample-index gaps or overlaps observed by the worker. */
@@ -520,6 +522,9 @@ private:
     std::atomic<std::uint64_t> droppedInputSamples { 0 };
     std::atomic<std::uint64_t> rejectedInputBlocks { 0 };
     std::atomic<std::uint64_t> invalidMappedInputBlocks { 0 };
+    // Worker-side counterpart of the two above. Kept separate because
+    // rejectedInputBlocks is overwritten from the FIFO's own count.
+    std::atomic<std::uint64_t> invalidWorkerInputBlocks { 0 };
     std::atomic<std::uint64_t> inputDiscontinuities { 0 };
     std::atomic<std::uint64_t> failedSpectrumWindows { 0 };
     std::atomic<std::uint64_t> shedSpectrumWindows { 0 };
