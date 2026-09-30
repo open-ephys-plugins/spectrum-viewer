@@ -9,6 +9,8 @@
 
 #include "SpectrumReference.h"
 
+#include "SpectrumSupport.h"
+
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -16,17 +18,6 @@
 
 namespace spectrumviewer
 {
-namespace
-{
-std::size_t checkedValueCount (std::size_t channels, std::size_t bins)
-{
-    if (channels == 0 || bins == 0
-        || channels > std::numeric_limits<std::size_t>::max() / bins)
-        throw std::invalid_argument ("Captured spectrum dimensions are invalid");
-    return channels * bins;
-}
-} // namespace
-
 bool computeDecibelDelta (const float* currentPsd,
                           const float* referencePsd,
                           float* destination,
@@ -70,7 +61,8 @@ CapturedSpectrum::CapturedSpectrum (
       streamId (sourceStreamId)
 {
     const auto bins = descriptor.windowSampleCount / 2 + 1;
-    const auto valueCount = checkedValueCount (channelIndices.size(), bins);
+    const auto valueCount = support::checkedPositiveProduct (
+        { channelIndices.size(), bins }, "Captured spectrum dimensions are invalid");
     if (captureId == 0 || capturedAtUnixMilliseconds <= 0
         || channelUnits.size() != channelIndices.size()
         || meanPsd.size() != valueCount || sampleVariance.size() != valueCount

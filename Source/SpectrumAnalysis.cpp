@@ -14,6 +14,8 @@
 
 #include "SpectrumAnalysis.h"
 
+#include "SpectrumSupport.h"
+
 #include <cmath>
 #include <stdexcept>
 #include <utility>
@@ -32,9 +34,6 @@ namespace
 
     void validateParameters (const SpectrumAnalysisParameters& parameters)
     {
-        const auto validDetrendMode = parameters.detrendMode == DetrendMode::none
-                                      || parameters.detrendMode == DetrendMode::mean
-                                      || parameters.detrendMode == DetrendMode::linear;
         if (parameters.channelCount == 0 || parameters.windowSampleCount == 0
             || parameters.hopSampleCount == 0
             || parameters.maximumInputBlockSampleCount == 0
@@ -44,7 +43,7 @@ namespace
             || ! std::isfinite (parameters.timeHalfBandwidth)
             || parameters.timeHalfBandwidth <= 0.0
             || parameters.timeHalfBandwidth >= 0.5 * static_cast<double> (parameters.windowSampleCount)
-            || ! validDetrendMode)
+            || ! support::isValidDetrendMode (parameters.detrendMode))
             throw std::invalid_argument ("Spectrum analysis configuration is invalid");
     }
 } // namespace

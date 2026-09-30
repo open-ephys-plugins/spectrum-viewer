@@ -9,6 +9,8 @@
 
 #include "SpectrumCaptureAccumulator.h"
 
+#include "SpectrumSupport.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -92,8 +94,7 @@ std::size_t SpectrumCaptureAccumulator::checkedValueCount (
 {
     if (channelCount == 0 || binCount == 0)
         throw std::invalid_argument ("Spectrum capture dimensions must be positive");
-    if (channelCount > std::numeric_limits<std::size_t>::max() / binCount)
-        throw std::length_error ("Spectrum capture allocation is too large");
-    return channelCount * binCount;
+    return support::checkedProduct ({ channelCount, binCount },
+                                    "Spectrum capture allocation is too large");
 }
 } // namespace spectrumviewer

@@ -21,10 +21,18 @@ enum class AmplitudeRangeMode
     fixed = 2
 };
 
+// The one definition of these, shared by the plot's range, the fixed-range
+// controls and the saved display settings.
+constexpr float defaultMinimumDb = -25.0f;
+constexpr float defaultMaximumDb = 25.0f;
+
+/** Ranges narrower than this are not useful to read, fixed or automatic. */
+constexpr float minimumSpanDb = 20.0f;
+
 struct DecibelRange
 {
-    float minimum = -25.0f;
-    float maximum = 25.0f;
+    float minimum = defaultMinimumDb;
+    float maximum = defaultMaximumDb;
 };
 
 /**
@@ -55,7 +63,6 @@ public:
                          double elapsedSignalSeconds);
 
 private:
-    static constexpr float minimumSpanDb = 20.0f;
     static constexpr float paddingDb = 3.0f;
     static constexpr float deadbandDb = 1.0f;
     static constexpr double outwardTimeConstantSeconds = 2.0;

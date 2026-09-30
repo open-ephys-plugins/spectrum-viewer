@@ -25,6 +25,8 @@
 
 #include <VisualizerEditorHeaders.h>
 
+#include "SpectrumAmplitudeRange.h"
+
 #include <cmath>
 
 /**
@@ -36,15 +38,14 @@
     chain works either way; the canvas is only a view over them.
 
     Values are the one-based ComboBox ids the controls use, which is also what
-    is written to the session XML. Keep the defaults here and nowhere else.
+    is written to the session XML. Keep the defaults here and nowhere else;
+    the dB range limits come from SpectrumAmplitudeRange, which enforces them.
 */
 struct SpectrumDisplaySettings
 {
-    static constexpr double defaultMinimumDb = -25.0;
-    static constexpr double defaultMaximumDb = 25.0;
-
-    /** Fixed ranges narrower than this are not useful to read. */
-    static constexpr double minimumSpanDb = 20.0;
+    static constexpr double defaultMinimumDb = spectrumviewer::defaultMinimumDb;
+    static constexpr double defaultMaximumDb = spectrumviewer::defaultMaximumDb;
+    static constexpr double minimumSpanDb = spectrumviewer::minimumSpanDb;
 
     int displayTypeId = 1; // 1 power spectrum, 2 spectrogram
     int frequencyRangeId = 4; // 1..3 fixed bands, 4 full to Nyquist

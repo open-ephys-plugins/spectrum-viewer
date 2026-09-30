@@ -24,6 +24,8 @@
 
 #include "ReferencePeriodogram.h"
 
+#include "SpectrumSupport.h"
+
 #include <cmath>
 #include <complex>
 #include <limits>
@@ -35,11 +37,7 @@ namespace
 {
     constexpr double twoPi = 6.283185307179586476925286766559;
 
-    struct LinearTrend
-    {
-        double intercept = 0.0;
-        double slope = 0.0;
-    };
+    using support::LinearTrend;
 
     LinearTrend estimateTrend (const float* samples,
                                std::size_t numSamples,
@@ -86,12 +84,6 @@ namespace
                - trend.slope * (static_cast<double> (index) - centre);
     }
 
-    std::size_t checkedOutputSize (std::size_t numChannels, std::size_t numBins)
-    {
-        if (numChannels > std::numeric_limits<std::size_t>::max() / numBins)
-            throw std::length_error ("ReferencePeriodogram output is too large");
-        return numChannels * numBins;
-    }
 } // namespace
 
 PeriodogramResult ReferencePeriodogram::compute (const float* planarSamples,
@@ -102,13 +94,10 @@ PeriodogramResult ReferencePeriodogram::compute (const float* planarSamples,
                                                  const std::vector<double>& taper,
                                                  DetrendMode detrendMode)
 {
-    const auto validDetrendMode = detrendMode == DetrendMode::none
-                                  || detrendMode == DetrendMode::mean
-                                  || detrendMode == DetrendMode::linear;
     if (planarSamples == nullptr || numChannels == 0 || numSamples == 0
         || channelStride < numSamples || taper.size() != numSamples
         || ! std::isfinite (sampleRate) || sampleRate <= 0.0
-        || ! validDetrendMode
+        || ! support::isValidDetrendMode (detrendMode)
         || numChannels > std::numeric_limits<std::size_t>::max() / channelStride)
         throw std::invalid_argument ("ReferencePeriodogram configuration is invalid");
 
@@ -128,7 +117,8 @@ PeriodogramResult ReferencePeriodogram::compute (const float* planarSamples,
     result.numBins = numSamples / 2 + 1;
     result.sampleRate = sampleRate;
     result.binWidth = sampleRate / static_cast<double> (numSamples);
-    result.psd.resize (checkedOutputSize (numChannels, result.numBins));
+    result.psd.resize (support::checkedProduct ({ numChannels, result.numBins },
+                                                "ReferencePeriodogram output is too large"));
 
     const auto normalization = sampleRate * taperEnergy;
     if (! std::isfinite (normalization))
@@ -162,6 +152,8 @@ PeriodogramResult ReferencePeriodogram::compute (const float* planarSamples,
             }
 
             auto power = std::norm (transform) / normalization;
+            // Written out rather than shared with the estimators: this is the
+            // oracle they are checked against.
             const auto isNyquist = hasNyquistBin && bin == numSamples / 2;
             if (bin != 0 && ! isNyquist)
                 power *= 2.0;

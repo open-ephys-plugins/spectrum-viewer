@@ -23,6 +23,7 @@
 #include "SpectrumDisplayReducer.h"
 #include "SpectrumEstimation.h"
 #include "SpectrumReference.h"
+#include "SpectrumSupport.h"
 
 #include <atomic>
 #include <cmath>
@@ -184,13 +185,14 @@ public:
           sourceChannelIndices (std::move (sourceChannels)),
           sourceChannelUnits (normaliseUnits (std::move (sourceUnits), numChannels)),
           sourceStreamId (sourceStream),
-          fifo (checkedFifoSize (capacity)),
+          fifo (support::checkedFifoSize (capacity, "SpectrumFrameFifo capacity is out of range")),
           metadata (capacity + 1),
           powers (checkedPowerCount (numChannels, numBins, capacity + 1)),
           peakPowers (checkedPowerCount (numChannels, numBins, capacity + 1)),
           baselineValues (checkedPowerCount (numChannels, numBins, capacity + 1)),
           comparisonValues (checkedPowerCount (numChannels, numBins, capacity + 1)),
-          frequencyCoordinates (checkedFrequencyCount (numBins, capacity + 1))
+          frequencyCoordinates (support::checkedProduct ({ numBins, capacity + 1 },
+                                                         "SpectrumFrameFifo allocation is too large"))
     {
         if (numChannels == 0 || numBins == 0
             || sourceChannelIndices.size() != numChannels
@@ -442,9 +444,6 @@ private:
     static bool descriptorIsValid (const SpectrumFrameDescriptor& value,
                                    std::size_t numBins) noexcept
     {
-        const auto validDetrendMode = value.detrendMode == DetrendMode::none
-                                      || value.detrendMode == DetrendMode::mean
-                                      || value.detrendMode == DetrendMode::linear;
         return std::isfinite (value.sampleRateHz) && value.sampleRateHz > 0.0
                && std::isfinite (value.binWidthHz) && value.binWidthHz > 0.0
                && std::isfinite (value.timeHalfBandwidth) && value.timeHalfBandwidth > 0.0
@@ -453,7 +452,7 @@ private:
                && value.timeHalfBandwidth < 0.5 * static_cast<double> (value.windowSampleCount)
                && value.binWidthHz
                       == value.sampleRateHz / static_cast<double> (value.windowSampleCount)
-               && validDetrendMode
+               && support::isValidDetrendMode (value.detrendMode)
                && value.valueKind == SpectrumValueKind::powerSpectralDensity
                && numBins == value.windowSampleCount / 2 + 1;
     }
@@ -470,34 +469,12 @@ private:
         return result;
     }
 
-    static int checkedFifoSize (std::size_t capacity)
-    {
-        if (capacity == 0 || capacity >= static_cast<std::size_t> (std::numeric_limits<int>::max()))
-            throw std::invalid_argument ("SpectrumFrameFifo capacity is out of range");
-        return static_cast<int> (capacity + 1);
-    }
-
     static std::size_t checkedPowerCount (std::size_t numChannels,
                                           std::size_t numBins,
                                           std::size_t capacity)
     {
-        if (numChannels == 0 || numBins == 0 || capacity == 0)
-            return 0;
-
-        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
-        if (numChannels > maximum / numBins || numChannels * numBins > maximum / capacity)
-            throw std::length_error ("SpectrumFrameFifo allocation is too large");
-        return numChannels * numBins * capacity;
-    }
-
-    static std::size_t checkedFrequencyCount (std::size_t numBins,
-                                              std::size_t capacity)
-    {
-        if (numBins == 0 || capacity == 0)
-            return 0;
-        if (numBins > std::numeric_limits<std::size_t>::max() / capacity)
-            throw std::length_error ("SpectrumFrameFifo allocation is too large");
-        return numBins * capacity;
+        return support::checkedProduct ({ numChannels, numBins, capacity },
+                                        "SpectrumFrameFifo allocation is too large");
     }
 
     static bool frequenciesAreValid (const float* values,

@@ -108,7 +108,8 @@ add_executable(
 	SpectrumCaptureAccumulatorTests.cpp
 	SpectrumDisplayReducerTests.cpp
 	SpectrumFrameFifoTests.cpp
-	SpectrumReferenceTests.cpp)
+	SpectrumReferenceTests.cpp
+	SpectrumSupportTests.cpp)
 
 target_compile_features(spectrum_viewer_tests PRIVATE cxx_std_17)
 if(MSVC)

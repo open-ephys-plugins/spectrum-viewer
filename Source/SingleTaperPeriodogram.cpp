@@ -22,6 +22,8 @@
 
 #include "SingleTaperPeriodogram.h"
 
+#include "SpectrumSupport.h"
+
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -31,36 +33,10 @@ namespace spectrumviewer
 {
 namespace
 {
-    struct LinearTrend
-    {
-        double intercept = 0.0;
-        double slope = 0.0;
-    };
-
-    int checkedInt (std::size_t value, const char* message)
-    {
-        if (value == 0 || value > static_cast<std::size_t> (std::numeric_limits<int>::max()))
-            throw std::invalid_argument (message);
-        return static_cast<int> (value);
-    }
-
     std::size_t checkedBinCount (std::size_t samples)
     {
-        checkedInt (samples, "Sample count is out of range");
+        support::checkedPositiveInt (samples, "Sample count is out of range");
         return samples / 2 + 1;
-    }
-
-    std::size_t checkedOutputSize (std::size_t channels, std::size_t bins)
-    {
-        if (channels == 0 || bins == 0
-            || channels > std::numeric_limits<std::size_t>::max() / bins)
-            throw std::invalid_argument ("Periodogram output dimensions are out of range");
-        return channels * bins;
-    }
-
-    bool validMode (DetrendMode mode)
-    {
-        return mode == DetrendMode::none || mode == DetrendMode::mean || mode == DetrendMode::linear;
     }
 } // namespace
 
@@ -78,13 +54,14 @@ SingleTaperPeriodogram::SingleTaperPeriodogram (std::size_t numChannels,
       centredTimeSquareSum (0.0),
       mode (detrendMode),
       taperCoefficients (std::move (taper)),
-      psd (checkedOutputSize (numChannels, binCount)),
+      psd (support::checkedPositiveProduct ({ numChannels, binCount },
+                                            "Periodogram output dimensions are out of range")),
       workingPsd (psd.size())
 {
-    const auto checkedChannels = checkedInt (channelCount, "Channel count is out of range");
-    const auto checkedSamples = checkedInt (sampleCount, "Sample count is out of range");
+    const auto checkedChannels = support::checkedPositiveInt (channelCount, "Channel count is out of range");
+    const auto checkedSamples = support::checkedPositiveInt (sampleCount, "Sample count is out of range");
     if (! std::isfinite (sampleRateHz) || sampleRateHz <= 0.0
-        || taperCoefficients.size() != sampleCount || ! validMode (mode))
+        || taperCoefficients.size() != sampleCount || ! support::isValidDetrendMode (mode))
         throw std::invalid_argument ("SingleTaperPeriodogram configuration is invalid");
 
     double taperEnergy = 0.0;
@@ -124,7 +101,7 @@ bool SingleTaperPeriodogram::compute (const ChannelSampleView* channels,
             || (view.secondSize > 0 && view.secondData == nullptr))
             return false;
 
-        LinearTrend trend;
+        support::LinearTrend trend;
         if (mode != DetrendMode::none)
         {
             double sum = 0.0;
@@ -179,7 +156,6 @@ bool SingleTaperPeriodogram::compute (const ChannelSampleView* channels,
     }
 
     transform->execute();
-    const auto hasNyquistBin = sampleCount % 2 == 0;
     for (std::size_t channel = 0; channel < channelCount; ++channel)
     {
         const auto* fftOutput = transform->getOutputPointer (static_cast<int> (channel));
@@ -189,8 +165,7 @@ bool SingleTaperPeriodogram::compute (const ChannelSampleView* channels,
             const auto real = static_cast<double> (fftOutput[bin].real());
             const auto imaginary = static_cast<double> (fftOutput[bin].imag());
             auto power = (real * real + imaginary * imaginary) / normalization;
-            const auto isNyquist = hasNyquistBin && bin == sampleCount / 2;
-            if (bin != 0 && ! isNyquist)
+            if (support::isFoldedOneSidedBin (bin, sampleCount))
                 power *= 2.0;
             // Finite float input can still square past float range. The
             // narrowing cast would turn that into infinity, which the

@@ -9,6 +9,8 @@
 
 #include "SpectrumDisplayReducer.h"
 
+#include "SpectrumSupport.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -16,17 +18,6 @@
 
 namespace spectrumviewer
 {
-namespace
-{
-    std::size_t checkedOutputCount (std::size_t channels, std::size_t columns)
-    {
-        if (channels == 0 || columns == 0
-            || channels > std::numeric_limits<std::size_t>::max() / columns)
-            throw std::invalid_argument ("SpectrumDisplayReducer dimensions are invalid");
-        return channels * columns;
-    }
-} // namespace
-
 const float* SpectrumDisplayReducer::View::getChannelMean (std::size_t channel) const noexcept
 {
     return channel < numChannels ? means + channel * columnStride : nullptr;
@@ -43,8 +34,9 @@ SpectrumDisplayReducer::SpectrumDisplayReducer (std::size_t maximumChannels,
     : channelCapacity (maximumChannels),
       inputBinCapacity (maximumInputBins),
       columnCapacity (maximumColumns),
-      means (checkedOutputCount (maximumChannels, maximumColumns)),
-      peaks (checkedOutputCount (maximumChannels, maximumColumns)),
+      means (support::checkedPositiveProduct ({ maximumChannels, maximumColumns },
+                                              "SpectrumDisplayReducer dimensions are invalid")),
+      peaks (means.size()),
       frequencies (maximumColumns)
 {
     if (maximumInputBins == 0)

@@ -26,6 +26,8 @@
 #include <AppConfig.h>
 #include <juce_core/juce_core.h>
 
+#include "SpectrumSupport.h"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -74,9 +76,10 @@ public:
         : channelCapacity (numChannels),
           sampleCapacity (maxSamplesPerBlock),
           slotCapacity (capacity),
-          fifo (checkedFifoSize (capacity)),
+          fifo (support::checkedFifoSize (capacity, "SampleBlockFifo capacity is out of range")),
           metadata (capacity + 1),
-          samples (checkedSampleCount (numChannels, maxSamplesPerBlock, capacity + 1))
+          samples (support::checkedProduct ({ numChannels, maxSamplesPerBlock, capacity + 1 },
+                                            "SampleBlockFifo allocation is too large"))
     {
         if (numChannels == 0 || maxSamplesPerBlock == 0)
             throw std::invalid_argument ("SampleBlockFifo dimensions must be non-zero");
@@ -161,28 +164,6 @@ private:
         std::size_t numChannels = 0;
         std::size_t numSamples = 0;
     };
-
-    static int checkedFifoSize (std::size_t capacity)
-    {
-        if (capacity == 0 || capacity >= static_cast<std::size_t> (std::numeric_limits<int>::max()))
-            throw std::invalid_argument ("SampleBlockFifo capacity is out of range");
-        return static_cast<int> (capacity + 1);
-    }
-
-    static std::size_t checkedSampleCount (std::size_t numChannels,
-                                           std::size_t maxSamplesPerBlock,
-                                           std::size_t capacity)
-    {
-        if (numChannels == 0 || maxSamplesPerBlock == 0 || capacity == 0)
-            return 0;
-
-        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
-        if (numChannels > maximum / maxSamplesPerBlock
-            || numChannels * maxSamplesPerBlock > maximum / capacity)
-            throw std::length_error ("SampleBlockFifo allocation is too large");
-
-        return numChannels * maxSamplesPerBlock * capacity;
-    }
 
     bool isValidBlock (const float* const* source,
                        std::size_t numChannels,

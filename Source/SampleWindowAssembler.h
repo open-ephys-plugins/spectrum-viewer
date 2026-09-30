@@ -23,6 +23,8 @@
 #ifndef SAMPLE_WINDOW_ASSEMBLER_H_INCLUDED
 #define SAMPLE_WINDOW_ASSEMBLER_H_INCLUDED
 
+#include "SpectrumSupport.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -96,7 +98,8 @@ public:
           hopSampleCount (hopSize),
           maximumAppendSampleCount (maxSamplesPerBlock),
           historySampleCount (checkedHistorySampleCount (windowSize, maxSamplesPerBlock)),
-          history (checkedStorageSampleCount (numChannels, historySampleCount))
+          history (support::checkedProduct ({ numChannels, historySampleCount },
+                                            "SampleWindowAssembler allocation is too large"))
     {
         if (numChannels == 0 || windowSize == 0 || hopSize == 0 || maxSamplesPerBlock == 0)
             throw std::invalid_argument ("SampleWindowAssembler dimensions must be non-zero");
@@ -239,16 +242,6 @@ private:
             || maxSamplesPerBlock > static_cast<std::size_t> (std::numeric_limits<std::int64_t>::max()))
             throw std::length_error ("SampleWindowAssembler sample count is out of range");
         return windowSize + maxSamplesPerBlock;
-    }
-
-    static std::size_t checkedStorageSampleCount (std::size_t numChannels,
-                                                  std::size_t historySize)
-    {
-        if (numChannels == 0 || historySize == 0)
-            return 0;
-        if (numChannels > std::numeric_limits<std::size_t>::max() / historySize)
-            throw std::length_error ("SampleWindowAssembler allocation is too large");
-        return numChannels * historySize;
     }
 
     std::size_t getNumReadyWindows() const noexcept

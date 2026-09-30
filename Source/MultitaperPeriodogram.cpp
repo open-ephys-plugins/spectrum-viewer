@@ -14,6 +14,8 @@
 
 #include "MultitaperPeriodogram.h"
 
+#include "SpectrumSupport.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -22,37 +24,6 @@
 
 namespace spectrumviewer
 {
-namespace
-{
-    struct LinearTrend
-    {
-        double intercept = 0.0;
-        double slope = 0.0;
-    };
-
-    bool validMode (DetrendMode mode)
-    {
-        return mode == DetrendMode::none || mode == DetrendMode::mean || mode == DetrendMode::linear;
-    }
-
-    int checkedInt (std::size_t value, const char* message)
-    {
-        if (value == 0 || value > static_cast<std::size_t> (std::numeric_limits<int>::max()))
-            throw std::invalid_argument (message);
-        return static_cast<int> (value);
-    }
-
-    std::size_t checkedProduct (std::size_t left,
-                                std::size_t right,
-                                const char* message)
-    {
-        if (left == 0 || right == 0
-            || left > std::numeric_limits<std::size_t>::max() / right)
-            throw std::invalid_argument (message);
-        return left * right;
-    }
-} // namespace
-
 MultitaperPeriodogram::MultitaperPeriodogram (
     std::size_t numChannels,
     double sampleRate,
@@ -68,28 +39,28 @@ MultitaperPeriodogram::MultitaperPeriodogram (
       mode (detrendMode),
       bank (std::move (taperBank))
 {
-    checkedInt (channelCount, "Channel count is out of range");
+    support::checkedPositiveInt (channelCount, "Channel count is out of range");
     if (bank == nullptr || ! bank->succeeded()
         || ! std::isfinite (sampleRateHz) || sampleRateHz <= 0.0
-        || ! validMode (mode))
+        || ! support::isValidDetrendMode (mode))
         throw std::invalid_argument ("MultitaperPeriodogram configuration is invalid");
 
     sampleCount = bank->sampleCount;
     taperCount = bank->taperCount;
-    const auto checkedSamples = checkedInt (sampleCount, "Sample count is out of range");
-    checkedInt (taperCount, "Taper count is out of range");
-    const auto taperElements = checkedProduct (
-        sampleCount, taperCount, "Taper-bank dimensions are out of range");
+    const auto checkedSamples = support::checkedPositiveInt (sampleCount, "Sample count is out of range");
+    support::checkedPositiveInt (taperCount, "Taper count is out of range");
+    const auto taperElements = support::checkedPositiveProduct (
+        { sampleCount, taperCount }, "Taper-bank dimensions are out of range");
     if (bank->tapers.size() != taperElements
         || bank->concentrationRatios.size() != taperCount)
         throw std::invalid_argument ("Taper-bank storage is malformed");
 
     binCount = sampleCount / 2 + 1;
-    const auto outputElements = checkedProduct (
-        channelCount, binCount, "PSD output dimensions are out of range");
-    const auto transformCount = checkedProduct (
-        channelCount, taperCount, "FFT batch dimensions are out of range");
-    const auto checkedTransforms = checkedInt (
+    const auto outputElements = support::checkedPositiveProduct (
+        { channelCount, binCount }, "PSD output dimensions are out of range");
+    const auto transformCount = support::checkedPositiveProduct (
+        { channelCount, taperCount }, "FFT batch dimensions are out of range");
+    const auto checkedTransforms = support::checkedPositiveInt (
         transformCount, "FFT transform count is out of range");
 
     taperPointers.resize (taperCount);
@@ -159,7 +130,7 @@ bool MultitaperPeriodogram::compute (const ChannelSampleView* channels,
     for (std::size_t channel = 0; channel < channelCount; ++channel)
     {
         const auto& view = channels[channel];
-        LinearTrend trend;
+        support::LinearTrend trend;
         if (mode != DetrendMode::none)
         {
             double sum = 0.0;
@@ -233,7 +204,6 @@ bool MultitaperPeriodogram::compute (const ChannelSampleView* channels,
     }
 
     transform->execute();
-    const auto hasNyquistBin = sampleCount % 2 == 0;
     for (std::size_t channel = 0; channel < channelCount; ++channel)
     {
         auto* output = workingPsd.data() + channel * binCount;
@@ -250,8 +220,7 @@ bool MultitaperPeriodogram::compute (const ChannelSampleView* channels,
                          * inverseNormalizations[taper];
             }
 
-            const auto isNyquist = hasNyquistBin && bin == sampleCount / 2;
-            if (bin != 0 && ! isNyquist)
+            if (support::isFoldedOneSidedBin (bin, sampleCount))
                 power *= 2.0;
             if (! std::isfinite (power)
                 || power > static_cast<double> (std::numeric_limits<float>::max()))
