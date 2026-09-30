@@ -50,6 +50,15 @@ acquisition callback. Runtime construction occurs after releasing that lock.
 The canvas obtains the runtime used for display with `try_lock`; it skips an
 update instead of blocking if the worker is installing a replacement.
 
+The callback cannot wake the worker, because `Thread::notify()` takes a mutex,
+so the worker polls. It waits half the duration of the last input block, which
+is how often there can be anything new, clamped to 2-8 ms: never later than the
+fixed 2 ms poll it replaced, and never long enough to add visible display
+latency. With no runtime installed it waits 20 ms, since nothing can arrive
+until a build finishes. The configuration thread sleeps until `request()` or
+`retire()` notifies it, and polls only while a retired runtime is still held
+elsewhere, because nothing announces when that holder lets go.
+
 ## Source map
 
 | Area | Files | Responsibility |

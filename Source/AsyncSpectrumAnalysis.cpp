@@ -177,6 +177,7 @@ void AsyncSpectrumAnalysis::run()
     {
         std::optional<SpectrumAnalysisPreparationRequest> request;
         std::vector<std::shared_ptr<PreparedSpectrumAnalysis>> destroyHere;
+        bool awaitingOwners = false;
         {
             const std::lock_guard<std::mutex> lock (mutex);
             if (threadShouldExit())
@@ -206,6 +207,7 @@ void AsyncSpectrumAnalysis::run()
                     return true;
                 });
             retired.erase (retainedEnd, retired.end());
+            awaitingOwners = ! retired.empty();
 
             if (pending.has_value())
             {
@@ -219,7 +221,13 @@ void AsyncSpectrumAnalysis::run()
         destroyHere.clear();
         if (! request.has_value())
         {
-            wait (10);
+            // A retired runtime someone else still holds can only be destroyed
+            // once they let go, and nothing announces that, so poll for it.
+            // Otherwise there is nothing to do until request(), retire() or
+            // the destructor notifies, which spares a thread that lives as
+            // long as the plugin 100 wakeups a second. A notify that lands
+            // before the wait is not lost: it leaves the event signalled.
+            wait (awaitingOwners ? 10.0 : -1.0);
             continue;
         }
 

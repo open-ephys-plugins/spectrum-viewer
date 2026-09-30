@@ -815,6 +815,7 @@ bool SpectrumViewer::processQueuedInput()
                                              block.numSamples,
                                              block.firstSample,
                                              block.configurationGeneration);
+            noteInputBlockDuration (block.numSamples);
         };
         if (! fifo->tryPop (appendBlock))
             break;
@@ -848,7 +849,15 @@ bool SpectrumViewer::drainHeldCaptureBlock (spectrumviewer::SampleBlockFifo& fif
     // Nothing analyses input while a capture is frozen on screen or the live
     // runtime is still being built, but the queue has to keep moving or the
     // callback would start dropping blocks.
-    return fifo.tryPop ([] (const auto&) {});
+    return fifo.tryPop ([this] (const auto& block)
+                        { noteInputBlockDuration (block.numSamples); });
+}
+
+void SpectrumViewer::noteInputBlockDuration (std::size_t sampleCount) noexcept
+{
+    lastInputBlockMilliseconds =
+        1000.0 * static_cast<double> (sampleCount)
+        / activeAnalysis->getConfiguration().getFrameDescriptor().sampleRateHz;
 }
 
 spectrumviewer::BacklogSheddingPolicy::Action SpectrumViewer::chooseSheddingAction (
@@ -1015,9 +1024,30 @@ void SpectrumViewer::trackWarmup (
 
 void SpectrumViewer::waitForInput()
 {
-    // Thread::notify() takes a mutex in JUCE 8, so the audio callback must not
-    // use it. A short worker-only timed wait avoids both callback locks and spin.
-    wait (2.0);
+    // The audio callback is the only producer and must not notify: in JUCE 8
+    // Thread::notify() takes a mutex. So the worker polls, and the only
+    // question is how often.
+    //
+    // Input arrives one block per callback, so waking more than about twice a
+    // block only finds the queue empty: poll at half the last block's length.
+    // The floor is the interval this used to poll at unconditionally, so a
+    // short block is never picked up later than before. The ceiling keeps the
+    // added display latency inside half a 60 Hz frame, and far inside what the
+    // input queue absorbs.
+    //
+    // With no runtime installed nothing can arrive to process until the
+    // configuration thread delivers one, and building one takes tens of
+    // milliseconds, so there is no point polling at the block rate.
+    constexpr double minimumPollMilliseconds = 2.0;
+    constexpr double maximumPollMilliseconds = 8.0;
+    constexpr double unconfiguredPollMilliseconds = 20.0;
+
+    if (activeAnalysis == nullptr)
+        wait (unconfiguredPollMilliseconds);
+    else
+        wait (jlimit (minimumPollMilliseconds,
+                      maximumPollMilliseconds,
+                      0.5 * lastInputBlockMilliseconds));
 }
 
 void SpectrumViewer::adoptPreparedAnalysis()
@@ -1383,6 +1413,7 @@ bool SpectrumViewer::startAcquisition()
         // are safe to reset from here.
         capture.reset();
         capture.requestedId.store (0, std::memory_order_relaxed);
+        lastInputBlockMilliseconds = 0.0;
         referenceRequest.store (0, std::memory_order_relaxed);
         referenceCaptureId.store (0, std::memory_order_relaxed);
         referenceCapturedAtMilliseconds.store (0, std::memory_order_relaxed);

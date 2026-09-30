@@ -444,6 +444,7 @@ private:
     void republishFrozenCapture() noexcept;
     bool processQueuedInput();
     bool drainHeldCaptureBlock (spectrumviewer::SampleBlockFifo& fifo);
+    void noteInputBlockDuration (std::size_t sampleCount) noexcept;
     spectrumviewer::BacklogSheddingPolicy::Action chooseSheddingAction (
         spectrumviewer::BacklogSheddingPolicy& policy,
         spectrumviewer::SampleBlockFifo& fifo);
@@ -625,6 +626,10 @@ private:
     std::atomic<std::uint64_t> referenceCaptureId { 0 };
     std::atomic<std::int64_t> referenceCapturedAtMilliseconds { 0 };
     std::shared_ptr<const spectrumviewer::CapturedSpectrum> spectrumReference;
+
+    // Worker only: the duration of the last input block, which sets how often
+    // the worker polls for the next one. See waitForInput().
+    double lastInputBlockMilliseconds = 0.0;
 
     uint16 activeStream = 0;
 
