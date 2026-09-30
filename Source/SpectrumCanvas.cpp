@@ -778,8 +778,6 @@ void SpectrumCanvas::resized()
         canvasPlot->setBounds (0, 0,
                                plotWidth + canvasPlot->legendWidth + plotMargin,
                                plotHeight + plotVerticalMargin);
-
-        LOGC ("*********** Canvas plot bounds: ", canvasPlot->getBounds().toString());
     }
     else
     {
@@ -1409,7 +1407,12 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
 
 void CanvasPlot::resized()
 {
-    plt->setBounds (20, 30, getWidth() - legendWidth - 40, getHeight() - 50);
+    // The spectrogram does not impose the power spectrum's minimum size, so
+    // this can be narrower than the legend and margins. Clamp rather than hand
+    // the plot a negative size.
+    plt->setBounds (20, 30,
+                    std::max (0, getWidth() - legendWidth - 40),
+                    std::max (0, getHeight() - 50));
     resizeSpectrogramImage();
     publishDisplayColumnCount();
     clearButton->setBounds (plt->getRight() - 80, plt->getY(), 60, 20);
