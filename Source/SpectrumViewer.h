@@ -384,9 +384,6 @@ public:
         return analysis != nullptr ? analysis->getFrameFifo().getStaleFrameCount() : 0;
     }
 
-    /** Type of visualization */
-    DisplayType displayType;
-
 private:
     struct DisplaySettings
     {
@@ -577,15 +574,7 @@ private:
     std::shared_ptr<const spectrumviewer::CapturedSpectrum> completedCapture;
     std::shared_ptr<const spectrumviewer::CapturedSpectrum> spectrumReference;
 
-    //int bufferSize;
-    //int stepSize;
-    //int stepsPerBuffer;
-
     uint16 activeStream = 0;
-
-    // This is to store data in case of switch and we wish to retrive old data
-    //AtomicallyShared<Array<FFTWArrayType>> dataBufferII;
-    //Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
 
     struct TFRParameters
     {

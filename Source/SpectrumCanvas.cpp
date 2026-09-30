@@ -1511,13 +1511,6 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
     }
 }
 
-void CanvasPlot::setBinWidth (float newBinWidth)
-{
-    if (std::isfinite (newBinWidth) && newBinWidth > 0.0f
-        && std::abs (newBinWidth - freqStep) > std::numeric_limits<float>::epsilon())
-        setFrequencyRange (freqStart, freqEnd, newBinWidth);
-}
-
 void CanvasPlot::setDisplayType (DisplayType type)
 {
     displayType = type;

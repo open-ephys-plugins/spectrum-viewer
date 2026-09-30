@@ -149,8 +149,6 @@ public:
 
     void setFrequencyRange (int freqStart, int freqEnd, float freqStep);
 
-    void setBinWidth (float newBinWidth);
-
     void updatePowerSpectrum (const float* meanPsd,
                               const float* peakPsd,
                               std::size_t valueCount,

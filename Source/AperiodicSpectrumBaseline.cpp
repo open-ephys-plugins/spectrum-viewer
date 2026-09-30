@@ -63,14 +63,6 @@ bool AperiodicSpectrumBaseline::estimate (
     const auto logMinimum = std::log (minimumFrequency);
     const auto logMaximum = std::log (maximumFrequency);
 
-    for (std::size_t knot = 0; knot < knotCount; ++knot)
-    {
-        const auto fraction = (static_cast<double> (knot) + 0.5)
-                              / static_cast<double> (knotCount);
-        knotLogFrequencies[knot] = static_cast<float> (
-            logMinimum + fraction * (logMaximum - logMinimum));
-    }
-
     for (std::size_t channel = 0; channel < numChannels; ++channel)
     {
         auto validKnots = std::size_t { 0 };

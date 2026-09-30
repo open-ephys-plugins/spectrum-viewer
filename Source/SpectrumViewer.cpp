@@ -78,13 +78,10 @@ private:
 };
 } // namespace
 
-#define MS_FROM_START Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - start) * 1000
-
 SpectrumViewer::SpectrumViewer (
     spectrumviewer::AsyncSpectrumAnalysis::Builder configurationBuilder)
     : GenericProcessor ("Spectrum Viewer"),
       Thread ("FFT Thread"),
-      displayType (POWER_SPECTRUM),
       asynchronousAnalysis (std::move (configurationBuilder))
 {
     tfrParams.segLen = 1;
