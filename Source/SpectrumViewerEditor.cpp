@@ -121,11 +121,26 @@ void SpectrumViewerEditor::saveVisualizerEditorParameters (XmlElement* xml)
     // Serialize the values, never the controls: the canvas may never have been
     // created, and its controls would then not exist to read.
     displaySettings.writeTo (*xml);
+
+    // Only an imported baseline's path. The spectrum stays in its own file,
+    // which may be shared between sessions. A reference captured this session
+    // is not saved.
+    const auto referenceFile =
+        static_cast<SpectrumViewer*> (getProcessor())->getSpectrumReferenceFile();
+    if (referenceFile != File())
+        xml->setAttribute ("reference_file", referenceFile.getFullPathName());
 }
 
 void SpectrumViewerEditor::loadVisualizerEditorParameters (XmlElement* xml)
 {
     displaySettings.readFrom (*xml);
+
+    // A missing or unreadable file is not fatal to loading the session. The
+    // processor keeps the reason, and the canvas reports it where the
+    // reference status is shown.
+    const auto referencePath = xml->getStringAttribute ("reference_file");
+    if (File::isAbsolutePath (referencePath))
+        static_cast<SpectrumViewer*> (getProcessor())->importSpectrumReference (File (referencePath));
 
     // Loading can happen after the visualizer has been opened, so an existing
     // canvas has to pick the values up.

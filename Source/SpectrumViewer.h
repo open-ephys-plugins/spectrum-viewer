@@ -241,14 +241,50 @@ public:
 
     /** Marks the completed frozen capture as the comparison reference.
 
-        The reference lives until acquisition stops, which releases it along
-        with the rest of the acquisition state.
+        A reference, captured or imported, lives until it is cleared or
+        replaced. It survives stopping and restarting acquisition, and its
+        compatibility is checked again against each run.
 
         A true return means the request was accepted, not that it was applied:
         the worker applies it, and drops it if the frozen capture was released
         in between. getDroppedReferenceRequestCount() reports that. */
-    bool setCurrentCaptureAsReference() noexcept;
-    void clearSpectrumReference() noexcept;
+    bool setCurrentCaptureAsReference();
+    void clearSpectrumReference();
+
+    /** Writes one channel of the current reference to a baseline file.
+        Message thread.
+
+        channel is a position within the reference's channels. The reference
+        itself is unchanged; import the file to compare against it. On failure
+        the reason is also kept for getReferenceFileError(). */
+    juce::Result exportSpectrumReference (const File& file, std::size_t channel);
+
+    /** Reads a baseline file and makes it the comparison reference. Message
+        thread; works whether or not acquisition is running.
+
+        A baseline is compared with every selected channel of any stream, and
+        has to match only the sample rate and the Fine estimator. If the file
+        cannot be used the current reference is kept and the reason is
+        returned and kept. */
+    juce::Result importSpectrumReference (const File& file);
+
+    /** The file the current reference, a baseline, was imported from, or
+        File() if it is not one. A saved session remembers it. Message thread. */
+    File getSpectrumReferenceFile() const { return referenceFile; }
+
+    /** Why the last import or export failed, or empty once one succeeds or the
+        reference is set or cleared. Message thread. */
+    String getReferenceFileError() const { return referenceFileError; }
+
+    /** The current reference, or nullptr. Safe from the message thread. */
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> getSpectrumReference() const;
+
+    /** Why the reference cannot be compared, while getReferenceCompatibility()
+        reports incompatible. */
+    spectrumviewer::SpectrumReferenceMismatch getReferenceMismatch() const noexcept
+    {
+        return referenceMismatch.load (std::memory_order_acquire);
+    }
     void setSpectrumComparisonMode (spectrumviewer::SpectrumComparisonMode mode) noexcept;
 
     spectrumviewer::SpectrumComparisonMode getSpectrumComparisonMode() const noexcept
@@ -438,7 +474,12 @@ private:
     bool readInputRoute (InputRouteSnapshot& route) const noexcept;
     void clearAcquisitionState();
     bool stopWorkerSafely (int timeoutMilliseconds) noexcept;
+    void postReferenceRequest (std::uint64_t request) noexcept;
     void applyReferenceRequest() noexcept;
+    void installReference (std::shared_ptr<const spectrumviewer::CapturedSpectrum> reference,
+                           spectrumviewer::SpectrumReferenceCompatibility compatibility) noexcept;
+    spectrumviewer::SpectrumSourceLabels describeSource (
+        const spectrumviewer::CapturedSpectrum& spectrum);
 
     // The steps of run(), in the order it takes them. All worker only.
     void republishFrozenCapture() noexcept;
@@ -612,9 +653,11 @@ private:
     std::uint64_t nextCaptureId = 1;
 
     // Reference commands are published by the message thread and applied by
-    // the spectrum worker. Spectral arrays remain worker-owned and immutable.
+    // the spectrum worker, or directly while no worker runs. Spectral arrays
+    // remain worker-owned and immutable.
     static constexpr std::uint64_t CLEAR_REFERENCE_REQUEST =
         std::numeric_limits<std::uint64_t>::max();
+    static constexpr std::uint64_t IMPORT_REFERENCE_REQUEST = CLEAR_REFERENCE_REQUEST - 1;
     std::atomic<std::uint64_t> referenceRequest { 0 };
     std::atomic<std::uint64_t> comparisonSettingsSequence { 0 };
     std::atomic<spectrumviewer::SpectrumComparisonMode> comparisonMode {
@@ -625,7 +668,26 @@ private:
     };
     std::atomic<std::uint64_t> referenceCaptureId { 0 };
     std::atomic<std::int64_t> referenceCapturedAtMilliseconds { 0 };
+    std::atomic<spectrumviewer::SpectrumReferenceMismatch> referenceMismatch {
+        spectrumviewer::SpectrumReferenceMismatch::none
+    };
     std::shared_ptr<const spectrumviewer::CapturedSpectrum> spectrumReference;
+
+    // The reference crosses threads twice: an imported one travels from the
+    // message thread to the worker, and the installed one is published back
+    // so it can be exported. Neither side holds this for more than a pointer
+    // copy, and the audio callback never takes it.
+    mutable std::mutex referenceHandoffMutex;
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> pendingImportedReference;
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> publishedReference;
+
+    // Message thread only.
+    File referenceFile;
+    String referenceFileError;
+
+    // A Fine baseline at 30 kHz is about 330 KB. Anything far larger is not a
+    // reference file, and parsing it would stall the GUI.
+    static constexpr juce::int64 MAXIMUM_REFERENCE_FILE_BYTES = 16 * 1024 * 1024;
 
     // Worker only: the duration of the last input block, which sets how often
     // the worker polls for the next one. See waitForInput().

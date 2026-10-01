@@ -24,6 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "SpectrumViewer.h"
 
 #include "BacklogSheddingPolicy.h"
+#include "SpectrumReferenceFile.h"
 #include "SpectrumViewerEditor.h"
 
 #include <algorithm>
@@ -387,24 +388,28 @@ void SpectrumViewer::applyReferenceRequest() noexcept
 
     if (request == CLEAR_REFERENCE_REQUEST)
     {
-        spectrumReference.reset();
-        referenceCapturedAtMilliseconds.store (0, std::memory_order_relaxed);
-        referenceCompatibility.store (
-            spectrumviewer::SpectrumReferenceCompatibility::noReference,
-            std::memory_order_relaxed);
-        referenceCaptureId.store (0, std::memory_order_release);
+        installReference (nullptr, spectrumviewer::SpectrumReferenceCompatibility::noReference);
+    }
+    else if (request == IMPORT_REFERENCE_REQUEST)
+    {
+        std::shared_ptr<const spectrumviewer::CapturedSpectrum> imported;
+        {
+            const std::lock_guard<std::mutex> lock (referenceHandoffMutex);
+            imported = std::move (pendingImportedReference);
+        }
+        // Never compared with this run's analysis yet, and it came from a
+        // different session, so it has not earned "compatible" until a frame
+        // says so.
+        if (imported != nullptr)
+            installReference (std::move (imported),
+                              spectrumviewer::SpectrumReferenceCompatibility::unchecked);
     }
     else if (capture.completed != nullptr
              && capture.completed->getCaptureId() == request)
     {
-        spectrumReference = capture.completed;
-        referenceCapturedAtMilliseconds.store (
-            capture.completed->getCapturedAtUnixMilliseconds(),
-            std::memory_order_relaxed);
-        referenceCompatibility.store (
-            spectrumviewer::SpectrumReferenceCompatibility::compatible,
-            std::memory_order_relaxed);
-        referenceCaptureId.store (request, std::memory_order_release);
+        // Made by this runtime's estimator moments ago.
+        installReference (capture.completed,
+                          spectrumviewer::SpectrumReferenceCompatibility::compatible);
     }
     else
     {
@@ -420,6 +425,126 @@ void SpectrumViewer::applyReferenceRequest() noexcept
 
     capture.completionPending = capture.state.load (std::memory_order_relaxed)
                                == SpectrumCaptureState::frozen;
+}
+
+void SpectrumViewer::postReferenceRequest (std::uint64_t request) noexcept
+{
+    referenceRequest.store (request, std::memory_order_release);
+    comparisonSettingsSequence.fetch_add (1, std::memory_order_release);
+
+    // The reference outlives acquisition, so a request made while no worker
+    // runs must not wait for the next start to take effect. Only the worker
+    // and this thread touch reference state, and acquisition starts and stops
+    // on this thread too, so no worker can begin between the check and the
+    // call.
+    if (! isThreadRunning())
+        applyReferenceRequest();
+}
+
+void SpectrumViewer::installReference (
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> reference,
+    spectrumviewer::SpectrumReferenceCompatibility compatibility) noexcept
+{
+    spectrumReference = std::move (reference);
+    {
+        const std::lock_guard<std::mutex> lock (referenceHandoffMutex);
+        publishedReference = spectrumReference;
+    }
+
+    const auto held = spectrumReference != nullptr;
+    referenceCapturedAtMilliseconds.store (
+        held ? spectrumReference->getCapturedAtUnixMilliseconds() : 0,
+        std::memory_order_relaxed);
+    referenceMismatch.store (spectrumviewer::SpectrumReferenceMismatch::none,
+                             std::memory_order_relaxed);
+    referenceCompatibility.store (
+        held ? compatibility : spectrumviewer::SpectrumReferenceCompatibility::noReference,
+        std::memory_order_relaxed);
+    // Last, with release: a nonzero id is what tells the message thread that
+    // the fields above describe a reference.
+    referenceCaptureId.store (held ? spectrumReference->getCaptureId() : 0,
+                              std::memory_order_release);
+}
+
+std::shared_ptr<const spectrumviewer::CapturedSpectrum> SpectrumViewer::getSpectrumReference() const
+{
+    const std::lock_guard<std::mutex> lock (referenceHandoffMutex);
+    return publishedReference;
+}
+
+spectrumviewer::SpectrumSourceLabels SpectrumViewer::describeSource (
+    const spectrumviewer::CapturedSpectrum& spectrum)
+{
+    // An imported reference already carries the names it was recorded with.
+    if (! spectrum.getSourceLabels().empty())
+        return spectrum.getSourceLabels();
+
+    spectrumviewer::SpectrumSourceLabels labels;
+    const auto streamId = spectrum.getSourceStreamId();
+    if (auto* stream = getDataStream (streamId))
+        labels.streamName = stream->getName().toStdString();
+    for (const auto channel : spectrum.getSourceChannelIndices())
+        labels.channelNames.push_back (getChanName (streamId, channel).toStdString());
+    return labels;
+}
+
+juce::Result SpectrumViewer::exportSpectrumReference (const File& file, std::size_t channel)
+{
+    const auto fail = [this] (const String& reason)
+    {
+        referenceFileError = "Could not export the baseline: " + reason;
+        return juce::Result::fail (referenceFileError);
+    };
+
+    const auto reference = getSpectrumReference();
+    if (reference == nullptr)
+        return fail ("there is no reference to export.");
+    if (channel >= reference->getChannelCount())
+        return fail ("the reference has no such channel.");
+
+    const auto text = spectrumviewer::writeSpectrumReferenceFile (*reference,
+                                                                   channel,
+                                                                   describeSource (*reference));
+    // "\n" rather than the platform's line ending, so a file written on one
+    // system is byte-identical to the same reference written on another.
+    if (! file.replaceWithText (text, false, false, "\n"))
+        return fail ("could not write " + file.getFullPathName() + ".");
+
+    // referenceFile is not set: the file holds one channel of the reference,
+    // so it is not where the reference came from, and a saved session that
+    // loaded it would get a baseline back instead.
+    referenceFileError.clear();
+    return juce::Result::ok();
+}
+
+juce::Result SpectrumViewer::importSpectrumReference (const File& file)
+{
+    const auto fail = [this, &file] (const String& reason)
+    {
+        referenceFileError = "Could not import " + file.getFileName() + ": " + reason;
+        return juce::Result::fail (referenceFileError);
+    };
+
+    if (! file.existsAsFile())
+        return fail ("the file does not exist.");
+    if (file.getSize() > MAXIMUM_REFERENCE_FILE_BYTES)
+        return fail ("the file is too large to be a reference.");
+
+    String error;
+    auto reference = spectrumviewer::readSpectrumReferenceFile (file.loadFileAsString(),
+                                                                nextCaptureId++,
+                                                                error);
+    if (reference == nullptr)
+        return fail (error);
+
+    {
+        const std::lock_guard<std::mutex> lock (referenceHandoffMutex);
+        pendingImportedReference = std::move (reference);
+    }
+    postReferenceRequest (IMPORT_REFERENCE_REQUEST);
+    referenceFile = file;
+    referenceFileError.clear();
+    return juce::Result::ok();
 }
 
 bool SpectrumViewer::finalizeCapturedSpectrum()
@@ -539,11 +664,13 @@ bool SpectrumViewer::publishReducedSpectrum (
     }
     else
     {
-        const auto compatible = spectrumReference->isCompatibleWith (
+        const auto mismatch = spectrumReference->findMismatch (
             descriptor,
             frameFifo.getSourceChannelIndices(),
             frameFifo.getSourceChannelUnits(),
             frameFifo.getSourceStreamId());
+        const auto compatible = mismatch == spectrumviewer::SpectrumReferenceMismatch::none;
+        referenceMismatch.store (mismatch, std::memory_order_relaxed);
         referenceCompatibility.store (
             compatible ? spectrumviewer::SpectrumReferenceCompatibility::compatible
                        : spectrumviewer::SpectrumReferenceCompatibility::incompatible,
@@ -553,6 +680,7 @@ bool SpectrumViewer::publishReducedSpectrum (
         {
             comparison.mode = requestedMode;
             comparison.referenceCaptureId = spectrumReference->getCaptureId();
+            comparison.sharedAcrossChannels = spectrumReference->isBaseline();
             comparison.compatibility = compatible
                                            ? spectrumviewer::SpectrumReferenceCompatibility::compatible
                                            : spectrumviewer::SpectrumReferenceCompatibility::incompatible;
@@ -573,7 +701,26 @@ bool SpectrumViewer::publishReducedSpectrum (
 
                 const auto& current = reducer.getView();
                 const auto& reference = referenceReducer.getView();
-                if (requestedMode == spectrumviewer::SpectrumComparisonMode::overlay)
+                if (spectrumReference->isBaseline())
+                {
+                    // One spectrum for every channel. The scratch holds a
+                    // channel's worth of columns per selected channel, the
+                    // layout the frame copies from.
+                    auto* shared = activeAnalysis->getComparisonScratch();
+                    const auto* baseline = reference.getChannelMean (0);
+                    const auto columns = current.numColumns;
+                    for (std::size_t channel = 0; channel < current.numChannels; ++channel)
+                    {
+                        auto* destination = shared + channel * columns;
+                        if (requestedMode == spectrumviewer::SpectrumComparisonMode::overlay)
+                            std::copy (baseline, baseline + columns, destination);
+                        else
+                            spectrumviewer::computeDecibelDelta (
+                                current.getChannelMean (channel), baseline, destination, columns);
+                    }
+                    comparisonData = shared;
+                }
+                else if (requestedMode == spectrumviewer::SpectrumComparisonMode::overlay)
                     comparisonData = reference.getChannelMean (0);
                 else
                 {
@@ -1414,13 +1561,14 @@ bool SpectrumViewer::startAcquisition()
         capture.reset();
         capture.requestedId.store (0, std::memory_order_relaxed);
         lastInputBlockMilliseconds = 0.0;
-        referenceRequest.store (0, std::memory_order_relaxed);
-        referenceCaptureId.store (0, std::memory_order_relaxed);
-        referenceCapturedAtMilliseconds.store (0, std::memory_order_relaxed);
-        referenceCompatibility.store (
-            spectrumviewer::SpectrumReferenceCompatibility::noReference,
-            std::memory_order_relaxed);
-        spectrumReference.reset();
+        // The reference is deliberately not reset: it outlives acquisition.
+        // This run has not been compared with it yet.
+        if (hasSpectrumReference())
+            referenceCompatibility.store (
+                spectrumviewer::SpectrumReferenceCompatibility::unchecked,
+                std::memory_order_relaxed);
+        referenceMismatch.store (spectrumviewer::SpectrumReferenceMismatch::none,
+                                 std::memory_order_relaxed);
         warmupSampleCount.store (0, std::memory_order_relaxed);
         warmupTargetSampleCount.store (0, std::memory_order_relaxed);
         analysisReadiness.store (SpectrumAnalysisReadiness::preparing, std::memory_order_release);
@@ -1482,6 +1630,11 @@ bool SpectrumViewer::stopWorkerSafely (int timeoutMilliseconds) noexcept
 
 void SpectrumViewer::clearAcquisitionState()
 {
+    // The worker has stopped. A reference request it had not reached yet is
+    // applied here: the reference survives the stop, so the request must too,
+    // and it has to happen before the frozen capture it may name is released.
+    applyReferenceRequest();
+
     if (activeAnalysis != nullptr)
         asynchronousAnalysis.retire (activeAnalysis);
     {
@@ -1500,13 +1653,14 @@ void SpectrumViewer::clearAcquisitionState()
     // would otherwise survive to fire against the next acquisition.
     inputRouteInvalidated.store (false, std::memory_order_relaxed);
     capture.reset();
-    referenceRequest.store (0, std::memory_order_relaxed);
-    referenceCaptureId.store (0, std::memory_order_relaxed);
-    referenceCapturedAtMilliseconds.store (0, std::memory_order_relaxed);
-    referenceCompatibility.store (
-        spectrumviewer::SpectrumReferenceCompatibility::noReference,
-        std::memory_order_relaxed);
-    spectrumReference.reset();
+    // The reference itself is kept. Nothing is being compared with it now, so
+    // no earlier verdict about it stands.
+    if (hasSpectrumReference())
+        referenceCompatibility.store (
+            spectrumviewer::SpectrumReferenceCompatibility::unchecked,
+            std::memory_order_relaxed);
+    referenceMismatch.store (spectrumviewer::SpectrumReferenceMismatch::none,
+                             std::memory_order_relaxed);
     analysisReadiness.store (SpectrumAnalysisReadiness::stopped, std::memory_order_release);
 }
 
@@ -1552,7 +1706,7 @@ bool SpectrumViewer::startSpectrumCapture (double durationSeconds)
     return true;
 }
 
-bool SpectrumViewer::setCurrentCaptureAsReference() noexcept
+bool SpectrumViewer::setCurrentCaptureAsReference()
 {
     if (capture.state.load (std::memory_order_acquire) != SpectrumCaptureState::frozen)
         return false;
@@ -1566,15 +1720,18 @@ bool SpectrumViewer::setCurrentCaptureAsReference() noexcept
     // compatible so a reference comparison works without a hidden profile
     // prerequisite.
     setAnalysisProfile (SpectrumAnalysisProfile::fine);
-    referenceRequest.store (captureId, std::memory_order_release);
-    comparisonSettingsSequence.fetch_add (1, std::memory_order_release);
+    postReferenceRequest (captureId);
+    // A capture is never from a file, even once a channel of it is exported.
+    referenceFile = File();
+    referenceFileError.clear();
     return true;
 }
 
-void SpectrumViewer::clearSpectrumReference() noexcept
+void SpectrumViewer::clearSpectrumReference()
 {
-    referenceRequest.store (CLEAR_REFERENCE_REQUEST, std::memory_order_release);
-    comparisonSettingsSequence.fetch_add (1, std::memory_order_release);
+    postReferenceRequest (CLEAR_REFERENCE_REQUEST);
+    referenceFile = File();
+    referenceFileError.clear();
 }
 
 void SpectrumViewer::setSpectrumComparisonMode (

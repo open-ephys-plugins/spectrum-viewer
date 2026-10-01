@@ -70,7 +70,7 @@ elsewhere, because nothing announces when that holder lets go.
 | Numerical support | `Numerics/SelectedTridiagonalEigensolver.*` | Plugin-private Sturm bisection and inverse iteration, used only to generate selected DPSS eigenpairs |
 | Shared helpers | `SpectrumSupport.h` | Overflow-checked size arithmetic, detrend-mode validation, the fitted-trend struct, and the one-sided PSD folding rule |
 | Display | `SpectrumDisplayReducer.*`, `AperiodicSpectrumBaseline.*`, `SpectrumAmplitudeRange.*`, `SpectrumFrameFifo.h`, `SpectrumCanvas.*` | Linear/log bin reduction, optional broad-background display, stable dB ranges, frame publication, axes, cursors, and traces |
-| Capture and comparison | `SpectrumCaptureAccumulator.*`, `SpectrumReference.*` | Non-overlapping Fine-window accumulation, variance, frozen references, and compatible comparisons |
+| Capture and comparison | `SpectrumCaptureAccumulator.*`, `SpectrumReference.*`, `SpectrumReferenceFile.*` | Non-overlapping Fine-window accumulation, variance, frozen references, compatible comparisons, and the baseline file format |
 | Correctness oracles | `ReferencePeriodogram.*`, `SingleTaperPeriodogram.*` | Independent double-precision reference and focused single-taper implementation; neither is the live pipeline |
 
 `Tests/` contains fast component tests plus host-integrated lifecycle and canvas
@@ -152,6 +152,41 @@ would hand to the reference. If the result cannot be retained the state is
 `hasRetainedCapture()` is the gate the UI uses, and
 `setCurrentCaptureAsReference()` names the retained capture rather than the last
 requested one.
+
+A reference, captured or imported, lives until it is cleared or replaced, and
+survives stopping acquisition. The worker owns it while acquisition runs. With
+no worker running, reference requests are applied on the message thread
+directly, which is safe because acquisition also starts and stops there, and a
+request the worker had not reached when it stopped is applied by
+`clearAcquisitionState()` before the capture it may name is released. Nothing
+compared with a reference outlives a run, so its compatibility returns to
+`unchecked` at every stop and start.
+
+A reference is one of two kinds. One captured this session is bound to its
+stream, channel numbers and units, and compared channel by channel.
+`findMismatch()` reports the first thing that does not match, in the order
+stream, sample rate, estimator, channels, units, so the UI can say what to
+change rather than only that something differs. A baseline is one channel read
+from a file (`isBaseline()`): it is compared with every selected channel of
+whichever stream is selected, and only the sample rate and the estimator have
+to match. In a frame it is broadcast into each channel's comparison data, so
+the delta path and the readouts are unchanged, and
+`SpectrumComparisonFrameStatus::sharedAcrossChannels` tells the plot to draw
+its overlay once rather than once per channel.
+
+Export writes one chosen channel of a captured reference as a baseline, and
+leaves the reference itself in place; a baseline is not exported again. An
+imported baseline arrives through `referenceHandoffMutex`, and the installed
+reference is published back through it for export. Its capture id is assigned
+on import.
+
+The file keeps each double that compatibility compares with `==` as its
+IEEE-754 bit pattern beside the decimal, and reads the bits. A decimal round
+trip is not guaranteed to be exact, and one ulp would make a baseline
+incompatible with the configuration that produced it. Increment
+`spectrumReferenceFileVersion` for any change a previous reader would
+misinterpret; readers reject newer versions rather than guess. A session saves
+only an imported baseline's path, and never a reference captured in it.
 
 A capture's sample span is anchored on the windows it included, never on
 arriving blocks. `CapturedSpectrum` rejects a span that does not run forward,

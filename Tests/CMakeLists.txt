@@ -90,6 +90,7 @@ add_executable(
 	../Source/SpectrumCaptureAccumulator.cpp
 	../Source/SpectrumDisplayReducer.cpp
 	../Source/SpectrumReference.cpp
+	../Source/SpectrumReferenceFile.cpp
 	AperiodicSpectrumBaselineTests.cpp
 	AsyncSpectrumAnalysisTests.cpp
 	BacklogSheddingPolicyTests.cpp
@@ -109,6 +110,7 @@ add_executable(
 	SpectrumDisplayReducerTests.cpp
 	SpectrumFrameFifoTests.cpp
 	SpectrumReferenceTests.cpp
+	SpectrumReferenceFileTests.cpp
 	SpectrumSupportTests.cpp)
 
 target_compile_features(spectrum_viewer_tests PRIVATE cxx_std_17)

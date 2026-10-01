@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,7 +31,24 @@ enum class SpectrumReferenceCompatibility
 {
     noReference,
     compatible,
-    incompatible
+    incompatible,
+    // A reference is held but has not been compared with live analysis yet:
+    // it was just imported, or acquisition is stopped. Frames never carry
+    // this; it exists for what the controls report between runs.
+    unchecked
+};
+
+/** The first reason a reference cannot be compared with live data, in the
+    order they are checked. A baseline is only ever a sampleRate or estimator
+    mismatch. */
+enum class SpectrumReferenceMismatch
+{
+    none,
+    stream,
+    sampleRate,
+    estimator,
+    channels,
+    units
 };
 
 /** Computes 10*log10(current/reference), preserving invalid bins as NaN. */
@@ -50,10 +68,29 @@ struct SpectrumCaptureQuality
     std::uint64_t discontinuityCount = 0;
 };
 
-/** Immutable, full-resolution result of one completed spectrum capture. */
+/** Human-readable names for where a spectrum came from. Informational only:
+    compatibility never depends on them, because names are not unique. */
+struct SpectrumSourceLabels
+{
+    std::string streamName;
+    std::vector<std::string> channelNames;
+
+    bool empty() const noexcept { return streamName.empty() && channelNames.empty(); }
+};
+
+/** Immutable, full-resolution result of one completed spectrum capture.
+
+    It is one of two kinds. A capture made this session is bound to the stream
+    and channels it was recorded on, and compared channel by channel. A
+    baseline is a single channel read from a file: it is compared with every
+    selected channel of whichever stream is selected, and only the sample rate
+    and the estimator have to match. */
 class CapturedSpectrum
 {
 public:
+    /** sourceStreamId binds the capture to one stream. Pass std::nullopt to
+        make a baseline, which must have exactly one channel: stream ids are
+        assigned per session, so the one it was recorded on means nothing now. */
     CapturedSpectrum (std::uint64_t captureId,
                       std::int64_t capturedAtUnixMilliseconds,
                       SpectrumFrameDescriptor descriptor,
@@ -62,7 +99,8 @@ public:
                       std::vector<float> planarMeanPsd,
                       std::vector<float> planarSampleVariance,
                       SpectrumCaptureQuality quality,
-                      std::uint16_t sourceStreamId = 0);
+                      std::optional<std::uint16_t> sourceStreamId = std::uint16_t { 0 },
+                      SpectrumSourceLabels sourceLabels = {});
 
     std::uint64_t getCaptureId() const noexcept { return identifier; }
     std::int64_t getCapturedAtUnixMilliseconds() const noexcept { return capturedAtMilliseconds; }
@@ -74,12 +112,29 @@ public:
     std::size_t getChannelCount() const noexcept { return channelIndices.size(); }
     std::size_t getBinCount() const noexcept { return frameDescriptor.windowSampleCount / 2 + 1; }
     const SpectrumCaptureQuality& getQuality() const noexcept { return captureQuality; }
-    std::uint16_t getSourceStreamId() const noexcept { return streamId; }
+    /** The stream this capture is bound to, or zero for a baseline. */
+    std::uint16_t getSourceStreamId() const noexcept { return streamId.value_or (0); }
+    /** True for a single channel read from a file; see the class comment. */
+    bool isBaseline() const noexcept { return ! streamId.has_value(); }
+    const SpectrumSourceLabels& getSourceLabels() const noexcept { return labels; }
+
+    /** Returns why live data from the candidate configuration cannot be
+        compared with this capture, or none if it can. A baseline ignores the
+        candidate's stream, channels and units. */
+    SpectrumReferenceMismatch findMismatch (const SpectrumFrameDescriptor& candidateDescriptor,
+                                            const std::vector<int>& candidateChannelIndices,
+                                            const std::vector<std::string>& candidateChannelUnits,
+                                            std::uint16_t candidateStreamId = 0) const noexcept;
 
     bool isCompatibleWith (const SpectrumFrameDescriptor& candidateDescriptor,
                            const std::vector<int>& candidateChannelIndices,
                            const std::vector<std::string>& candidateChannelUnits,
-                           std::uint16_t candidateStreamId = 0) const noexcept;
+                           std::uint16_t candidateStreamId = 0) const noexcept
+    {
+        return findMismatch (candidateDescriptor, candidateChannelIndices,
+                             candidateChannelUnits, candidateStreamId)
+               == SpectrumReferenceMismatch::none;
+    }
 
 private:
     std::uint64_t identifier;
@@ -90,7 +145,8 @@ private:
     std::vector<float> meanPsd;
     std::vector<float> sampleVariance;
     SpectrumCaptureQuality captureQuality;
-    std::uint16_t streamId = 0;
+    std::optional<std::uint16_t> streamId;
+    SpectrumSourceLabels labels;
 };
 } // namespace spectrumviewer
 

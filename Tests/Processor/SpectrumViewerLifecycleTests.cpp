@@ -1137,6 +1137,96 @@ TEST_F (SpectrumViewerLifecycleTests, AppliedAndRefusedReferenceRequestsAreNotCo
     EXPECT_FALSE (processor->hasSpectrumReference());
 }
 
+TEST_F (SpectrumViewerLifecycleTests, ReferenceOutlivesAcquisitionAndExportsAChannelAsABaseline)
+{
+    createProcessor();
+    ASSERT_TRUE (processor->startAcquisition());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasActiveAnalysis(); }));
+    ASSERT_TRUE (processor->startSpectrumCapture (2.0));
+    ASSERT_TRUE (waitUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::capturing;
+    }));
+    ASSERT_TRUE (writeUntil ([this]
+    {
+        return processor->getCaptureState() == SpectrumCaptureState::frozen;
+    }));
+    ASSERT_TRUE (processor->setCurrentCaptureAsReference());
+    ASSERT_TRUE (waitUntil ([this] { return processor->hasSpectrumReference(); }));
+    const auto captured = processor->getSpectrumReference();
+    ASSERT_NE (captured, nullptr);
+
+    // The last channel, so a baseline cut from the wrong slice would not pass.
+    const auto exportedChannel = captured->getChannelCount() - 1;
+    TemporaryFile temporary (".json");
+    EXPECT_FALSE (processor->exportSpectrumReference (temporary.getFile(),
+                                                      captured->getChannelCount())
+                      .wasOk());
+    ASSERT_TRUE (processor->exportSpectrumReference (temporary.getFile(), exportedChannel).wasOk());
+    // Exporting leaves the captured reference in place, and it is still not
+    // from a file.
+    EXPECT_EQ (processor->getSpectrumReference(), captured);
+    EXPECT_EQ (processor->getSpectrumReferenceFile(), File());
+
+    // Stopping keeps the reference, but no verdict about it survives the run.
+    ASSERT_TRUE (processor->stopAcquisition());
+    EXPECT_TRUE (processor->hasSpectrumReference());
+    EXPECT_EQ (processor->getReferenceCompatibility(),
+               spectrumviewer::SpectrumReferenceCompatibility::unchecked);
+
+    // With no worker running, both take effect before they return.
+    processor->clearSpectrumReference();
+    EXPECT_FALSE (processor->hasSpectrumReference());
+    EXPECT_EQ (processor->getSpectrumReferenceFile(), File());
+    ASSERT_TRUE (processor->importSpectrumReference (temporary.getFile()).wasOk());
+    ASSERT_TRUE (processor->hasSpectrumReference());
+
+    EXPECT_EQ (processor->getSpectrumReferenceFile(), temporary.getFile());
+
+    const auto imported = processor->getSpectrumReference();
+    ASSERT_NE (imported, nullptr);
+    EXPECT_TRUE (imported->isBaseline());
+    EXPECT_NE (imported->getCaptureId(), captured->getCaptureId());
+    ASSERT_EQ (imported->getChannelCount(), 1u);
+    ASSERT_EQ (imported->getBinCount(), captured->getBinCount());
+    const auto* exported = captured->getPlanarMeanPsd() + exportedChannel * captured->getBinCount();
+    EXPECT_TRUE (std::equal (imported->getPlanarMeanPsd(),
+                             imported->getPlanarMeanPsd() + imported->getBinCount(),
+                             exported));
+
+    // The next run's Fine analysis is what it gets compared with.
+    processor->setAnalysisProfile (SpectrumAnalysisProfile::fine);
+    ASSERT_TRUE (processor->startAcquisition());
+    EXPECT_TRUE (processor->hasSpectrumReference());
+    ASSERT_TRUE (writeUntil ([this]
+    {
+        processor->consumeLatestSpectrumFrame ([] (const auto&) {});
+        return processor->getReferenceCompatibility()
+               == spectrumviewer::SpectrumReferenceCompatibility::compatible;
+    }));
+}
+
+TEST_F (SpectrumViewerLifecycleTests, FailedImportKeepsTheCurrentReferenceAndSaysWhy)
+{
+    createProcessor();
+    TemporaryFile temporary (".json");
+    ASSERT_TRUE (temporary.getFile().replaceWithText ("not a reference"));
+
+    EXPECT_FALSE (processor->importSpectrumReference (temporary.getFile()).wasOk());
+    EXPECT_FALSE (processor->hasSpectrumReference());
+    EXPECT_TRUE (processor->getReferenceFileError().isNotEmpty());
+    EXPECT_EQ (processor->getSpectrumReferenceFile(), File());
+
+    EXPECT_FALSE (processor->importSpectrumReference (
+                                temporary.getFile().getSiblingFile ("missing.json"))
+                      .wasOk());
+    EXPECT_TRUE (processor->getReferenceFileError().contains ("does not exist"));
+
+    // Clearing dismisses the message along with any reference.
+    processor->clearSpectrumReference();
+    EXPECT_TRUE (processor->getReferenceFileError().isEmpty());
+}
+
 TEST_F (SpectrumViewerLifecycleTests, DeselectingEveryChannelReleasesTheLiveRoute)
 {
     createProcessor();

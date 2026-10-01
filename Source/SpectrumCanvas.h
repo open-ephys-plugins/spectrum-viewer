@@ -506,6 +506,17 @@ private:
     void applyFrequencyRange();
     void refreshNyquistRangeItem();
 
+    /** Selects what comparing against a reference needs: Fine analysis, which
+        every reference is made with, and the overlay. */
+    void useReferenceForComparison();
+    void chooseReferenceFileToImport();
+    /** Asks which of the reference's channels to export as a baseline, unless
+        it has only one, then where to save it. */
+    void chooseChannelToExport();
+    void chooseReferenceFileToExport (std::size_t channel);
+    File getReferenceDirectory() const;
+    void updateReferenceStatus (SpectrumCaptureState capture);
+
     SpectrumViewer* processor;
     SpectrumDisplaySettings& displaySettings;
 
@@ -549,7 +560,16 @@ private:
     std::unique_ptr<ComboBox> comparisonMode;
     std::unique_ptr<UtilityButton> setReferenceAction;
     std::unique_ptr<UtilityButton> clearReferenceAction;
+    std::unique_ptr<UtilityButton> importReferenceAction;
+    std::unique_ptr<UtilityButton> exportReferenceAction;
     std::unique_ptr<Label> referenceStatusLabel;
+
+    // Kept alive for as long as its dialog is open. Destroying the canvas
+    // destroys it, which dismisses the dialog without calling back.
+    std::unique_ptr<FileChooser> referenceFileChooser;
+    // Where the last baseline was imported from or exported to, so the next
+    // dialog opens there.
+    File referenceDirectory;
 
     // The drawer's controls belong to these, in the order they are laid out.
     std::vector<std::unique_ptr<ControlGroup>> controlGroups;

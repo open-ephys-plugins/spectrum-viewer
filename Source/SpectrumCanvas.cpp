@@ -605,12 +605,24 @@ void SpectrumCanvas::createControls()
         "Show the maximum spectral power contributing to each display column");
     peakEnvelope->addListener (this);
 
-    setReferenceAction = std::make_unique<UtilityButton> ("Set Reference");
+    setReferenceAction = std::make_unique<UtilityButton> ("Set Ref");
+    setReferenceAction->setTooltip ("Make the frozen capture the comparison reference");
     setReferenceAction->addListener (this);
     clearReferenceAction = std::make_unique<UtilityButton> ("Clear Ref");
     clearReferenceAction->addListener (this);
+    importReferenceAction = std::make_unique<UtilityButton> ("Import...");
+    importReferenceAction->setTooltip (
+        "Load a baseline saved with Export, for example one captured under ideal "
+        "conditions, and compare every selected channel with it");
+    importReferenceAction->addListener (this);
+    exportReferenceAction = std::make_unique<UtilityButton> ("Export...");
+    exportReferenceAction->setTooltip (
+        "Save one channel of the reference as a baseline, to compare against in "
+        "later sessions");
+    exportReferenceAction->addListener (this);
 
     referenceStatusLabel = makeLabel ("SpectrumReferenceStatus", "No reference");
+    referenceStatusLabel->setMouseCursor (MouseCursor::PointingHandCursor);
     referenceStatusLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
 
     createControlGroups();
@@ -652,15 +664,19 @@ void SpectrumCanvas::createControlGroups()
     traces->addPair (0, baselineLabel.get(), baselineDisplay.get(), 82, 100);
     traces->addPair (1, nullptr, peakEnvelope.get(), 0, 125);
 
+    // Set Ref belongs with the capture it acts on: it only ever applies to a
+    // frozen capture, while the reference group also serves imported baselines.
     auto* capture = addGroup ("CAPTURE");
     capture->addPair (0, captureDurationLabel.get(), captureDuration.get(), 100, 90);
+    capture->addPair (0, nullptr, captureStatusLabel.get(), 0, 120);
     capture->addPair (1, nullptr, captureAction.get(), 0, 95);
-    capture->addPair (1, nullptr, captureStatusLabel.get(), 0, 155);
+    capture->addPair (1, nullptr, setReferenceAction.get(), 0, 85);
 
     auto* reference = addGroup ("REFERENCE");
     reference->addPair (0, comparisonModeLabel.get(), comparisonMode.get(), 82, 100);
-    reference->addPair (0, nullptr, setReferenceAction.get(), 0, 105);
-    reference->addPair (1, nullptr, clearReferenceAction.get(), 0, 90);
+    reference->addPair (0, nullptr, clearReferenceAction.get(), 0, 90);
+    reference->addPair (1, nullptr, importReferenceAction.get(), 0, 85);
+    reference->addPair (1, nullptr, exportReferenceAction.get(), 0, 85);
     reference->addPair (1, nullptr, referenceStatusLabel.get(), 0, 205);
 }
 
@@ -1090,21 +1106,24 @@ void SpectrumCanvas::buttonClicked (Button* button)
         // drops the request too.
         referenceRequestWasDropped = false;
         if (processor->setCurrentCaptureAsReference())
-        {
-            // Captures always use Fine analysis. Restore the same estimator
-            // when returning live so the reference remains comparable.
-            analysisProfile->setSelectedId (
-                static_cast<int> (SpectrumAnalysisProfile::fine), sendNotification);
-            comparisonMode->setSelectedId (
-                static_cast<int> (spectrumviewer::SpectrumComparisonMode::overlay),
-                sendNotification);
-        }
+            useReferenceForComparison();
         return;
     }
     if (button == clearReferenceAction.get())
     {
         referenceRequestWasDropped = false;
         processor->clearSpectrumReference();
+        updateStatus();
+        return;
+    }
+    if (button == importReferenceAction.get())
+    {
+        chooseReferenceFileToImport();
+        return;
+    }
+    if (button == exportReferenceAction.get())
+    {
+        chooseChannelToExport();
         return;
     }
     if (button != captureAction.get())
@@ -1226,18 +1245,34 @@ void SpectrumCanvas::updateStatus()
         case SpectrumCaptureState::frozen:
         {
             captureAction->setLabel ("Go Live");
-            captureAction->setTooltip ("Discard the frozen result and resume the live spectrum");
+            // Going live discards the frozen result unless it was kept as the
+            // reference, which is the one thing worth knowing before the click.
+            const auto isReference = processor->hasSpectrumReference()
+                                     && processor->getReferenceCaptureId()
+                                            == processor->getCaptureId();
+            if (isReference)
+                captureAction->setTooltip (
+                    "Resume the live spectrum. The frozen result stays as the reference.");
+            else
+                captureAction->setTooltip (
+                    String ("Discard the frozen result and resume the live spectrum.")
+                    + (processor->hasRetainedCapture()
+                           ? " Press Set Ref first to keep it as the reference."
+                           : ""));
             const auto warning = processor->getCaptureFailedWindowCount()
                                      + processor->getCaptureShedWindowCount()
                                      + processor->getCaptureDiscontinuityCount()
                                  > 0;
+            const auto span = String (processor->getCaptureAnalyzedSeconds(), 0) + "/"
+                              + String (processor->getCaptureWallSpanSeconds(), 0) + " s";
+            // Once the result is the reference, what is left to do with this
+            // capture is go live, so the status says that instead of the span.
             captureStatusLabel->setText (
-                "Frozen " + String (processor->getCaptureAnalyzedSeconds(), 0)
-                    + "/" + String (processor->getCaptureWallSpanSeconds(), 0)
-                    + " s" + (warning ? " !" : ""),
+                (isReference ? "Ref set; Go Live" : "Frozen " + span) + (warning ? " !" : ""),
                 dontSendNotification);
             captureStatusLabel->setTooltip (
-                "2 s, NW=3, K=4; analyzed / wall-span seconds; failed "
+                (isReference ? "Frozen " + span + ", set as the reference.\n" : String())
+                + "2 s, NW=3, K=4; analyzed / wall-span seconds; failed "
                 + String (processor->getCaptureFailedWindowCount()) + ", shed "
                 + String (processor->getCaptureShedWindowCount())
                 + ", discontinuities "
@@ -1279,42 +1314,7 @@ void SpectrumCanvas::updateStatus()
             sendNotification);
     }
 
-    setReferenceAction->setEnabled (capture == SpectrumCaptureState::frozen
-                                    && processor->hasRetainedCapture());
-    clearReferenceAction->setEnabled (processor->hasSpectrumReference()
-                                      || referenceRequestWasDropped);
-    comparisonMode->setEnabled (processor->hasSpectrumReference());
-    if (! processor->hasSpectrumReference())
-    {
-        referenceStatusLabel->setText (
-            referenceRequestWasDropped ? "Reference unavailable" : "No reference",
-            dontSendNotification);
-        referenceStatusLabel->setTooltip (
-            referenceRequestWasDropped
-                ? "The frozen capture could not be retained, so it could not "
-                  "become the reference. Capture again."
-                : String());
-    }
-    else
-    {
-        referenceRequestWasDropped = false;
-        const auto compatibility = processor->getReferenceCompatibility();
-        referenceStatusLabel->setText (
-            (capture == SpectrumCaptureState::frozen ? "Ref set; Go Live" : "Ref ")
-                + (capture == SpectrumCaptureState::frozen
-                       ? String()
-                       : Time (processor->getReferenceCapturedAtMilliseconds())
-                             .formatted ("%H:%M:%S"))
-                + (compatibility
-                           == spectrumviewer::SpectrumReferenceCompatibility::incompatible
-                       ? " (incompatible)"
-                       : ""),
-            dontSendNotification);
-        referenceStatusLabel->setTooltip (
-            compatibility == spectrumviewer::SpectrumReferenceCompatibility::incompatible
-                ? "Select Fine analysis with the same channels, units, sample rate, detrending, NW, and K"
-                : "Reference held until acquisition stops");
-    }
+    updateReferenceStatus (capture);
 
     const auto wasFixed = minimumDb->isVisible();
     updateAmplitudeRangeControls();
@@ -1333,6 +1333,254 @@ void SpectrumCanvas::updateStatus()
         else
             automaticRangeLabel->setText ("Awaiting spectrum...", dontSendNotification);
     }
+}
+
+namespace
+{
+/** Channels as the channel selector numbers them, from one. */
+String describeChannels (const std::vector<int>& indices)
+{
+    StringArray numbers;
+    for (const auto index : indices)
+        numbers.add (String (index + 1));
+    return (indices.size() == 1 ? "channel " : "channels ") + numbers.joinIntoString (", ");
+}
+
+/** What the user has to change for the reference to apply, or empty. */
+String describeMismatch (spectrumviewer::SpectrumReferenceMismatch mismatch,
+                         const spectrumviewer::CapturedSpectrum& reference)
+{
+    using spectrumviewer::SpectrumReferenceMismatch;
+    switch (mismatch)
+    {
+        case SpectrumReferenceMismatch::stream:
+            return "It was captured on a different stream. Select that stream to compare.";
+        case SpectrumReferenceMismatch::sampleRate:
+            return "It was recorded at " + String (reference.getDescriptor().sampleRateHz, 2)
+                   + " Hz. Select a stream with the same sample rate.";
+        case SpectrumReferenceMismatch::estimator:
+            return "Select Fine analysis to compare with it.";
+        case SpectrumReferenceMismatch::channels:
+            return "Select the same channels it was captured on: "
+                   + describeChannels (reference.getSourceChannelIndices()) + ".";
+        case SpectrumReferenceMismatch::units:
+        {
+            StringArray units;
+            for (const auto& unit : reference.getSourceChannelUnits())
+                units.add (unit);
+            return "The selected channels' units differ from the reference's ("
+                   + units.joinIntoString (", ") + ").";
+        }
+        case SpectrumReferenceMismatch::none:
+        default:
+            return {};
+    }
+}
+
+/** A capture time, with the date when it is asked for or is not today's. An
+    imported reference always asks, since it usually comes from another day. */
+String describeCaptureTime (std::int64_t unixMilliseconds, bool withDate)
+{
+    const Time captured (unixMilliseconds);
+    const auto now = Time::getCurrentTime();
+    const auto today = captured.getYear() == now.getYear()
+                       && captured.getDayOfYear() == now.getDayOfYear();
+    return captured.formatted (today && ! withDate ? "%H:%M:%S" : "%Y-%m-%d %H:%M");
+}
+} // namespace
+
+void SpectrumCanvas::updateReferenceStatus (SpectrumCaptureState capture)
+{
+    const auto reference = processor->getSpectrumReference();
+    const auto fileError = processor->getReferenceFileError();
+
+    // A baseline is already a one-channel file, so there is nothing to export.
+    exportReferenceAction->setEnabled (reference != nullptr && ! reference->isBaseline());
+    setReferenceAction->setEnabled (capture == SpectrumCaptureState::frozen
+                                    && processor->hasRetainedCapture());
+    // Clear also dismisses a failure message, so it stays available for one.
+    clearReferenceAction->setEnabled (reference != nullptr || referenceRequestWasDropped
+                                      || fileError.isNotEmpty());
+    comparisonMode->setEnabled (reference != nullptr);
+
+    if (fileError.isNotEmpty())
+    {
+        referenceStatusLabel->setText ("Reference file error", dontSendNotification);
+        referenceStatusLabel->setTooltip (
+            fileError
+            + (reference != nullptr ? "\nThe current reference is unchanged." : String()));
+        return;
+    }
+
+    if (reference == nullptr)
+    {
+        referenceStatusLabel->setText (
+            referenceRequestWasDropped ? "Reference unavailable" : "No reference",
+            dontSendNotification);
+        referenceStatusLabel->setTooltip (
+            referenceRequestWasDropped
+                ? "The frozen capture could not be retained, so it could not "
+                  "become the reference. Capture again."
+                : String());
+        return;
+    }
+
+    referenceRequestWasDropped = false;
+    const auto compatibility = processor->getReferenceCompatibility();
+    const auto incompatible =
+        compatibility == spectrumviewer::SpectrumReferenceCompatibility::incompatible;
+
+    // Whether the frozen capture is the reference is the capture status's to
+    // say; this label always says which reference is held.
+    const auto baseline = reference->isBaseline();
+    referenceStatusLabel->setText (
+        (baseline ? "Baseline " : "Session ref ")
+            + describeCaptureTime (reference->getCapturedAtUnixMilliseconds(), baseline)
+            + (incompatible ? " (incompatible)" : ""),
+        dontSendNotification);
+
+    StringArray tooltip;
+    if (incompatible)
+        tooltip.add ("Not comparable. "
+                     + describeMismatch (processor->getReferenceMismatch(), *reference));
+    else if (compatibility == spectrumviewer::SpectrumReferenceCompatibility::unchecked)
+        tooltip.add ("Not yet compared with live analysis. It is checked once "
+                     "acquisition runs with Fine analysis.");
+
+    const auto capturedAt = Time (reference->getCapturedAtUnixMilliseconds())
+                                .formatted ("%Y-%m-%d %H:%M:%S");
+    if (baseline)
+    {
+        tooltip.add ("Baseline from a file. Every selected channel is compared with it.");
+
+        // Where it was recorded, which no longer has to match anything.
+        const auto& labels = reference->getSourceLabels();
+        auto recorded = "Captured " + capturedAt + " on "
+                        + describeChannels (reference->getSourceChannelIndices());
+        if (! labels.channelNames.empty() && ! labels.channelNames.front().empty())
+            recorded << " (\"" << String (labels.channelNames.front()) << "\")";
+        if (! labels.streamName.empty())
+            recorded << " of stream \"" << String (labels.streamName) << "\"";
+        const auto& units = reference->getSourceChannelUnits().front();
+        if (! units.empty())
+            recorded << ", in " << String (units);
+        tooltip.add (recorded + ".");
+    }
+    else
+        tooltip.add ("Captured this session, " + capturedAt + ", on "
+                     + describeChannels (reference->getSourceChannelIndices())
+                     + ". Export saves one of its channels as a baseline.");
+
+    const auto file = processor->getSpectrumReferenceFile();
+    if (file != File())
+        tooltip.add ("File: " + file.getFullPathName());
+    tooltip.add ("Held until cleared, across acquisition runs.");
+    referenceStatusLabel->setTooltip (tooltip.joinIntoString ("\n"));
+}
+
+void SpectrumCanvas::useReferenceForComparison()
+{
+    analysisProfile->setSelectedId (static_cast<int> (SpectrumAnalysisProfile::fine),
+                                    sendNotification);
+    comparisonMode->setSelectedId (
+        static_cast<int> (spectrumviewer::SpectrumComparisonMode::overlay),
+        sendNotification);
+}
+
+File SpectrumCanvas::getReferenceDirectory() const
+{
+    if (referenceDirectory.isDirectory())
+        return referenceDirectory;
+    // A baseline a saved session loaded, before either dialog has been used.
+    const auto current = processor->getSpectrumReferenceFile();
+    return current != File() ? current.getParentDirectory()
+                             : File::getSpecialLocation (File::userDocumentsDirectory);
+}
+
+void SpectrumCanvas::chooseReferenceFileToImport()
+{
+    referenceFileChooser = std::make_unique<FileChooser> ("Import a baseline",
+                                                          getReferenceDirectory(),
+                                                          "*.json");
+    referenceFileChooser->launchAsync (
+        FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles,
+        [this] (const FileChooser& chooser)
+        {
+            const auto file = chooser.getResult();
+            if (file == File())
+                return;
+
+            referenceDirectory = file.getParentDirectory();
+            referenceRequestWasDropped = false;
+            if (processor->importSpectrumReference (file).wasOk())
+                useReferenceForComparison();
+            updateStatus();
+        });
+}
+
+void SpectrumCanvas::chooseChannelToExport()
+{
+    const auto reference = processor->getSpectrumReference();
+    if (reference == nullptr || reference->isBaseline())
+        return;
+    if (reference->getChannelCount() == 1)
+    {
+        chooseReferenceFileToExport (0);
+        return;
+    }
+
+    PopupMenu menu;
+    menu.addSectionHeader ("Export which channel as a baseline?");
+    const auto& indices = reference->getSourceChannelIndices();
+    for (std::size_t channel = 0; channel < indices.size(); ++channel)
+    {
+        const auto number = "channel " + String (indices[channel] + 1);
+        const auto name = processor->getChanName (reference->getSourceStreamId(), indices[channel]);
+        menu.addItem (static_cast<int> (channel) + 1,
+                      name.equalsIgnoreCase (number) ? name : name + " (" + number + ")");
+    }
+
+    // The menu outlives this call, and the reference may change while it is
+    // open, so the choice is applied only to the reference it was made for.
+    menu.showMenuAsync (
+        PopupMenu::Options().withTargetComponent (exportReferenceAction.get()),
+        [safeThis = Component::SafePointer<SpectrumCanvas> (this),
+         captureId = reference->getCaptureId()] (int result)
+        {
+            if (safeThis == nullptr || result <= 0
+                || safeThis->processor->getReferenceCaptureId() != captureId)
+                return;
+            safeThis->chooseReferenceFileToExport (static_cast<std::size_t> (result - 1));
+        });
+}
+
+void SpectrumCanvas::chooseReferenceFileToExport (std::size_t channel)
+{
+    const auto reference = processor->getSpectrumReference();
+    if (reference == nullptr || channel >= reference->getChannelCount())
+        return;
+
+    const auto suggested = getReferenceDirectory().getChildFile (
+        "spectrum-baseline-ch"
+        + String (reference->getSourceChannelIndices()[channel] + 1) + "-"
+        + Time (reference->getCapturedAtUnixMilliseconds()).formatted ("%Y%m%d-%H%M%S")
+        + ".json");
+    referenceFileChooser = std::make_unique<FileChooser> ("Export a baseline",
+                                                          suggested,
+                                                          "*.json");
+    referenceFileChooser->launchAsync (
+        FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles
+            | FileBrowserComponent::warnAboutOverwriting,
+        [this, channel, captureId = reference->getCaptureId()] (const FileChooser& chooser)
+        {
+            const auto file = chooser.getResult();
+            if (file == File() || processor->getReferenceCaptureId() != captureId)
+                return;
+
+            referenceDirectory = file.getParentDirectory();
+            processor->exportSpectrumReference (file, channel);
+            updateStatus();
+        });
 }
 
 /** CANVAS PLOT - Stores the plot along with it's legend*/
@@ -1560,14 +1808,24 @@ void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
     const auto traceCount = std::min ({ static_cast<std::size_t> (activeChannels.size()),
                                         currPower.size(),
                                         chanColors.size() });
+    const auto showingOverlay = comparisonStatus.mode
+                                    == spectrumviewer::SpectrumComparisonMode::overlay
+                                && comparisonStatus.hasComparisonData();
+    // A baseline is the same spectrum behind every channel, so it is drawn
+    // once, in no channel's colour, rather than stacked once per channel.
+    if (showingOverlay && comparisonStatus.sharedAcrossChannels && traceCount > 0)
+        plt->plotLine (plotFrequencies,
+                       currComparison[0],
+                       findColour (ThemeColours::controlPanelText),
+                       1.5f,
+                       0.6f);
     for (std::size_t i = 0; i < traceCount; i++)
     {
         if (showingDelta)
             plt->plotLine (plotFrequencies, currComparison[i], chanColors[i], 1.5f);
         else
         {
-            if (comparisonStatus.mode == spectrumviewer::SpectrumComparisonMode::overlay
-                && comparisonStatus.hasComparisonData())
+            if (showingOverlay && ! comparisonStatus.sharedAcrossChannels)
                 plt->plotLine (plotFrequencies, currComparison[i], chanColors[i], 1.0f, 0.55f);
             if (showingAperiodic && currBaselineDb[i].size() == xvalues.size())
                 plt->plotLine (plotFrequencies, currBaselineDb[i], chanColors[i], 2.0f, 0.55f);

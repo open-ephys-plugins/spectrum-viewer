@@ -68,6 +68,10 @@ struct SpectrumComparisonFrameStatus
     SpectrumComparisonMode mode = SpectrumComparisonMode::absolute;
     SpectrumReferenceCompatibility compatibility = SpectrumReferenceCompatibility::noReference;
     std::uint64_t referenceCaptureId = 0;
+    // The reference is a baseline: every channel was compared with the same
+    // spectrum, so in overlay mode each channel's comparison data is that one
+    // spectrum, repeated.
+    bool sharedAcrossChannels = false;
 
     bool hasComparisonData() const noexcept
     {
@@ -424,6 +428,7 @@ private:
         if (value.mode == SpectrumComparisonMode::absolute)
             return value.referenceCaptureId == 0
                    && value.compatibility == SpectrumReferenceCompatibility::noReference
+                   && ! value.sharedAcrossChannels
                    && data == nullptr;
         if (value.referenceCaptureId == 0
             || value.compatibility == SpectrumReferenceCompatibility::noReference)

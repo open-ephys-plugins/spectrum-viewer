@@ -4,6 +4,9 @@
 
 #include <cmath>
 #include <limits>
+#include <optional>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace
@@ -36,7 +39,7 @@ spectrumviewer::CapturedSpectrum makeCapture()
              std::vector<float> (81, 4.0f),
              std::vector<float> (81, 0.25f),
              quality,
-             5 };
+             std::uint16_t { 5 } };
 }
 
 TEST (SpectrumReferenceTests, RetainsFullResolutionCaptureAndQuality)
@@ -69,6 +72,33 @@ TEST (SpectrumReferenceTests, CompatibilityIgnoresOnlySchedulingMetadata)
     EXPECT_FALSE (capture.isCompatibleWith (candidate, { 2 }, { "uV" }, 6));
 }
 
+TEST (SpectrumReferenceTests, ReportsTheFirstMismatchInCheckingOrder)
+{
+    using spectrumviewer::SpectrumReferenceMismatch;
+    const auto capture = makeCapture();
+    const auto descriptor = makeDescriptor();
+    EXPECT_EQ (capture.findMismatch (descriptor, { 2 }, { "uV" }, 5),
+               SpectrumReferenceMismatch::none);
+
+    // Several differences at once report the earliest, which is the one the
+    // user has to fix first: a different stream makes the rest moot.
+    auto candidate = descriptor;
+    candidate.sampleRateHz *= 2.0;
+    EXPECT_EQ (capture.findMismatch (candidate, { 3 }, { "mV" }, 6),
+               SpectrumReferenceMismatch::stream);
+    EXPECT_EQ (capture.findMismatch (candidate, { 3 }, { "mV" }, 5),
+               SpectrumReferenceMismatch::sampleRate);
+
+    candidate = descriptor;
+    candidate.timeHalfBandwidth = 2.5;
+    EXPECT_EQ (capture.findMismatch (candidate, { 3 }, { "mV" }, 5),
+               SpectrumReferenceMismatch::estimator);
+    EXPECT_EQ (capture.findMismatch (descriptor, { 3 }, { "mV" }, 5),
+               SpectrumReferenceMismatch::channels);
+    EXPECT_EQ (capture.findMismatch (descriptor, { 2 }, { "mV" }, 5),
+               SpectrumReferenceMismatch::units);
+}
+
 TEST (SpectrumReferenceTests, RejectsIncompleteOrInvalidSnapshots)
 {
     auto quality = spectrumviewer::SpectrumCaptureQuality {};
@@ -84,6 +114,30 @@ TEST (SpectrumReferenceTests, RejectsIncompleteOrInvalidSnapshots)
                                                      std::vector<float> (81, 0.0f),
                                                      quality }),
                   std::invalid_argument);
+}
+
+TEST (SpectrumReferenceTests, BaselineHoldsExactlyOneChannel)
+{
+    spectrumviewer::SpectrumCaptureQuality quality;
+    quality.includedWindowCount = 2;
+    quality.targetWindowCount = 2;
+    quality.lastSampleExclusive = 320;
+    const auto makeBaseline = [&quality] (std::size_t channels)
+    {
+        return spectrumviewer::CapturedSpectrum { 1,
+                                                  123456789,
+                                                  makeDescriptor(),
+                                                  std::vector<int> (channels, 0),
+                                                  std::vector<std::string> (channels, "uV"),
+                                                  std::vector<float> (81 * channels, 1.0f),
+                                                  std::vector<float> (81 * channels, 0.0f),
+                                                  quality,
+                                                  std::nullopt };
+    };
+
+    EXPECT_TRUE (makeBaseline (1).isBaseline());
+    EXPECT_FALSE (makeCapture().isBaseline());
+    EXPECT_THROW (makeBaseline (2), std::invalid_argument);
 }
 
 TEST (SpectrumReferenceTests, DecibelDeltaHandlesKnownRatiosAndInvalidBins)
