@@ -1,43 +1,63 @@
 name: Windows
 
 on:
+  workflow_dispatch:
+    inputs:
+      fftw_ref:
+        description: OpenEphysFFTW branch, tag, or SHA to build against
+        required: false
+        default: float-batched-r2c
   push:
     branches:
-      - '**' # Runs on push to any branch
+      - main
     tags:
       - '*' # Runs on any tag push
   pull_request:
     branches:
       - main # Runs on pull requests targeting the main branch
 
+env:
+  # Restore this default to main after the prerequisite FFTW PR merges.
+  OPENEPHYS_FFTW_REF: ${{ inputs.fftw_ref || 'float-batched-r2c' }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
 
   build-windows:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-    runs-on: windows-latest
+    runs-on: windows-2022
+    timeout-minutes: 60
     
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
     - name: setup
       run: |
         cd ../..
-        git clone https://github.com/open-ephys/plugin-GUI.git --branch main
+        git clone --depth 1 https://github.com/open-ephys/plugin-GUI.git --branch main
         cd plugin-GUI/Build
         cmake -G "Visual Studio 17 2022" -A x64 .. 
         mkdir Release && cd Release
-        curl -L https://openephys.jfrog.io/artifactory/GUI-binaries/Libraries/open-ephys-lib-v1.0.0.zip --output open-ephys-lib.zip 
-        unzip open-ephys-lib.zip
+        curl --fail --show-error --location --retry 3 https://openephys.jfrog.io/artifactory/GUI-binaries/Libraries/open-ephys-lib-v1.0.0.zip --output open-ephys-lib.zip
+        echo "ce7c33a77c6bdc864e360797d9d77446fd6aa7cfa24a90fd1001794ae1de278f  open-ephys-lib.zip" | sha256sum --check
+        unzip -q open-ephys-lib.zip
       shell: bash
     - name: config-fftw
       run: |
         cd ../..
         mkdir OEPlugins && cd OEPlugins
-        git clone https://github.com/open-ephys-plugins/OpenEphysFFTW.git --branch main
+        git clone --depth 1 https://github.com/open-ephys-plugins/OpenEphysFFTW.git --branch "$OPENEPHYS_FFTW_REF"
         cd OpenEphysFFTW/Build
         cmake -G "Visual Studio 17 2022" -A x64 ..
       shell: bash
     - name: Add msbuild to PATH
-      uses: microsoft/setup-msbuild@v2
+      uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3
     - name: build-fftw
       run: |
         msbuild ../../OEPlugins/OpenEphysFFTW/Build/INSTALL.vcxproj -p:Configuration=Release -p:Platform=x64
@@ -45,15 +65,36 @@ jobs:
     - name: configure
       run: |
         cd Build
-        cmake -G "Visual Studio 17 2022" -A x64 .. 
+        cmake -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTS=ON -DOPENEPHYS_FFTW_SOURCE_DIR=../../../OEPlugins/OpenEphysFFTW ..
       shell: bash
     - name: build
       run: |
         msbuild Build/INSTALL.vcxproj -p:Configuration=Release -p:Platform=x64
       shell: cmd
-# TODO: Perform some basic testing before publishing...
-#    - name: test
-#      run: cd build && ctest
+    - name: test
+      run: |
+        cmake --build Build --config Release --target spectrum_viewer_tests
+        ctest --test-dir Build -C Release --output-on-failure
+      shell: bash
+    - name: validate
+      run: |
+        test -f Build/Release/spectrum-viewer.dll
+      shell: bash
+    - name: package acquiring-rig artifact
+      run: |
+        mkdir -p ci-artifact/plugins ci-artifact/shared
+        cp Build/Release/spectrum-viewer.dll ci-artifact/plugins/
+        find ../../plugin-GUI/Build/Release/shared -maxdepth 1 -type f -iname '*fftw*.dll' -exec cp '{}' ci-artifact/shared/ \;
+        cp THIRD_PARTY_NOTICES.md ci-artifact/shared/SpectrumViewer-THIRD_PARTY_NOTICES.md
+        test "$(find ci-artifact/shared -maxdepth 1 -type f -iname '*fftw*.dll' | wc -l)" -ge 3
+      shell: bash
+    - name: upload acquiring-rig artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SpectrumViewer-windows-rig-${{ github.sha }}
+        path: ci-artifact
+        if-no-files-found: error
+        retention-days: 14
     - name: deploy
       if: github.ref == 'refs/heads/main'
       env:
@@ -66,7 +107,9 @@ jobs:
         new_plugin_ver=$tag-API$plugin_api
         mkdir plugins
         cp $build_dir/*.dll plugins
+        mkdir shared
+        cp THIRD_PARTY_NOTICES.md shared/SpectrumViewer-THIRD_PARTY_NOTICES.md
         zipfile=${package}_${new_plugin_ver}.zip
-        powershell Compress-Archive -Path "plugins" -DestinationPath ${zipfile}
+        powershell Compress-Archive -Path "plugins","shared" -DestinationPath ${zipfile}
         curl -H "X-JFrog-Art-Api:$ARTIFACTORY_ACCESS_TOKEN" -T $zipfile "https://openephys.jfrog.io/artifactory/SpectrumViewer-plugin/windows/$zipfile"
       shell: bash
