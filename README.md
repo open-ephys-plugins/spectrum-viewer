@@ -57,7 +57,23 @@ First, follow the instructions on [this page](https://open-ephys.github.io/gui-d
 This plugin depends on the `main` branch of the [OpenEphysFFTW](https://github.com/open-ephys-plugins/OpenEphysFFTW/tree/main) library, which must be built and installed first.
 
 DPSS taper generation uses a plugin-private symmetric-tridiagonal eigensolver, so
-the plugin has no BLAS or LAPACK dependency and CMake configure downloads nothing.
+the plugin has no BLAS or LAPACK dependency.
+
+The power spectrum uses [CustomMatPlot](https://github.com/franshej/CustomMatPlot).
+It is a Git submodule at `ThirdParty/CustomMatPlot`, pinned to revision
+`5486557becd7fbc5ca4bc478610429799539d850`. After cloning this plugin, initialize
+only that submodule:
+
+```bash
+git submodule update --init ThirdParty/CustomMatPlot
+```
+
+Do not use `--recursive`: CustomMatPlot's upstream repository declares a nested
+JUCE submodule that this plugin does not need. CMake compiles only the 2D sources
+against Open Ephys' JUCE, without cloning anything or building another JUCE copy
+or a separate plotting library. A C++20 compiler is required. Once the submodule
+is initialized, configuring the plugin with tests and benchmarks disabled works
+offline; those opt-in targets fetch their own dependencies.
 
 Contributors should start with the [developer guide](DEVELOPMENT.md), which maps
 the runtime data flow, source files, thread boundaries, and real-time invariants.

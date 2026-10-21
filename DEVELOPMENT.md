@@ -77,6 +77,59 @@ elsewhere, because nothing announces when that holder lets go.
 tests under `Tests/Processor/`. `Benchmarks/` contains opt-in performance
 measurements; see their local README files for commands and interpretation.
 
+## Power spectrum renderer
+
+`FrequencyPlot` is a JUCE component wrapping CustomMatPlot's `cmp::Plot`.
+Only presentation changes here: the worker still publishes reduced linear PSDs,
+and `CanvasPlot` still selects mean, peak, background, and comparison traces and
+converts amplitudes for display. The spectrogram remains a separate JUCE image.
+
+Frequencies reach CustomMatPlot in Hz, with native linear or logarithmic X
+scaling. Y scaling stays linear because the traces are already in decibels.
+The plot's look and feel follows the host theme and delegates series drawing
+and mouse actions to CustomMatPlot. The wrapper splits non-finite gaps into
+finite series, so native drawing never receives NaNs or joins across missing
+data. Its axes bounds also define the worker's display width.
+
+Native mouse controls are enabled: left-drag zooms, Ctrl/Cmd-drag pans,
+right-click resets the view, and double-click adds or removes a draggable trace
+point. Ctrl+scroll zooms both axes around the pointer: scroll up to zoom in,
+down to zoom out. Shift+scroll zooms only the frequency axis around the pointer,
+leaving both Y limits unchanged. Shift takes precedence when Ctrl is also held;
+Shift-wheel gestures delivered as horizontal deltas are supported too.
+Unmodified scrolling continues to scroll the canvas viewport.
+Point editing remains off so interaction cannot change measured values.
+CustomMatPlot's `overrideUserInputMapAction()` changes its mouse/key bindings,
+but the pinned revision does not dispatch wheel gestures and its incremental
+zoom actions are empty. `FrequencyPlot::mouseWheelMove()` handles Ctrl/Shift+scroll
+using native axis-limit setters, with logarithmic frequency zoom performed in
+log space. Its wheel listener receives gestures once; the embedded plot's
+default wheel bubbling is suppressed to avoid a second update. Right-click
+reinstalls the configured home limits before the native reset action, since the
+axis setters otherwise make the latest wheel zoom the library's reset target.
+The look and feel observes the library's visible limits through its tick-update
+hooks; this keeps the existing hover readout correct after zooming or panning.
+Live frames preserve a mouse-selected view instead of overwriting it with the
+automatic dB range. Changing frequency settings or explicit dB controls restores
+the configured view. All these changes remain on the message thread.
+
+Stage each spectrum with `beginLines()` and `plotLine()`, then publish it once
+with `endLines()`. The wrapper retains trace buffers and CustomMatPlot series;
+unchanged frequencies and styling use `plotUpdateYOnly()`. Only a topology,
+frequency, or styling change needs a full `plot()` update. Such updates clear
+trace points before replacing series they may refer to; Y-only updates retain
+them. `clear()` actually removes the rendered series and trace points, rather
+than starting the next frame.
+
+`ThirdParty/CustomMatPlot` is a Git submodule pinned by this repository's gitlink.
+Initialize it with `git submodule update --init ThirdParty/CustomMatPlot`, without
+`--recursive`: its upstream JUCE submodule is deliberately left uninitialized.
+CI likewise checks out only direct submodules. CMake uses that local source tree
+and compiles only its 2D sources using the host's generated `JuceHeader.h`; it
+does not fetch or update CustomMatPlot. Do not add the library's upstream JUCE
+build to this plugin. The renderer requires C++20; its MIT notice is included
+in `THIRD_PARTY_NOTICES.md`.
+
 ## Configuration and stream replacement
 
 A profile, stream, or channel change creates a generation-tagged preparation
@@ -278,9 +331,11 @@ criterion, including SciPy golden values.
   or generation changes.
 - Keep queue overflow and backlog shedding observable through counters and frame
   metadata.
-- Do not allocate per frame in the canvas render path. Pass traces to
-  `FrequencyPlot::plotLine()`, which reuses the previous frame's storage, not to
-  `plot()`, which the base class makes take its vectors by value.
+- Reuse per-frame trace storage in the canvas. Pass traces to
+  `FrequencyPlot::plotLine()` between `beginLines()` and `endLines()`, which
+  reuse trace storage and batch the CustomMatPlot update. Do not clear and
+  recreate the renderer's series on every frame. CustomMatPlot owns painting,
+  including its path allocation; do not duplicate its series renderer.
 - Shed only live display frames. Never shed, and never silently drop, a window
   that a capture is accumulating.
 - Do not advertise a state the user can act on unless the data behind it exists.

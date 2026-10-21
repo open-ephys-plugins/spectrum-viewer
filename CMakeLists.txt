@@ -22,6 +22,14 @@ option(BUILD_PROCESSOR_TESTS "Build Spectrum Viewer processor lifecycle tests" O
 option(BUILD_BENCHMARKS "Build Spectrum Viewer performance benchmarks" OFF)
 option(BENCHMARK_NATIVE_ARCH "Compile benchmarks for the build machine's CPU" OFF)
 
+set(custommatplot_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/CustomMatPlot")
+set(custommatplot_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/CustomMatPlot")
+if(NOT EXISTS "${custommatplot_SOURCE_DIR}/source/cmp_plot.cpp")
+	message(FATAL_ERROR
+		"CustomMatPlot submodule is missing. Run: "
+		"git submodule update --init ThirdParty/CustomMatPlot (without --recursive)")
+endif()
+
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 	set(LINUX 1)
@@ -50,6 +58,27 @@ else()
 	add_library(${PLUGIN_NAME} SHARED ${SRC_FILES})
 endif()
 
+configure_file(
+	${custommatplot_SOURCE_DIR}/include/include/cmp_version.h.in
+	${custommatplot_BINARY_DIR}/include/cmp_version.h @ONLY)
+set(CUSTOMMATPLOT_SOURCES
+	cmp_plot cmp_series cmp_grid cmp_label cmp_frame cmp_legend
+	cmp_trace cmp_selection_area cmp_lookandfeel cmp_downsampler)
+foreach(source IN LISTS CUSTOMMATPLOT_SOURCES)
+	target_sources(${PLUGIN_NAME} PRIVATE ${custommatplot_SOURCE_DIR}/source/${source}.cpp)
+	if(MSVC)
+		set_property(SOURCE ${custommatplot_SOURCE_DIR}/source/${source}.cpp
+			APPEND PROPERTY COMPILE_OPTIONS /FIJuceHeader.h)
+	else()
+		set_property(SOURCE ${custommatplot_SOURCE_DIR}/source/${source}.cpp
+			APPEND PROPERTY COMPILE_OPTIONS -include JuceHeader.h)
+	endif()
+endforeach()
+target_include_directories(${PLUGIN_NAME}
+	PUBLIC ${custommatplot_SOURCE_DIR}/include/include
+	       ${custommatplot_BINARY_DIR}/include
+	PRIVATE ${custommatplot_SOURCE_DIR}/include/include_internal)
+target_compile_features(${PLUGIN_NAME} PUBLIC cxx_std_20)
 
 target_compile_features(${PLUGIN_NAME} PUBLIC cxx_auto_type cxx_generalized_initializers cxx_std_17)
 target_include_directories(${PLUGIN_NAME} PUBLIC

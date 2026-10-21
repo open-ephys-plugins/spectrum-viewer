@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <thread>
 
@@ -266,8 +267,9 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
         writeBlocks (1);
         canvas->refresh();
     }
-    ASSERT_TRUE (waitUntil ([plot]
+    ASSERT_TRUE (waitUntil ([this, plot]
     {
+        writeBlocks (1);
         return plot->getMaximumFrequencyForTesting() == sampleRate * 0.5f
                && ! plot->getMeanTraceForTesting (3).empty();
     }));
@@ -306,8 +308,9 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
         writeBlocks (1);
         canvas->refresh();
     }
-    ASSERT_TRUE (waitUntil ([plot]
+    ASSERT_TRUE (waitUntil ([this, plot]
     {
+        writeBlocks (1);
         return plot->getFrequencyScaleForTesting()
                == spectrumviewer::FrequencyScale::logarithmic;
     }));
@@ -318,8 +321,8 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
     EXPECT_TRUE (plot->getYAxisLabelForTesting().startsWith ("ASD"));
     EXPECT_TRUE (plot->getYAxisLabelForTesting().contains ("uV/√Hz"));
     const auto logRange = plot->getPlotRangeForTesting();
-    EXPECT_NEAR (logRange.xmin, std::log10 (10.0f), 1.0e-5f);
-    EXPECT_NEAR (logRange.xmax, std::log10 (sampleRate * 0.5f), 1.0e-5f);
+    EXPECT_FLOAT_EQ (logRange.xmin, 10.0f);
+    EXPECT_FLOAT_EQ (logRange.xmax, sampleRate * 0.5f);
     EXPECT_FLOAT_EQ (logRange.ymin, fixedLinearRange.ymin);
     EXPECT_FLOAT_EQ (logRange.ymax, fixedLinearRange.ymax);
     const auto plottedFrequencies = plot->getPlottedFrequenciesForTesting();
@@ -347,6 +350,361 @@ TEST_F (SpectrumCanvasTests, RendersFullBandMeanAndPeakThenHotSwitchesToLogAsd)
     EXPECT_NE (imageHash (logImage), linearHash);
     expectTraceCoverage (logImage, plot->getDrawingBoundsForTesting());
     optionallyWriteImage (logImage, "spectrum-log-asd.png");
+}
+
+TEST_F (SpectrumCanvasTests, NativeAxesKeepCursorMappingAcrossScaleAndSizeChanges)
+{
+    FrequencyPlot plot;
+    plot.setBounds (0, 0, 900, 500);
+    ASSERT_NE (plot.getRendererForTesting(), nullptr);
+    EXPECT_EQ (plot.getRendererForTesting()->getParentComponent(), &plot);
+
+    for (const auto width : { 900, 480 })
+    {
+        plot.setSize (width, 500);
+        for (const auto scale : { spectrumviewer::FrequencyScale::linear,
+                                  spectrumviewer::FrequencyScale::logarithmic,
+                                  spectrumviewer::FrequencyScale::linear })
+        {
+            const auto minimum = scale == spectrumviewer::FrequencyScale::linear ? 0.0f : 10.0f;
+            plot.setFrequencyAxis (scale, minimum, 1000.0f, -60.0f, 60.0f);
+            const auto bounds = plot.getDrawingBoundsForTesting();
+            EXPECT_EQ (plot.getDrawingWidth(), bounds.getWidth());
+            EXPECT_FLOAT_EQ (plot.frequencyAt ({ bounds.getX(), bounds.getCentreY() }), minimum);
+            EXPECT_NEAR (plot.frequencyAt (bounds.getCentre()),
+                         scale == spectrumviewer::FrequencyScale::linear ? 500.0f : 100.0f,
+                         1.0e-3f);
+            EXPECT_TRUE (std::isnan (plot.frequencyAt ({ bounds.getX() - 1, bounds.getCentreY() })));
+        }
+    }
+}
+
+TEST_F (SpectrumCanvasTests, NativeMouseZoomPanResetAndTraceSurviveLiveUpdates)
+{
+    FrequencyPlot plot;
+    plot.setVisible (true);
+    plot.setBounds (0, 0, 900, 500);
+    plot.setFrequencyAxis (spectrumviewer::FrequencyScale::linear, 0.0f, 1000.0f, -60.0f, 60.0f);
+    const std::vector<float> frequencies { 0.0f, 250.0f, 500.0f, 750.0f, 1000.0f };
+    std::vector<float> values { -20.0f, 10.0f, 0.0f, 10.0f, -20.0f };
+    const auto publish = [&]
+    {
+        plot.beginLines();
+        plot.plotLine (frequencies, values, Colours::red, 1.5f);
+        plot.endLines();
+    };
+    publish();
+    auto* renderer = plot.getRendererForTesting();
+    const auto bounds = plot.getDrawingBoundsForTesting();
+    auto* axes = renderer->getComponentAt (renderer->getLocalPoint (&plot, bounds.getCentre()));
+    ASSERT_NE (axes, nullptr);
+    ASSERT_EQ (axes->getBounds(), renderer->getLocalArea (&plot, bounds));
+    const auto event = [axes] (Point<float> position, Point<float> down,
+                              ModifierKeys modifiers, int clicks, bool dragged)
+    {
+        const auto now = Time::getCurrentTime();
+        return MouseEvent (Desktop::getInstance().getMainMouseSource(), position, modifiers,
+                           1.0f, 0.0f, 0.0f, 0.0f, 0.0f, axes, axes, now, down, now, clicks, dragged);
+    };
+    const ModifierKeys left (ModifierKeys::leftButtonModifier);
+    const Point<float> start { bounds.getWidth() * 0.25f, bounds.getHeight() * 0.25f };
+    const Point<float> end { bounds.getWidth() * 0.75f, bounds.getHeight() * 0.75f };
+    renderer->mouseDown (event (start, start, left, 1, false));
+    renderer->mouseDrag (event (start, start, left, 1, true));
+    renderer->mouseDrag (event (end, start, left, 1, true));
+    renderer->mouseUp (event (end, start, left, 1, true));
+    const auto zoom = plot.getRangeForTesting();
+    EXPECT_NEAR (zoom.xmin, 250.0f, 1.0f);
+    EXPECT_NEAR (zoom.xmax, 750.0f, 1.0f);
+    EXPECT_NEAR (zoom.ymin, -30.0f, 1.0f);
+    EXPECT_NEAR (zoom.ymax, 30.0f, 1.0f);
+    EXPECT_NEAR (plot.frequencyAt ({ bounds.getX(), bounds.getCentreY() }), zoom.xmin, 1.0e-3f);
+
+    values[2] = 5.0f;
+    plot.setFrequencyAxis (spectrumviewer::FrequencyScale::linear, 0.0f, 1000.0f, -80.0f, 80.0f);
+    publish();
+    EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmin, zoom.xmin);
+    EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmax, zoom.xmax);
+    EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymin, zoom.ymin);
+    EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymax, zoom.ymax);
+
+    const ModifierKeys pan (ModifierKeys::leftButtonModifier | ModifierKeys::commandModifier);
+    renderer->modifierKeysChanged (pan);
+    renderer->mouseDown (event (start, start, pan, 1, false));
+    renderer->mouseDrag (event (start + Point<float> (50.0f, 0.0f), start, pan, 1, true));
+    renderer->mouseUp (event (start + Point<float> (50.0f, 0.0f), start, pan, 1, true));
+    EXPECT_LT (plot.getRangeForTesting().xmin, zoom.xmin);
+    const auto panned = plot.getRangeForTesting();
+    plot.setFrequencyAxis (spectrumviewer::FrequencyScale::linear, 0.0f, 1000.0f, -80.0f, 80.0f);
+    publish();
+    EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmin, panned.xmin);
+
+    const ModifierKeys right (ModifierKeys::rightButtonModifier);
+    renderer->mouseDown (event (start, start, right, 1, false));
+    EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmin, 0.0f);
+    EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmax, 1000.0f);
+    EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymin, -60.0f);
+    EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymax, 60.0f);
+
+    const auto childCount = renderer->getNumChildComponents();
+    renderer->mouseDown (event (start, start, left, 2, false));
+    EXPECT_GT (renderer->getNumChildComponents(), childCount);
+    const auto traceChildCount = renderer->getNumChildComponents();
+    values[1] = 15.0f;
+    publish();
+    EXPECT_EQ (renderer->getNumChildComponents(), traceChildCount);
+    plot.clear();
+    EXPECT_LE (renderer->getNumChildComponents(), childCount);
+    const auto emptyChildCount = renderer->getNumChildComponents();
+    renderer->mouseDown (event (start, start, left, 2, false));
+    EXPECT_EQ (renderer->getNumChildComponents(), emptyChildCount);
+}
+
+TEST_F (SpectrumCanvasTests, CtrlWheelInvalidatesEntirePlotIncludingAxisLabels)
+{
+    class InvalidationRecorder final : public CachedComponentImage
+    {
+    public:
+        explicit InvalidationRecorder (Rectangle<int> bounds) : plotBounds (bounds) {}
+        void paint (Graphics&) override {}
+        bool invalidateAll() override { fullPlotInvalidated = true; return false; }
+        bool invalidate (const Rectangle<int>& area) override
+        {
+            fullPlotInvalidated = fullPlotInvalidated || area.contains (plotBounds);
+            return false;
+        }
+        void releaseResources() override {}
+        bool fullPlotInvalidated = false;
+
+    private:
+        Rectangle<int> plotBounds;
+    };
+    FrequencyPlot plot;
+    plot.setVisible (true);
+    plot.setBounds (0, 0, 900, 500);
+    plot.setFrequencyAxis (spectrumviewer::FrequencyScale::linear, 0.0f, 1000.0f, -60.0f, 60.0f);
+    plot.beginLines();
+    plot.plotLine ({ 0.0f, 500.0f, 1000.0f }, { -20.0f, 10.0f, -20.0f }, Colours::red);
+    plot.endLines();
+    auto* renderer = plot.getRendererForTesting();
+    auto* axes = renderer->getComponentAt (renderer->getLocalBounds().getCentre());
+    ASSERT_NE (axes, nullptr);
+    auto recorder = std::make_unique<InvalidationRecorder> (renderer->getLocalBounds());
+    auto* invalidation = recorder.get();
+    renderer->setCachedComponentImage (recorder.release());
+    invalidation->fullPlotInvalidated = false;
+    const auto position = axes->getLocalBounds().getCentre().toFloat();
+    const auto now = Time::getCurrentTime();
+    const MouseEvent event (Desktop::getInstance().getMainMouseSource(), position,
+                            ModifierKeys (ModifierKeys::ctrlModifier),
+                            1.0f, 0.0f, 0.0f, 0.0f, 0.0f, axes, axes, now, position, now, 1, false);
+    MouseWheelDetails wheel {};
+    wheel.deltaY = 0.1f;
+    plot.mouseWheelMove (event, wheel);
+    EXPECT_LT (plot.getRangeForTesting().xmax - plot.getRangeForTesting().xmin, 1000.0f);
+    EXPECT_TRUE (invalidation->fullPlotInvalidated);
+}
+
+TEST_F (SpectrumCanvasTests, CtrlWheelZoomAnchorsAtCursorAndKeepsNativeReset)
+{
+    class WheelObserver final : public Component
+    {
+    public:
+        void mouseWheelMove (const MouseEvent&, const MouseWheelDetails&) override { ++wheelEvents; }
+        int wheelEvents = 0;
+    };
+    WheelObserver parent;
+    FrequencyPlot plot;
+    parent.addAndMakeVisible (plot);
+    plot.setBounds (0, 0, 900, 500);
+    const std::vector<float> frequencies { 10.0f, 25.0f, 100.0f, 250.0f, 1000.0f };
+    std::vector<float> values { -20.0f, 10.0f, 0.0f, 10.0f, -20.0f };
+    const auto publish = [&]
+    {
+        plot.beginLines();
+        plot.plotLine (frequencies, values, Colours::red, 1.5f);
+        plot.endLines();
+    };
+    MouseWheelDetails wheel {};
+    wheel.deltaY = 0.1f;
+
+    for (const auto scale : { spectrumviewer::FrequencyScale::linear,
+                              spectrumviewer::FrequencyScale::logarithmic })
+    {
+        const auto minimum = scale == spectrumviewer::FrequencyScale::linear ? 0.0f : 10.0f;
+        plot.setFrequencyAxis (scale, minimum, 1000.0f, -60.0f, 60.0f);
+        publish();
+        const auto bounds = plot.getDrawingBoundsForTesting();
+        auto* renderer = plot.getRendererForTesting();
+        auto* axes = renderer->getComponentAt (renderer->getLocalPoint (&plot, bounds.getCentre()));
+        ASSERT_NE (axes, nullptr);
+        const auto position = Point<int> (bounds.getWidth() / 4, bounds.getHeight() * 3 / 4).toFloat();
+        const auto event = [axes, position] (ModifierKeys modifiers)
+        {
+            const auto now = Time::getCurrentTime();
+            return MouseEvent (Desktop::getInstance().getMainMouseSource(), position, modifiers,
+                               1.0f, 0.0f, 0.0f, 0.0f, 0.0f, axes, axes, now, position, now, 1, false);
+        };
+        const auto original = plot.getRangeForTesting();
+        const auto anchorPoint = position.toInt() + bounds.getPosition();
+        const auto anchorFrequency = plot.frequencyAt (anchorPoint);
+        const ModifierKeys ctrl (ModifierKeys::ctrlModifier);
+
+        const auto plainWheelCount = parent.wheelEvents;
+        plot.mouseWheelMove (event (ModifierKeys()), wheel);
+        EXPECT_EQ (parent.wheelEvents, plainWheelCount + 1);
+        EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmin, original.xmin);
+        EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmax, original.xmax);
+
+        axes->mouseWheelMove (event (ctrl), wheel);
+        EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmin, original.xmin);
+        plot.mouseWheelMove (event (ctrl), wheel);
+        const auto zoom = plot.getRangeForTesting();
+        EXPECT_GT (zoom.xmin, original.xmin);
+        EXPECT_LT (zoom.xmax, original.xmax);
+        EXPECT_NEAR (zoom.ymax - zoom.ymin, 100.0f, 1.0e-3f);
+        EXPECT_NEAR (plot.frequencyAt (anchorPoint), anchorFrequency, 1.0e-3f);
+        if (scale == spectrumviewer::FrequencyScale::logarithmic)
+        {
+            EXPECT_GT (zoom.xmin, 0.0f);
+            EXPECT_NEAR (std::log10 (zoom.xmax / zoom.xmin),
+                         std::log10 (original.xmax / original.xmin) / 1.2f, 1.0e-5f);
+        }
+        else
+            EXPECT_NEAR (zoom.xmax - zoom.xmin, 1000.0f / 1.2f, 1.0e-3f);
+
+        values[2] = 5.0f;
+        plot.setFrequencyAxis (scale, minimum, 1000.0f, -80.0f, 80.0f);
+        publish();
+        EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmin, zoom.xmin);
+        EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymin, zoom.ymin);
+
+        wheel.deltaY = -0.1f;
+        plot.mouseWheelMove (event (ctrl), wheel);
+        EXPECT_NEAR (plot.getRangeForTesting().xmin, original.xmin, 1.0e-3f);
+        EXPECT_NEAR (plot.getRangeForTesting().xmax, original.xmax, 1.0e-3f);
+        EXPECT_NEAR (plot.getRangeForTesting().ymin, original.ymin, 1.0e-3f);
+        EXPECT_NEAR (plot.getRangeForTesting().ymax, original.ymax, 1.0e-3f);
+
+        wheel.deltaY = 0.1f;
+        plot.mouseWheelMove (event (ctrl), wheel);
+        renderer->mouseDown (event (ModifierKeys (ModifierKeys::rightButtonModifier)));
+        EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmin, original.xmin);
+        EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmax, original.xmax);
+        EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymin, original.ymin);
+        EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymax, original.ymax);
+    }
+}
+
+TEST_F (SpectrumCanvasTests, ShiftWheelZoomsOnlyFrequencyAcrossScalesAndLiveUpdates)
+{
+    const std::vector<float> frequencies { 10.0f, 25.0f, 100.0f, 250.0f, 1000.0f };
+    const std::vector<float> values { -20.0f, 10.0f, 0.0f, 10.0f, -20.0f };
+    for (const auto scale : { spectrumviewer::FrequencyScale::linear,
+                              spectrumviewer::FrequencyScale::logarithmic })
+        for (const auto modifiers : { static_cast<int> (ModifierKeys::shiftModifier),
+                                      ModifierKeys::shiftModifier | ModifierKeys::ctrlModifier })
+            for (const auto horizontal : { false, true })
+            {
+                FrequencyPlot plot;
+                plot.setVisible (true);
+                plot.setBounds (0, 0, 900, 500);
+                const auto minimum = scale == spectrumviewer::FrequencyScale::linear ? 0.0f : 10.0f;
+                plot.setFrequencyAxis (scale, minimum, 1000.0f, -60.0f, 60.0f);
+                const auto publish = [&]
+                {
+                    plot.beginLines();
+                    plot.plotLine (frequencies, values, Colours::red);
+                    plot.endLines();
+                };
+                publish();
+                auto* renderer = plot.getRendererForTesting();
+                const auto bounds = plot.getDrawingBoundsForTesting();
+                auto* axes = renderer->getComponentAt (renderer->getLocalPoint (&plot, bounds.getCentre()));
+                ASSERT_NE (axes, nullptr);
+                const auto position = Point<int> (bounds.getWidth() / 4, bounds.getHeight() * 3 / 4).toFloat();
+                const auto now = Time::getCurrentTime();
+                const MouseEvent event (Desktop::getInstance().getMainMouseSource(), position,
+                                        ModifierKeys (modifiers), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                        axes, axes, now, position, now, 1, false);
+                MouseWheelDetails wheel {};
+                (horizontal ? wheel.deltaX : wheel.deltaY) = 0.1f;
+                const auto original = plot.getRangeForTesting();
+                const auto anchor = position.toInt() + bounds.getPosition();
+                const auto anchorFrequency = plot.frequencyAt (anchor);
+                plot.mouseWheelMove (event, wheel);
+                const auto zoom = plot.getRangeForTesting();
+                EXPECT_GT (zoom.xmin, original.xmin);
+                EXPECT_LT (zoom.xmax, original.xmax);
+                EXPECT_FLOAT_EQ (zoom.ymin, original.ymin);
+                EXPECT_FLOAT_EQ (zoom.ymax, original.ymax);
+                EXPECT_NEAR (plot.frequencyAt (anchor), anchorFrequency, 1.0e-3f);
+                plot.setFrequencyAxis (scale, minimum, 1000.0f, -80.0f, 80.0f);
+                publish();
+                EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmin, zoom.xmin);
+                EXPECT_FLOAT_EQ (plot.getRangeForTesting().xmax, zoom.xmax);
+                EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymin, original.ymin);
+                EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymax, original.ymax);
+                (horizontal ? wheel.deltaX : wheel.deltaY) = -0.1f;
+                plot.mouseWheelMove (event, wheel);
+                EXPECT_NEAR (plot.getRangeForTesting().xmin, original.xmin, 1.0e-3f);
+                EXPECT_NEAR (plot.getRangeForTesting().xmax, original.xmax, 1.0e-3f);
+                EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymin, original.ymin);
+                EXPECT_FLOAT_EQ (plot.getRangeForTesting().ymax, original.ymax);
+            }
+}
+
+TEST_F (SpectrumCanvasTests, BatchedUpdatesReuseSeriesAndClearRemovesRenderedData)
+{
+    FrequencyPlot plot;
+    plot.setVisible (true);
+    plot.setBackgroundColour (Colour (45, 45, 45));
+    plot.setBounds (0, 0, 900, 500);
+    plot.setFrequencyAxis (spectrumviewer::FrequencyScale::linear, 0.0f, 1000.0f, -60.0f, 60.0f);
+    const std::vector<float> frequencies { 0.0f, 250.0f, 500.0f, 750.0f, 1000.0f };
+    std::vector<float> values { -20.0f, 10.0f, std::numeric_limits<float>::quiet_NaN(), 10.0f, -20.0f };
+    plot.beginLines();
+    plot.plotLine (frequencies, values, Colours::red, 1.5f);
+    plot.plotLine (frequencies, values, Colours::green, 1.0f, 0.35f);
+    plot.endLines();
+    EXPECT_EQ (plot.getSeriesCountForTesting(), 4u);
+    const auto children = plot.getRendererForTesting()->getChildren();
+    const auto rendererBounds = plot.getRendererForTesting()->getLocalArea (
+        &plot, plot.getDrawingBoundsForTesting());
+    EXPECT_GE (std::count_if (children.begin(), children.end(), [rendererBounds] (const auto* child)
+                             { return child->isVisible()
+                                      && child->getBounds() == rendererBounds; }), 2);
+
+    values[0] = -10.0f;
+    plot.beginLines();
+    plot.plotLine (frequencies, values, Colours::red, 1.5f);
+    plot.plotLine (frequencies, values, Colours::green, 1.0f, 0.35f);
+    plot.endLines();
+    EXPECT_EQ (plot.getRendererForTesting()->getChildren(), children);
+
+    Image image (Image::ARGB, 900, 500, true);
+    {
+        Graphics graphics (image);
+        plot.paintEntireComponent (graphics, true);
+    }
+    EXPECT_GT (countColourfulPixels (image, plot.getDrawingBoundsForTesting()), 20);
+    auto gap = plot.getDrawingBoundsForTesting();
+    gap.setX (gap.getX() + gap.getWidth() * 3 / 8);
+    gap.setWidth (gap.getWidth() / 4);
+    EXPECT_EQ (countColourfulPixels (image, gap), 0);
+    optionallyWriteImage (image, "spectrum-renderer-gaps.png");
+
+    plot.beginLines();
+    plot.plotLine (frequencies, values, Colours::red, 1.5f);
+    plot.endLines();
+    EXPECT_EQ (plot.getSeriesCountForTesting(), 2u);
+    plot.clear();
+    EXPECT_EQ (plot.getSeriesCountForTesting(), 0u);
+    {
+        Graphics graphics (image);
+        plot.paintEntireComponent (graphics, true);
+    }
+    EXPECT_EQ (countColourfulPixels (image, plot.getDrawingBoundsForTesting()), 0);
 }
 
 TEST_F (SpectrumCanvasTests, SpectralSequenceGapsAdvanceAutoRangeUsingSignalTime)

@@ -26,34 +26,80 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <utility>
 
 namespace
 {
-class RotatedAxisLabel final : public Label
+class SpectrumPlotLookAndFeel final : public cmp::PlotLookAndFeel
 {
 public:
-    using Label::Label;
-
-    void paint (Graphics& graphics) override
+    Rectangle<int> getAxesBounds (const Rectangle<int> bounds,
+                                  const Component*) const noexcept override
     {
-        graphics.saveState();
-        graphics.addTransform (AffineTransform::rotation (
-            -MathConstants<float>::halfPi,
-            static_cast<float> (getWidth()) * 0.5f,
-            static_cast<float> (getHeight()) * 0.5f));
-        graphics.setColour (findColour (Label::textColourId));
-        graphics.setFont (getFont());
-        graphics.drawFittedText (getText(),
-                                 (getWidth() - getHeight()) / 2,
-                                 (getHeight() - getWidth()) / 2,
-                                 getHeight(),
-                                 getWidth(),
-                                 Justification::centred,
-                                 1);
-        graphics.restoreState();
+        return { 90, 30, std::max (0, bounds.getWidth() - 110),
+                 std::max (0, bounds.getHeight() - 90) };
     }
+
+    cmp::UserInputAction getUserInputAction (cmp::UserInput input) const noexcept override
+    {
+        const auto action = cmp::PlotLookAndFeel::getUserInputAction (input);
+        if (action == cmp::UserInputAction::zoom_reset && onResetView)
+            onResetView();
+        return ! hasSeries && action == cmp::UserInputAction::create_tracepoint
+                   ? cmp::UserInputAction::none : action;
+    }
+
+    Font getGridLabelFont() const noexcept override
+    {
+        return Font (FontOptions ("Inter", "Regular", 12.0f));
+    }
+
+    Font getXYTitleFont() const noexcept override
+    {
+        return Font (FontOptions ("Inter", "Medium", 14.0f));
+    }
+
+    void updateXYTitleLabels (const Rectangle<int>& bounds, const Rectangle<int>& axesBounds,
+                              Label& xLabel, Label& yLabel, Label& titleLabel) override
+    {
+        cmp::PlotLookAndFeel::updateXYTitleLabels (bounds, axesBounds, xLabel, yLabel, titleLabel);
+        for (auto* label : { &xLabel, &yLabel, &titleLabel })
+        {
+            label->setBorderSize (BorderSize<int> (0));
+            label->setMinimumHorizontalScale (1.0f);
+            const auto font = label->getFont();
+            label->setBounds (label->getBounds().withSizeKeepingCentre (
+                static_cast<int> (std::ceil (font.getStringWidthFloat (label->getText()))) + 2,
+                static_cast<int> (std::ceil (font.getHeight())) + 2));
+        }
+    }
+
+    void updateVerticalGridLineTicksAuto (
+        const Rectangle<int>& bounds, const cmp::Lim_f& limits,
+        cmp::Scaling scaling, cmp::GridType type,
+        const std::vector<float>& previousTicks, std::vector<float>& ticks) noexcept override
+    {
+        xLimits = limits;
+        cmp::PlotLookAndFeel::updateVerticalGridLineTicksAuto (
+            bounds, limits, scaling, type, previousTicks, ticks);
+    }
+
+    void updateHorizontalGridLineTicksAuto (
+        const Rectangle<int>& bounds, const cmp::Lim_f& limits,
+        cmp::Scaling scaling, cmp::GridType type,
+        const std::vector<float>& previousTicks, std::vector<float>& ticks) noexcept override
+    {
+        yLimits = limits;
+        cmp::PlotLookAndFeel::updateHorizontalGridLineTicksAuto (
+            bounds, limits, scaling, type, previousTicks, ticks);
+    }
+
+    cmp::Lim_f xLimits { 0.0f, 1.0f };
+    cmp::Lim_f yLimits { -60.0f, 60.0f };
+    bool hasSeries = false;
+    std::function<void()> onResetView;
 };
 
 class ShowHideSpectrumOptionsButton final : public Button
@@ -92,68 +138,147 @@ public:
 } // namespace
 
 FrequencyPlot::FrequencyPlot()
+    : plotLookAndFeel (std::make_unique<SpectrumPlotLookAndFeel>())
 {
-    yLabel = std::make_unique<RotatedAxisLabel> ("Y-Axis Label", "Y Label");
-    yLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
-    yLabel->setJustificationType (Justification::centred);
-    addAndMakeVisible (yLabel.get());
+    static_cast<SpectrumPlotLookAndFeel&> (*plotLookAndFeel).onResetView = [this] { resetView(); };
+    plot.setLookAndFeel (plotLookAndFeel.get());
+    plot.setDownsamplingType (cmp::DownsamplingType::no_downsampling);
+    plot.setGridType (cmp::GridType::grid);
+    addAndMakeVisible (plot);
+    plot.addMouseListener (this, true);
+}
+
+void FrequencyPlot::mouseWheelMove (const MouseEvent& event, const MouseWheelDetails& wheel)
+{
+    const auto frequencyOnly = event.mods.isShiftDown();
+    if (! event.mods.isCtrlDown() && ! frequencyOnly)
+    {
+        Component::mouseWheelMove (event, wheel);
+        return;
+    }
+    const auto bounds = getDrawingBounds();
+    const auto position = event.getEventRelativeTo (this).position;
+    const auto delta = frequencyOnly && wheel.deltaY == 0.0f ? wheel.deltaX : wheel.deltaY;
+    if (! frequencyAxisValid || publishedSeriesCount == 0
+        || bounds.isEmpty() || ! bounds.toFloat().contains (position)
+        || ! std::isfinite (delta) || delta == 0.0f)
+        return;
+
+    const auto view = getVisibleRange();
+    const auto factor = std::pow (1.2, -std::clamp (static_cast<double> (delta) * 10.0,
+                                                  -4.0, 4.0));
+    const auto zoomLimits = [factor] (float minimum, float maximum, double fraction, bool logarithmic)
+    {
+        const auto lower = logarithmic ? std::log10 (static_cast<double> (minimum)) : minimum;
+        const auto upper = logarithmic ? std::log10 (static_cast<double> (maximum)) : maximum;
+        const auto anchor = lower + fraction * (upper - lower);
+        const auto zoomedLower = anchor + (lower - anchor) * factor;
+        const auto zoomedUpper = anchor + (upper - anchor) * factor;
+        return cmp::Lim_f { static_cast<float> (logarithmic ? std::pow (10.0, zoomedLower) : zoomedLower),
+                            static_cast<float> (logarithmic ? std::pow (10.0, zoomedUpper) : zoomedUpper) };
+    };
+    const auto xLimits = zoomLimits (view.xmin, view.xmax,
+                                     (position.x - bounds.getX()) / bounds.getWidth(),
+                                     frequencyScale == spectrumviewer::FrequencyScale::logarithmic);
+    const auto yLimits = frequencyOnly
+                             ? cmp::Lim_f { view.ymin, view.ymax }
+                             : zoomLimits (view.ymin, view.ymax,
+                                           1.0 - (position.y - bounds.getY()) / bounds.getHeight(), false);
+    const auto valid = [] (cmp::Lim_f limits)
+    {
+        return std::isfinite (limits.min) && std::isfinite (limits.max)
+               && limits.max - limits.min > 1.0e-6f;
+    };
+    if (! valid (xLimits) || (! frequencyOnly && ! valid (yLimits))
+        || (frequencyScale == spectrumviewer::FrequencyScale::logarithmic && xLimits.min <= 0.0f))
+        return;
+    plot.setXLim (xLimits.min, xLimits.max);
+    if (! frequencyOnly)
+        plot.setYLim (yLimits.min, yLimits.max);
+    plot.repaint();
 }
 
 void FrequencyPlot::resized()
 {
-    InteractivePlot::resized();
-
-    const auto width = getWidth();
-    const auto height = getHeight();
-    if (width <= 0 || height <= 0)
-        return;
-
-    constexpr int titleHeight = 20;
-    constexpr int axesWidth = 78;
-    constexpr int axesHeight = 50;
-    constexpr int padding = 10;
-    constexpr int yLabelWidth = 22;
-
-    titleLabel->setBounds (axesWidth + padding + 2, 0,
-                           width - axesWidth - padding * 2, titleHeight);
-    xLabel->setBounds (axesWidth + padding + 2, height - 20,
-                       width - axesWidth - padding * 2, 20);
-    yLabel->setBounds (0, titleHeight, yLabelWidth,
-                       height - axesHeight - titleHeight);
-
-    yAxis->setBounds (yLabelWidth, titleHeight,
-                      axesWidth - yLabelWidth - 4,
-                      height - axesHeight - titleHeight);
-    xAxis->setBounds (axesWidth + 1, height - axesHeight - 4,
-                      width - axesWidth, axesHeight - 4);
-    drawComponent->setBounds (axesWidth + padding + 2,
-                              titleHeight + padding,
-                              width - axesWidth - 2 - padding * 2,
-                              height - axesHeight - titleHeight - padding * 2);
-    autoRescaleButton->setBounds (axesWidth + padding + 2, titleHeight + padding,
-                                  50, 20);
+    plot.setBounds (getLocalBounds().reduced (20, 0));
 }
 
-void FrequencyPlot::plot (std::vector<float> x,
-                          std::vector<float> y,
-                          Colour colour,
-                          float width,
-                          float opacity,
-                          PlotType type)
+void FrequencyPlot::paint (Graphics& graphics)
 {
-    if (type != PlotType::LINE)
-    {
-        InteractivePlot::plot (std::move (x), std::move (y), colour, width, opacity, type);
-        return;
-    }
+    // graphics.fillAll (backgroundColour);
+}
 
-    auto& series = nextLineSeries();
-    series.x = std::move (x);
-    series.y = std::move (y);
-    series.colour = colour;
-    series.width = width;
-    series.opacity = opacity;
-    repaint (drawComponent->getBounds());
+Rectangle<int> FrequencyPlot::getDrawingBounds() const noexcept
+{
+    return plotLookAndFeel->getAxesBounds (plot.getBounds(), &plot).translated (plot.getX(), plot.getY());
+}
+
+XYRange FrequencyPlot::getVisibleRange() const noexcept
+{
+    const auto& lookAndFeel = static_cast<const SpectrumPlotLookAndFeel&> (*plotLookAndFeel);
+    return { lookAndFeel.xLimits.min, lookAndFeel.xLimits.max,
+             lookAndFeel.yLimits.min, lookAndFeel.yLimits.max };
+}
+
+void FrequencyPlot::title (const String& text)
+{
+    plot.setTitle (text.toStdString());
+}
+
+void FrequencyPlot::xlabel (const String& text)
+{
+    if (xAxisLabel == text)
+        return;
+    xAxisLabel = text;
+    plot.setXLabel (text.toStdString());
+}
+
+void FrequencyPlot::ylabel (const String& text)
+{
+    if (yAxisLabel == text)
+        return;
+    yAxisLabel = text;
+    plot.setYLabel (text.toStdString());
+}
+
+void FrequencyPlot::setRange (const XYRange& range)
+{
+    setFrequencyAxis (spectrumviewer::FrequencyScale::linear,
+                      range.xmin, range.xmax, range.ymin, range.ymax);
+}
+
+void FrequencyPlot::resetView()
+{
+    plot.setXLim (minimumFrequencyHz, maximumFrequencyHz);
+    plot.setYLim (minimumAmplitude, maximumAmplitude);
+}
+
+void FrequencyPlot::setBackgroundColour (Colour colour)
+{
+    backgroundColour = colour;
+    plotLookAndFeel->setColour (cmp::Plot::background_colour, colour);
+    repaint();
+}
+
+void FrequencyPlot::setGridColour (Colour colour)
+{
+    plotLookAndFeel->setColour (cmp::Plot::grid_colour, colour);
+    repaint();
+}
+
+void FrequencyPlot::setAxisColour (Colour colour)
+{
+    for (const auto id : { cmp::Plot::frame_colour, cmp::Plot::x_grid_label_colour,
+                            cmp::Plot::y_grid_label_colour, cmp::Plot::x_label_colour,
+                            cmp::Plot::y_label_colour, cmp::Plot::title_label_colour })
+        plotLookAndFeel->setColour (id, colour);
+    plot.lookAndFeelChanged();
+    repaint();
+}
+
+void FrequencyPlot::beginLines()
+{
+    lineSeriesCount = 0;
 }
 
 void FrequencyPlot::plotLine (const std::vector<float>& x,
@@ -162,28 +287,80 @@ void FrequencyPlot::plotLine (const std::vector<float>& x,
                               float width,
                               float opacity)
 {
-    auto& series = nextLineSeries();
-    // assign() keeps the existing capacity, which is what makes a redraw of
-    // the same number of points allocation-free.
-    series.x.assign (x.begin(), x.end());
-    series.y.assign (y.begin(), y.end());
-    series.colour = colour;
-    series.width = width;
-    series.opacity = opacity;
-    repaint (drawComponent->getBounds());
+    if (x.empty() || x.size() != y.size())
+        return;
+    auto first = std::size_t { 0 };
+    const auto finitePoint = [&] (std::size_t index)
+    {
+        return std::isfinite (x[index]) && std::isfinite (y[index]);
+    };
+    while (first < x.size())
+    {
+        while (first < x.size() && ! finitePoint (first))
+            ++first;
+        auto last = first;
+        while (last < x.size() && finitePoint (last))
+            ++last;
+        if (last - first >= 2)
+        {
+            if (lineSeriesCount == lineSeries.size())
+                lineSeries.emplace_back();
+            auto& series = lineSeries[lineSeriesCount++];
+            const auto xBegin = x.begin() + static_cast<std::ptrdiff_t> (first);
+            const auto xEnd = x.begin() + static_cast<std::ptrdiff_t> (last);
+            if (! std::equal (series.x.begin(), series.x.end(), xBegin, xEnd)
+                || series.attribute.series_colour != colour
+                || series.attribute.series_opacity != opacity
+                || ! series.attribute.path_stroke_type
+                || series.attribute.path_stroke_type->getStrokeThickness() != width)
+            {
+                series.x.assign (xBegin, xEnd);
+                series.attribute.series_colour = colour;
+                series.attribute.series_opacity = opacity;
+                series.attribute.path_stroke_type = PathStrokeType (width);
+                seriesLayoutChanged = true;
+            }
+            series.y.assign (y.begin() + static_cast<std::ptrdiff_t> (first),
+                             y.begin() + static_cast<std::ptrdiff_t> (last));
+        }
+        first = last;
+    }
 }
 
-FrequencyPlot::LineSeries& FrequencyPlot::nextLineSeries()
+void FrequencyPlot::endLines()
 {
-    if (lineSeriesCount == lineSeries.size())
-        lineSeries.emplace_back();
-    return lineSeries[lineSeriesCount++];
+    static_cast<SpectrumPlotLookAndFeel&> (*plotLookAndFeel).hasSeries = lineSeriesCount != 0;
+    if (lineSeriesCount == 0)
+    {
+        if (publishedSeriesCount != 0)
+            clear();
+        return;
+    }
+    if (seriesLayoutChanged || lineSeriesCount != publishedSeriesCount)
+    {
+        plot.clearTracePoints();
+        lineSeries.resize (lineSeriesCount);
+        plot.plot (std::as_const (lineSeries));
+        publishedSeriesCount = lineSeriesCount;
+        seriesLayoutChanged = false;
+    }
+    else
+    {
+        yValues.clear();
+        for (const auto& series : lineSeries)
+            yValues.emplace_back (series.y);
+        plot.plotUpdateYOnly (std::span<const std::span<const float>> (yValues));
+    }
 }
 
 void FrequencyPlot::clear()
 {
+    static_cast<SpectrumPlotLookAndFeel&> (*plotLookAndFeel).hasSeries = false;
     lineSeriesCount = 0;
-    InteractivePlot::clear();
+    publishedSeriesCount = 0;
+    seriesLayoutChanged = true;
+    plot.clearTracePoints();
+    plot.clear();
 }
 
 void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
@@ -192,9 +369,10 @@ void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
                                       float minimumDb,
                                       float maximumDb)
 {
-    // Called every frame, and usually only the amplitude range has moved. The
-    // tick labels and axis title below allocate, so rebuild them only when
-    // the frequency axis itself changes.
+    const auto view = getVisibleRange();
+    const auto userView = frequencyAxisValid
+                          && (view.xmin != minimumFrequencyHz || view.xmax != maximumFrequencyHz
+                              || view.ymin != minimumAmplitude || view.ymax != maximumAmplitude);
     const auto frequencyAxisChanged = ! frequencyAxisValid
                                       || scale != frequencyScale
                                       || minimumHz != minimumFrequencyHz
@@ -202,120 +380,24 @@ void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
     frequencyScale = scale;
     minimumFrequencyHz = minimumHz;
     maximumFrequencyHz = maximumHz;
-    minimumAmplitude = minimumDb;
-    maximumAmplitude = maximumDb;
-    const auto axisMinimum = scale == spectrumviewer::FrequencyScale::linear
-                                 ? minimumHz
-                                 : std::log10 (minimumHz);
-    const auto axisMaximum = scale == spectrumviewer::FrequencyScale::linear
-                                 ? maximumHz
-                                 : std::log10 (maximumHz);
-    XYRange range { axisMinimum, axisMaximum, minimumDb, maximumDb };
-    setRange (range);
-    repaint();
+    if (frequencyAxisChanged || ! userView)
+    {
+        minimumAmplitude = minimumDb;
+        maximumAmplitude = maximumDb;
+        plot.setYLim (minimumDb, maximumDb);
+    }
     if (! frequencyAxisChanged)
         return;
 
     frequencyAxisValid = true;
-    logarithmicTickPositions.clear();
-    logarithmicTickLabels.clear();
-    if (scale == spectrumviewer::FrequencyScale::logarithmic)
-    {
-        const auto firstDecade = static_cast<int> (std::ceil (axisMinimum));
-        const auto lastDecade = static_cast<int> (std::floor (axisMaximum));
-        for (auto exponent = firstDecade; exponent <= lastDecade; ++exponent)
-        {
-            const auto frequency = std::pow (10.0f, static_cast<float> (exponent));
-            logarithmicTickPositions.push_back (
-                (static_cast<float> (exponent) - axisMinimum)
-                / (axisMaximum - axisMinimum));
-            if (frequency >= 1000.0f)
-                logarithmicTickLabels.emplace_back (
-                    String (frequency / 1000.0f, 0) + "k");
-            else
-                logarithmicTickLabels.emplace_back (String (frequency, 0));
-        }
-    }
-    xAxis->setVisible (scale == spectrumviewer::FrequencyScale::linear);
+    plot.setScaling (cmp::Scaling::linear, cmp::Scaling::linear);
+    plot.setXLim (minimumHz, maximumHz);
+    plot.setScaling (scale == spectrumviewer::FrequencyScale::linear
+                         ? cmp::Scaling::linear : cmp::Scaling::logarithmic,
+                     cmp::Scaling::linear);
     xlabel (scale == spectrumviewer::FrequencyScale::linear
                 ? "Frequency (Hz)"
                 : "Frequency (Hz, log scale)");
-}
-
-void FrequencyPlot::paintOverChildren (Graphics& graphics)
-{
-    const auto drawingBounds = drawComponent->getBounds();
-    const auto axisMinimum = frequencyScale == spectrumviewer::FrequencyScale::linear
-                                 ? minimumFrequencyHz
-                                 : std::log10 (minimumFrequencyHz);
-    const auto axisMaximum = frequencyScale == spectrumviewer::FrequencyScale::linear
-                                 ? maximumFrequencyHz
-                                 : std::log10 (maximumFrequencyHz);
-    const auto xRange = axisMaximum - axisMinimum;
-    const auto yRange = maximumAmplitude - minimumAmplitude;
-    if (drawingBounds.getWidth() > 0 && drawingBounds.getHeight() > 0
-        && xRange > 1.0e-6f && yRange > 1.0e-6f)
-    {
-        graphics.saveState();
-        graphics.reduceClipRegion (drawingBounds);
-
-        for (std::size_t seriesIndex = 0; seriesIndex < lineSeriesCount; ++seriesIndex)
-        {
-            const auto& series = lineSeries[seriesIndex];
-            const auto pointCount = std::min (series.x.size(), series.y.size());
-            Path path;
-            auto continuing = false;
-            for (std::size_t index = 0; index < pointCount; ++index)
-            {
-                if (! std::isfinite (series.x[index]) || ! std::isfinite (series.y[index]))
-                {
-                    continuing = false;
-                    continue;
-                }
-
-                const auto pixelX = static_cast<float> (drawingBounds.getX())
-                                    + (series.x[index] - axisMinimum) / xRange
-                                          * static_cast<float> (drawingBounds.getWidth());
-                const auto pixelY = static_cast<float> (drawingBounds.getBottom())
-                                    - (series.y[index] - minimumAmplitude) / yRange
-                                          * static_cast<float> (drawingBounds.getHeight());
-                if (continuing)
-                    path.lineTo (pixelX, pixelY);
-                else
-                {
-                    path.startNewSubPath (pixelX, pixelY);
-                    continuing = true;
-                }
-            }
-            graphics.setColour (series.colour.withAlpha (series.opacity));
-            graphics.strokePath (path, PathStrokeType (series.width));
-        }
-        graphics.restoreState();
-    }
-
-    if (frequencyScale != spectrumviewer::FrequencyScale::logarithmic)
-        return;
-
-    const auto bounds = xAxis->getBounds();
-    constexpr auto padding = 10.0f;
-    const auto left = static_cast<float> (bounds.getX()) + padding;
-    const auto width = static_cast<float> (bounds.getWidth()) - 2.0f * padding;
-    const auto axisY = static_cast<float> (bounds.getY()) + 3.0f;
-    graphics.setColour (axisColour);
-    graphics.setFont (FontOptions ("Inter", "Regular", 12.0f));
-    graphics.drawLine (left, axisY, left + width, axisY, 2.0f);
-    for (std::size_t index = 0; index < logarithmicTickPositions.size(); ++index)
-    {
-        const auto x = left + logarithmicTickPositions[index] * width;
-        graphics.drawLine (x, axisY, x, axisY + 10.0f, 2.0f);
-        graphics.drawText (logarithmicTickLabels[index],
-                           static_cast<int> (x) - 30,
-                           static_cast<int> (axisY) + 8,
-                           60,
-                           20,
-                           Justification::centred,
-                           false);
-    }
 }
 
 std::vector<float> FrequencyPlot::transformFrequencies (
@@ -341,16 +423,17 @@ void FrequencyPlot::transformFrequencies (const std::vector<float>& frequencies,
 
 float FrequencyPlot::frequencyAt (Point<int> point) const noexcept
 {
-    const auto bounds = drawComponent->getBounds();
+    const auto bounds = getDrawingBounds();
     if (! bounds.contains (point) || bounds.getWidth() <= 0)
         return std::numeric_limits<float>::quiet_NaN();
     const auto fraction = static_cast<float> (point.x - bounds.getX())
                           / static_cast<float> (bounds.getWidth());
+    const auto view = getVisibleRange();
     if (frequencyScale == spectrumviewer::FrequencyScale::linear)
-        return minimumFrequencyHz + fraction * (maximumFrequencyHz - minimumFrequencyHz);
+        return view.xmin + fraction * (view.xmax - view.xmin);
     return std::pow (10.0f,
-                     std::log10 (minimumFrequencyHz)
-                         + fraction * (std::log10 (maximumFrequencyHz) - std::log10 (minimumFrequencyHz)));
+                     std::log10 (view.xmin)
+                         + fraction * (std::log10 (view.xmax) - std::log10 (view.xmin)));
 }
 
 SpectrumCanvas::SpectrumCanvas (SpectrumViewer* n, SpectrumDisplaySettings& settings)
@@ -1599,7 +1682,6 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
     plt->ylabel ("PSD (dB re native unit²/Hz)");
     plt->setBackgroundColour (Colour (45, 45, 45));
     plt->setGridColour (Colour (100, 100, 100));
-    plt->setInteractive (InteractivePlotMode::OFF);
     addAndMakeVisible (plt.get());
     plt->addMouseListener (this, true);
 
@@ -1783,7 +1865,7 @@ void CanvasPlot::setDisplayType (DisplayType type)
 
 void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
 {
-    plt->clear();
+    plt->beginLines();
     updateAmplitudeAxisLabel();
 
     // This runs at the refresh rate with up to four series per channel, so
@@ -1858,6 +1940,7 @@ void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
                                range.minimum,
                                range.maximum);
     }
+    plt->endLines();
 }
 
 void CanvasPlot::updatePowerSpectrum (const float* meanPsd,
@@ -1996,7 +2079,7 @@ void CanvasPlot::refreshPlotFrequencies()
     if (! plotFrequenciesStale && plotFrequenciesScale == frequencyScale)
         return;
 
-    FrequencyPlot::transformFrequencies (xvalues, frequencyScale, plotFrequencies);
+    FrequencyPlot::transformFrequencies (xvalues, spectrumviewer::FrequencyScale::linear, plotFrequencies);
     zeroLine.assign (xvalues.size(), 0.0f);
     plotFrequenciesScale = frequencyScale;
     plotFrequenciesStale = false;
@@ -2005,6 +2088,7 @@ void CanvasPlot::refreshPlotFrequencies()
 void CanvasPlot::setAmplitudeRangeMode (spectrumviewer::AmplitudeRangeMode mode)
 {
     amplitudeRange.setMode (mode);
+    plt->resetView();
     plotPowerSpectrum (mode == spectrumviewer::AmplitudeRangeMode::automatic
                        && hasFrameTiming);
 }
@@ -2014,7 +2098,10 @@ bool CanvasPlot::setFixedAmplitudeRange (float minimumDb, float maximumDb)
     if (! amplitudeRange.setFixedRange (minimumDb, maximumDb))
         return false;
     if (amplitudeRange.getMode() == spectrumviewer::AmplitudeRangeMode::fixed)
+    {
+        plt->resetView();
         plotPowerSpectrum();
+    }
     return true;
 }
 

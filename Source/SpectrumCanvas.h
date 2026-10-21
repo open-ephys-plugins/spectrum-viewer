@@ -31,6 +31,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "SpectrumDisplaySettings.h"
 #include "SpectrumViewer.h"
 
+#include <cmp_lookandfeel.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -39,24 +41,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 class SpectrumCanvas;
 
 // Component for housing power spectrum & spectrograph plots
-class TESTABLE FrequencyPlot : public InteractivePlot
+class TESTABLE FrequencyPlot : public Component
 {
 public:
     FrequencyPlot();
 
-    void plot (std::vector<float> x,
-               std::vector<float> y,
-               Colour colour = Colours::white,
-               float width = 1.0f,
-               float opacity = 1.0f,
-               PlotType type = PlotType::LINE) override;
+    void title (const String& text);
+    void xlabel (const String& text);
+    void ylabel (const String& text);
+    void setRange (const XYRange& range);
+    void resetView();
+    void setBackgroundColour (Colour colour);
+    void setGridColour (Colour colour);
+    void setAxisColour (Colour colour);
 
-    /** Adds a line series drawn from vectors the caller keeps.
+    void beginLines();
+    void endLines();
 
-        plot() has to take its arguments by value because the base class does,
-        which costs two allocations per series per frame. This copies into
-        series storage kept from the previous frame instead, so a steady-state
-        redraw does not allocate. */
+    /** Stages a trace in retained storage for one batched renderer update. */
     void plotLine (const std::vector<float>& x,
                    const std::vector<float>& y,
                    Colour colour,
@@ -82,45 +84,48 @@ public:
                                       spectrumviewer::FrequencyScale scale,
                                       std::vector<float>& transformed);
     float frequencyAt (Point<int> point) const noexcept;
-    int getDrawingWidth() const noexcept { return drawComponent->getWidth(); }
-    void paintOverChildren (Graphics& graphics) override;
+    int getDrawingWidth() const noexcept { return getDrawingBounds().getWidth(); }
+    void paint (Graphics& graphics) override;
     void resized() override;
+    void mouseWheelMove (const MouseEvent& event, const MouseWheelDetails& wheel) override;
 
 #if BUILD_TESTS
-    Rectangle<int> getDrawingBoundsForTesting() const { return drawComponent->getBounds(); }
-    String getXAxisLabelForTesting() const { return xLabel->getText(); }
-    String getYAxisLabelForTesting() const { return yLabel->getText(); }
-    XYRange getRangeForTesting()
+    Rectangle<int> getDrawingBoundsForTesting() const { return getDrawingBounds(); }
+    String getXAxisLabelForTesting() const { return xAxisLabel; }
+    String getYAxisLabelForTesting() const { return yAxisLabel; }
+    cmp::Plot* getRendererForTesting() noexcept { return &plot; }
+    std::size_t getSeriesCountForTesting() const noexcept { return publishedSeriesCount; }
+    XYRange getRangeForTesting() const
     {
-        XYRange range;
-        getRange (range);
-        return range;
+        return getVisibleRange();
     }
 #endif
 
 private:
-    struct LineSeries
+    class PlotComponent final : public cmp::Plot
     {
-        std::vector<float> x;
-        std::vector<float> y;
-        Colour colour;
-        float width = 1.0f;
-        float opacity = 1.0f;
+    public:
+        void mouseWheelMove (const MouseEvent&, const MouseWheelDetails&) override {}
     };
 
-    LineSeries& nextLineSeries();
+    Rectangle<int> getDrawingBounds() const noexcept;
+    XYRange getVisibleRange() const noexcept;
 
-    // Only the first lineSeriesCount entries are drawn. The rest are retained
-    // storage, so clearing and replotting the same traces reuses it.
-    std::vector<LineSeries> lineSeries;
+    std::unique_ptr<cmp::PlotLookAndFeel> plotLookAndFeel;
+    PlotComponent plot;
+    cmp::SeriesDataList lineSeries;
+    std::vector<std::span<const float>> yValues;
     std::size_t lineSeriesCount = 0;
+    std::size_t publishedSeriesCount = 0;
+    bool seriesLayoutChanged = true;
+    Colour backgroundColour = Colour (45, 45, 45);
+    String xAxisLabel;
+    String yAxisLabel;
     spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
     float minimumFrequencyHz = 0.0f;
     float maximumFrequencyHz = 1.0f;
     float minimumAmplitude = -60.0f;
     float maximumAmplitude = 60.0f;
-    std::vector<float> logarithmicTickPositions;
-    std::vector<String> logarithmicTickLabels;
     // The frequency axis rarely changes between frames, but the amplitude
     // range does. False until the first setFrequencyAxis() call.
     bool frequencyAxisValid = false;
@@ -207,7 +212,7 @@ public:
     }
     std::vector<float> getPlottedFrequenciesForTesting() const
     {
-        return FrequencyPlot::transformFrequencies (xvalues, frequencyScale);
+        return plotFrequencies;
     }
     const std::vector<float>& getDbMeanTraceForTesting (std::size_t channel) const
     {
