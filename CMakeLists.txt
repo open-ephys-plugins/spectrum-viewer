@@ -17,6 +17,16 @@ set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architecture for 
 
 project(OE_PLUGIN_${PLUGIN_NAME})
 
+# CustomMatPlot has constexpr helpers that call non-constexpr JUCE accessors.
+# GCC 13 accepts that in C++20 mode; earlier versions reject it as an error.
+set(SPECTRUM_VIEWER_MINIMUM_GCC_VERSION 13)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+   AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS SPECTRUM_VIEWER_MINIMUM_GCC_VERSION)
+	message(FATAL_ERROR
+		"Spectrum Viewer requires GCC ${SPECTRUM_VIEWER_MINIMUM_GCC_VERSION} or newer, "
+		"found ${CMAKE_CXX_COMPILER_VERSION}.")
+endif()
+
 option(BUILD_TESTS "Build Spectrum Viewer tests" OFF)
 option(BUILD_PROCESSOR_TESTS "Build Spectrum Viewer processor lifecycle tests" OFF)
 option(BUILD_BENCHMARKS "Build Spectrum Viewer performance benchmarks" OFF)

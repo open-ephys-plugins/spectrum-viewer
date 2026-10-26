@@ -115,7 +115,7 @@ Selecting the `INSTALL` project and manually building it will copy the `.dll` an
 
 ### Linux
 
-**Requirements:** [CMake](https://cmake.org/install/)
+**Requirements:** [CMake](https://cmake.org/install/) and GCC 13 or newer (Ubuntu 24.04 or later)
 
 From the `Build` directory, enter:
 
