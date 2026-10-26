@@ -767,7 +767,6 @@ void SpectrumCanvas::createControls()
     exportReferenceAction->addListener (this);
 
     referenceStatusLabel = makeLabel ("SpectrumReferenceStatus", "No reference");
-    referenceStatusLabel->setMouseCursor (MouseCursor::PointingHandCursor);
     referenceStatusLabel->setFont (FontOptions ("Inter", "Regular", 13.0f));
 
     createControlGroups();
@@ -823,6 +822,28 @@ void SpectrumCanvas::createControlGroups()
     reference->addPair (1, nullptr, importReferenceAction.get(), 0, 85);
     reference->addPair (1, nullptr, exportReferenceAction.get(), 0, 85);
     reference->addPair (1, nullptr, referenceStatusLabel.get(), 0, 205);
+    referenceGroup = reference;
+}
+
+void SpectrumCanvas::paintOverChildren (Graphics& g)
+{
+    if (! setReferenceSuggested || referenceGroup == nullptr
+        || ! optionsDrawer->isShowing() || ! referenceGroup->isVisible())
+        return;
+
+    // Both are measured in this component's space, so the arrow follows the
+    // controls when the options viewport is scrolled.
+    const auto button = getLocalArea (setReferenceAction.get(), setReferenceAction->getLocalBounds());
+    const auto startX = static_cast<float> (button.getRight() + 6);
+    const auto endX = static_cast<float> (getLocalArea (referenceGroup, referenceGroup->getLocalBounds()).getX() + 2);
+    if (endX - startX <= 12.0f)
+        return;
+
+    g.reduceClipRegion (optionsViewport->getBounds());
+    g.setColour (findColour (ThemeColours::defaultText).withAlpha (0.75f));
+    const auto startY = static_cast<float> (button.getCentreY());
+    const auto endY = static_cast<float> (getLocalArea (referenceGroup, referenceGroup->getLocalBounds()).getCentreY());
+    g.drawArrow ({ startX, startY, endX, endY }, 2.0f, 11.0f, 10.0f);
 }
 
 void SpectrumCanvas::applyDisplaySettings()
@@ -1541,8 +1562,20 @@ void SpectrumCanvas::updateReferenceStatus (SpectrumCaptureState capture)
 
     // A baseline is already a one-channel file, so there is nothing to export.
     exportReferenceAction->setEnabled (reference != nullptr && ! reference->isBaseline());
-    setReferenceAction->setEnabled (capture == SpectrumCaptureState::frozen
-                                    && processor->hasRetainedCapture());
+    // A capture that is already the reference has nothing left to set, and
+    // pressing again would only restart the same request.
+    const auto captureIsReference = processor->hasSpectrumReference()
+                                    && processor->getReferenceCaptureId()
+                                           == processor->getCaptureId();
+    const auto setReferenceWanted = capture == SpectrumCaptureState::frozen
+                                    && processor->hasRetainedCapture()
+                                    && ! captureIsReference;
+    setReferenceAction->setEnabled (setReferenceWanted);
+    if (setReferenceWanted != setReferenceSuggested)
+    {
+        setReferenceSuggested = setReferenceWanted;
+        repaint (optionsViewport->getBounds());
+    }
     // Clear also dismisses a failure message, so it stays available for one.
     clearReferenceAction->setEnabled (reference != nullptr || referenceRequestWasDropped
                                       || fileError.isNotEmpty());

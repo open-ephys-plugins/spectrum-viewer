@@ -414,6 +414,9 @@ public:
     /** Draws the canvas */
     void paint (Graphics& g) override;
 
+    /** Draws the Set Ref arrow over the options viewport. */
+    void paintOverChildren (Graphics& g) override;
+
     /** Updates component boundaries */
     void resized() override;
 
@@ -598,6 +601,11 @@ private:
 
     // The drawer's controls belong to these, in the order they are laid out.
     std::vector<std::unique_ptr<ControlGroup>> controlGroups;
+    ControlGroup* referenceGroup = nullptr;
+    // Whether Set Ref is enabled, kept here because UtilityButton does not
+    // expose isEnabled(). While true, an arrow points from it to the reference
+    // group.
+    bool setReferenceSuggested = false;
 
     Array<Range<int>> freqRanges;
     StatusTimer statusTimer { *this };
