@@ -1900,7 +1900,6 @@ void CanvasPlot::lookAndFeelChanged()
     plt->setAxisColour (findColour (ThemeColours::controlPanelText));
     cursorLabel->setColour (Label::textColourId, findColour (ThemeColours::controlPanelText));
 
-    chanColors[0] = findColour (ThemeColours::defaultText);
     plotPowerSpectrum();
 }
 
@@ -1992,31 +1991,43 @@ void CanvasPlot::plotPowerSpectrum (bool updateAutomaticRange)
     // below, so make that bound explicit rather than assumed.
     const auto traceCount = std::min ({ static_cast<std::size_t> (activeChannels.size()),
                                         currPower.size(),
-                                        chanColors.size() });
+                                        chanColors.size(),
+                                        referenceColors.size() });
     const auto showingOverlay = comparisonStatus.mode
                                     == spectrumviewer::SpectrumComparisonMode::overlay
                                 && comparisonStatus.hasComparisonData();
-    // A baseline is the same spectrum behind every channel, so it is drawn
-    // once, in no channel's colour, rather than stacked once per channel.
-    if (showingOverlay && comparisonStatus.sharedAcrossChannels && traceCount > 0)
-        plt->plotLine (plotFrequencies,
-                       currComparison[0],
-                       findColour (ThemeColours::controlPanelText),
-                       1.5f,
-                       0.6f);
     for (std::size_t i = 0; i < traceCount; i++)
     {
         if (showingDelta)
             plt->plotLine (plotFrequencies, currComparison[i], chanColors[i], 1.5f);
         else
         {
-            if (showingOverlay && ! comparisonStatus.sharedAcrossChannels)
-                plt->plotLine (plotFrequencies, currComparison[i], chanColors[i], 1.0f, 0.55f);
             if (showingAperiodic && currBaselineDb[i].size() == xvalues.size())
                 plt->plotLine (plotFrequencies, currBaselineDb[i], chanColors[i], 2.0f, 0.55f);
             if (peakEnvelopeVisible)
                 plt->plotLine (plotFrequencies, displayedPeakPower[i], chanColors[i], 1.0f, 0.35f);
             plt->plotLine (plotFrequencies, displayedPower[i], chanColors[i], 1.5f);
+        }
+    }
+
+    // Drawn last so the reference sits in front of the live traces. A baseline
+    // is the same spectrum behind every channel, so it is drawn once, in no
+    // channel's colour, rather than stacked once per channel.
+    if (showingOverlay)
+    {
+        if (comparisonStatus.sharedAcrossChannels)
+        {
+            if (traceCount > 0)
+                plt->plotLine (plotFrequencies,
+                               currComparison[0],
+                               findColour (ThemeColours::controlPanelText),
+                               1.5f,
+                               0.6f);
+        }
+        else
+        {
+            for (std::size_t i = 0; i < traceCount; i++)
+                plt->plotLine (plotFrequencies, currComparison[i], referenceColors[i], 1.0f);
         }
     }
 

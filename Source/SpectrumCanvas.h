@@ -300,14 +300,18 @@ private:
     // window width.
     static constexpr int spectrogramHistoryColumns = 1000;
 
-    std::vector<Colour> chanColors = { Colour (200, 200, 200),
-                                       Colour (230, 159, 0),
-                                       Colour (86, 180, 233),
-                                       Colour (0, 158, 115),
-                                       Colour (240, 228, 66),
-                                       Colour (0, 114, 178),
-                                       Colour (242, 66, 53),
-                                       Colour (204, 121, 167) };
+    // matplotlib's tab20 without its gray pair: each channel takes a dark
+    // shade, and the reference drawn for it takes the matching light one.
+    std::vector<Colour> chanColors = { Colour (0xff1f77b4), Colour (0xffff7f0e),
+                                       Colour (0xff2ca02c), Colour (0xffd62728),
+                                       Colour (0xff9467bd), Colour (0xff8c564b),
+                                       Colour (0xffe377c2), Colour (0xffbcbd22),
+                                       Colour (0xff17becf) };
+    std::vector<Colour> referenceColors = { Colour (0xffaec7e8), Colour (0xffffbb78),
+                                            Colour (0xff98df8a), Colour (0xffff9896),
+                                            Colour (0xffc5b0d5), Colour (0xffc49c94),
+                                            Colour (0xfff7b6d2), Colour (0xffdbdb8d),
+                                            Colour (0xff9edae5) };
 
     std::unique_ptr<UtilityButton> clearButton;
     std::unique_ptr<UtilityButton> resetViewButton;
