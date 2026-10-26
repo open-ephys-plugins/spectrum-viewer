@@ -35,16 +35,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
 class SpectrumCanvas;
 
 // Component for housing power spectrum & spectrograph plots
-class TESTABLE FrequencyPlot : public Component
+class TESTABLE FrequencyPlot : public Component,
+                               private AsyncUpdater
 {
 public:
     FrequencyPlot();
+    ~FrequencyPlot() override;
+
+    /** True when the visible range differs from the default view. */
+    bool isViewZoomed() const noexcept;
+
+    /** Called on the message thread when isViewZoomed() changes. */
+    std::function<void()> onZoomStateChanged;
 
     void title (const String& text);
     void xlabel (const String& text);
@@ -89,6 +98,10 @@ public:
     void resized() override;
     void mouseWheelMove (const MouseEvent& event, const MouseWheelDetails& wheel) override;
 
+    /** The renderer's child components each have their own cursor, so the
+        cursor is set on whichever one the mouse is over, and only while the
+        mouse is inside the axes. */
+    void mouseMove (const MouseEvent& event) override;
 #if BUILD_TESTS
     Rectangle<int> getDrawingBoundsForTesting() const { return getDrawingBounds(); }
     String getXAxisLabelForTesting() const { return xAxisLabel; }
@@ -108,6 +121,8 @@ private:
         void mouseWheelMove (const MouseEvent&, const MouseWheelDetails&) override {}
     };
 
+    void handleAsyncUpdate() override;
+
     Rectangle<int> getDrawingBounds() const noexcept;
     XYRange getVisibleRange() const noexcept;
 
@@ -119,6 +134,7 @@ private:
     std::size_t publishedSeriesCount = 0;
     bool seriesLayoutChanged = true;
     Colour backgroundColour = Colour (45, 45, 45);
+    MouseCursor crosshairCursor { MouseCursor::CrosshairCursor };
     String xAxisLabel;
     String yAxisLabel;
     spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
@@ -129,6 +145,7 @@ private:
     // The frequency axis rarely changes between frames, but the amplitude
     // range does. False until the first setFrequencyAxis() call.
     bool frequencyAxisValid = false;
+    bool reportedViewZoomed = false;
 };
 
 class TESTABLE CanvasPlot : public Component,
@@ -293,6 +310,9 @@ private:
                                        Colour (204, 121, 167) };
 
     std::unique_ptr<UtilityButton> clearButton;
+    std::unique_ptr<UtilityButton> resetViewButton;
+
+    void updateResetViewButtonVisibility();
 
     SpectrumViewer* processor;
 

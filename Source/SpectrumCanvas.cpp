@@ -82,6 +82,8 @@ public:
         const std::vector<float>& previousTicks, std::vector<float>& ticks) noexcept override
     {
         xLimits = limits;
+        if (onLimitsChanged)
+            onLimitsChanged();
         cmp::PlotLookAndFeel::updateVerticalGridLineTicksAuto (
             bounds, limits, scaling, type, previousTicks, ticks);
     }
@@ -92,6 +94,8 @@ public:
         const std::vector<float>& previousTicks, std::vector<float>& ticks) noexcept override
     {
         yLimits = limits;
+        if (onLimitsChanged)
+            onLimitsChanged();
         cmp::PlotLookAndFeel::updateHorizontalGridLineTicksAuto (
             bounds, limits, scaling, type, previousTicks, ticks);
     }
@@ -100,6 +104,7 @@ public:
     cmp::Lim_f yLimits { -60.0f, 60.0f };
     bool hasSeries = false;
     std::function<void()> onResetView;
+    std::function<void()> onLimitsChanged;
 };
 
 class ShowHideSpectrumOptionsButton final : public Button
@@ -135,17 +140,74 @@ public:
     }
 };
 
+MouseCursor createCrosshairCursor (Colour colour)
+{
+    // Drawn at twice the logical size so it stays sharp on high-DPI displays.
+    // The lines are whole, even-aligned pixels: Windows rescales the image to
+    // the physical cursor size, and a line straddling a pixel boundary would
+    // be blended into partial transparency by that.
+    constexpr int size = 48;
+    constexpr int lineStart = size / 2;
+    constexpr int lineThickness = 4;
+    Image image (Image::ARGB, size, size, true);
+    {
+        Graphics g (image);
+
+        g.setColour (colour.withAlpha (1.0f));
+        g.fillRect (0, lineStart - lineThickness / 2, size, lineThickness);
+        g.fillRect (lineStart - lineThickness / 2, 0, lineThickness, size);
+    }
+    return MouseCursor (image, size / 4, size / 4, 2.0f);
+}
+
 } // namespace
 
 FrequencyPlot::FrequencyPlot()
     : plotLookAndFeel (std::make_unique<SpectrumPlotLookAndFeel>())
 {
     static_cast<SpectrumPlotLookAndFeel&> (*plotLookAndFeel).onResetView = [this] { resetView(); };
+    static_cast<SpectrumPlotLookAndFeel&> (*plotLookAndFeel).onLimitsChanged = [this] { triggerAsyncUpdate(); };
     plot.setLookAndFeel (plotLookAndFeel.get());
     plot.setDownsamplingType (cmp::DownsamplingType::no_downsampling);
     plot.setGridType (cmp::GridType::grid);
     addAndMakeVisible (plot);
     plot.addMouseListener (this, true);
+}
+
+FrequencyPlot::~FrequencyPlot()
+{
+    cancelPendingUpdate();
+}
+
+bool FrequencyPlot::isViewZoomed() const noexcept
+{
+    const auto view = getVisibleRange();
+    return frequencyAxisValid
+           && (view.xmin != minimumFrequencyHz || view.xmax != maximumFrequencyHz
+               || view.ymin != minimumAmplitude || view.ymax != maximumAmplitude);
+}
+
+void FrequencyPlot::handleAsyncUpdate()
+{
+    const auto zoomed = isViewZoomed();
+    if (zoomed == reportedViewZoomed)
+        return;
+    reportedViewZoomed = zoomed;
+    if (onZoomStateChanged)
+        onZoomStateChanged();
+}
+
+void FrequencyPlot::mouseMove (const MouseEvent& event)
+{
+    if (event.eventComponent == nullptr)
+        return;
+    const auto insideAxes = getDrawingBounds().contains (event.getEventRelativeTo (this).getPosition());
+    const auto targetCursor = ! insideAxes ? MouseCursor (MouseCursor::NormalCursor)
+                              : ModifierKeys::currentModifiers.isCommandDown() || ModifierKeys::currentModifiers.isShiftDown()
+                                  ? MouseCursor (MouseCursor::UpDownLeftRightResizeCursor)
+                                  : crosshairCursor;
+    if (event.eventComponent->getMouseCursor() != targetCursor)
+        event.eventComponent->setMouseCursor (targetCursor);
 }
 
 void FrequencyPlot::mouseWheelMove (const MouseEvent& event, const MouseWheelDetails& wheel)
@@ -196,11 +258,12 @@ void FrequencyPlot::mouseWheelMove (const MouseEvent& event, const MouseWheelDet
     if (! frequencyOnly)
         plot.setYLim (yLimits.min, yLimits.max);
     plot.repaint();
+    triggerAsyncUpdate();
 }
 
 void FrequencyPlot::resized()
 {
-    plot.setBounds (getLocalBounds().reduced (20, 0));
+    plot.setBounds (getLocalBounds());
 }
 
 void FrequencyPlot::paint (Graphics& graphics)
@@ -251,6 +314,7 @@ void FrequencyPlot::resetView()
 {
     plot.setXLim (minimumFrequencyHz, maximumFrequencyHz);
     plot.setYLim (minimumAmplitude, maximumAmplitude);
+    triggerAsyncUpdate();
 }
 
 void FrequencyPlot::setBackgroundColour (Colour colour)
@@ -273,6 +337,7 @@ void FrequencyPlot::setAxisColour (Colour colour)
                             cmp::Plot::y_label_colour, cmp::Plot::title_label_colour })
         plotLookAndFeel->setColour (id, colour);
     plot.lookAndFeelChanged();
+    crosshairCursor = createCrosshairCursor (findColour (ThemeColours::defaultText));
     repaint();
 }
 
@@ -369,10 +434,7 @@ void FrequencyPlot::setFrequencyAxis (spectrumviewer::FrequencyScale scale,
                                       float minimumDb,
                                       float maximumDb)
 {
-    const auto view = getVisibleRange();
-    const auto userView = frequencyAxisValid
-                          && (view.xmin != minimumFrequencyHz || view.xmax != maximumFrequencyHz
-                              || view.ymin != minimumAmplitude || view.ymax != maximumAmplitude);
+    const auto userView = isViewZoomed();
     const auto frequencyAxisChanged = ! frequencyAxisValid
                                       || scale != frequencyScale
                                       || minimumHz != minimumFrequencyHz
@@ -1693,6 +1755,12 @@ CanvasPlot::CanvasPlot (SpectrumViewer* p)
     clearButton->addListener (this);
     addAndMakeVisible (clearButton.get());
 
+    resetViewButton = std::make_unique<UtilityButton> ("Reset View");
+    resetViewButton->setTooltip ("Restore the default frequency and amplitude range");
+    resetViewButton->addListener (this);
+    addChildComponent (resetViewButton.get());
+    plt->onZoomStateChanged = [this] { updateResetViewButtonVisibility(); };
+
     activeChannels = processor->getActiveChans();
 
     ColourGradient viridis (Colour::fromRGB (68, 1, 84), 0.0f, 0.0f,
@@ -1746,6 +1814,7 @@ void CanvasPlot::resized()
     resizeSpectrogramImage();
     publishDisplayColumnCount();
     clearButton->setBounds (plt->getRight() - 80, plt->getY(), 60, 20);
+    resetViewButton->setBounds (clearButton->getX() - 90, plt->getY(), 80, 20);
     cursorLabel->setBounds (plt->getX() + 60, plt->getY(), 560, 20);
 }
 
@@ -1855,6 +1924,7 @@ void CanvasPlot::setDisplayType (DisplayType type)
         plt->setVisible (true);
         clearButton->setVisible (true);
     }
+    updateResetViewButtonVisibility();
 
     // The two displays want different column counts, and switching need not
     // change this component's bounds, so resized() cannot be relied on here.
@@ -2477,6 +2547,17 @@ void CanvasPlot::buttonClicked (Button* button)
     {
         clear();
     }
+    else if (button == resetViewButton.get())
+    {
+        plt->resetView();
+        plt->repaint();
+        updateResetViewButtonVisibility();
+    }
+}
+
+void CanvasPlot::updateResetViewButtonVisibility()
+{
+    resetViewButton->setVisible (displayType != SPECTROGRAM && plt->isViewZoomed());
 }
 
 void CanvasPlot::clear()
