@@ -26,17 +26,27 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <VisualizerEditorHeaders.h>
 
-class SpectrumViewerEditor : public VisualizerEditor,
-                             public ComboBox::Listener
-{
-    friend class SpectrumCanvas;
+#include "SpectrumDisplaySettings.h"
 
+/**
+    Signal-chain editor for the Spectrum Viewer.
+
+    Holds only what belongs in the signal chain: stream and channel selection,
+    which change the processor's input route, and a readiness label. Every
+    display control lives on the canvas.
+
+    The editor does own the display *settings*, because the canvas is created
+    lazily and may never exist; see SpectrumDisplaySettings.
+*/
+class SpectrumViewerEditor : public VisualizerEditor,
+                             private Timer
+{
 public:
     /** Constructor */
     SpectrumViewerEditor (GenericProcessor* parentNode);
 
     /** Destructor */
-    ~SpectrumViewerEditor() {}
+    ~SpectrumViewerEditor() override;
 
     /** Enables animation */
     void startAcquisition() override;
@@ -44,11 +54,8 @@ public:
     /** Disables animation*/
     void stopAcquisition() override;
 
-    /** Called when a ComboBox changes*/
-    void comboBoxChanged (ComboBox* comboBox);
-
     /** Creates the canvas */
-    Visualizer* createNewCanvas();
+    Visualizer* createNewCanvas() override;
 
     /** Notifies editor that the selected stream has changed.*/
     void selectedStreamHasChanged() override;
@@ -57,14 +64,14 @@ public:
 
     void loadVisualizerEditorParameters (XmlElement* xml) override;
 
+    /** Display state, edited by the canvas and persisted here. */
+    SpectrumDisplaySettings& getDisplaySettings() noexcept { return displaySettings; }
+
 private:
-    std::unique_ptr<Label> displayLabel;
-    std::unique_ptr<ComboBox> displayType;
+    void timerCallback() override;
 
-    std::unique_ptr<Label> frequencyLabel;
-    std::unique_ptr<ComboBox> frequencyRange;
-
-    Array<Range<int>> freqRanges;
+    SpectrumDisplaySettings displaySettings;
+    std::unique_ptr<Label> readinessLabel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumViewerEditor);
 };

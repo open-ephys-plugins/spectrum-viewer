@@ -26,14 +26,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <ProcessorHeaders.h>
 
-#include "AtomicSynchronizer.h"
-#include "CumulativeTFR.h"
+#include "AsyncSpectrumAnalysis.h"
+#include "BacklogSheddingPolicy.h"
+#include "SampleBlockFifo.h"
 
-#include <chrono>
-#include <ctime>
-#include <fstream>
-#include <iostream>
-#include <time.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
 #include <vector>
 
 #define MAX_CHANS 8
@@ -44,28 +49,41 @@ enum DisplayType
     SPECTROGRAM = 2
 };
 
-class SpectrumViewer;
-
-/*
-	Resize data and power buffers, and show a progress window
-*/
-class BufferResizer : public Thread
+enum class SpectrumAnalysisProfile
 {
-public:
-    /** Constructor */
-    BufferResizer (SpectrumViewer* processor);
+    fast = 1,
+    balanced = 2,
+    fine = 3
+};
 
-    /** Resizes buffer */
-    void resize();
+enum class SpectrumAnalysisReadiness
+{
+    stopped,
+    preparing,
+    warmingUp,
+    live,
+    configurationFailed,
+    // The stream or channel selection cannot be routed - no channels are
+    // selected, or the selected stream is gone. Distinct from
+    // configurationFailed: nothing is broken, and the user can fix it by
+    // changing the selection.
+    invalidSelection
+};
 
-private:
-    /** Resizes buffer in the background */
-    void run() override;
+enum class SpectrumAmplitudeDisplay
+{
+    psd = 1,
+    asd = 2
+};
 
-    /** Pointer to processor */
-    SpectrumViewer* processor;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BufferResizer);
+enum class SpectrumCaptureState
+{
+    live,
+    preparing,
+    capturing,
+    frozen,
+    restoringLive,
+    failed
 };
 
 /*
@@ -74,15 +92,15 @@ private:
 	continuous channels.
 
 */
-class SpectrumViewer : public GenericProcessor,
-                       public Thread
+class TESTABLE SpectrumViewer : public GenericProcessor,
+                                public Thread
 {
 public:
     /** Constructor */
-    SpectrumViewer();
+    explicit SpectrumViewer (spectrumviewer::AsyncSpectrumAnalysis::Builder configurationBuilder = {});
 
     /** Destructor */
-    ~SpectrumViewer() {}
+    ~SpectrumViewer() override;
 
     /** Register parameters for this processor */
     void registerParameters() override;
@@ -113,165 +131,569 @@ public:
 
     /** Returns the name of the selected channel at a given index */
     const String getChanName (int localIdx);
+    const String getChanName (std::uint16_t streamId, int localIdx);
+
+    /** Stream currently selected for display. Message thread only. */
+    std::uint16_t getActiveStreamId() const noexcept { return activeStream; }
 
     /** Sets the min/max frequency range*/
     void setFrequencyRange (Range<int>);
 
-    /** Returns the frequency step for the currently selected range*/
-    float getFreqStep() { return tfrParams.freqStep; };
-
-    /** Holds incoming samples and outgoing powers */
-    struct PowerBuffer
+    /** Uses the complete one-sided frequency range through Nyquist. */
+    void setFullFrequencyRange() noexcept
     {
-        /** Incoming samples for each time step */
-        OwnedArray<AtomicallyShared<FFTWArrayType>> incomingSamples;
+        beginDisplaySettingsUpdate();
+        displayMinimumFrequencyHz.store (0.0, std::memory_order_relaxed);
+        displayMaximumFrequencyHz.store (0.0, std::memory_order_relaxed);
+        endDisplaySettingsUpdate();
+    }
 
-        /** Outgoing power for each time step */
-        OwnedArray<AtomicallyShared<std::vector<float>>> power;
+    void setFrequencyScale (spectrumviewer::FrequencyScale scale) noexcept
+    {
+        beginDisplaySettingsUpdate();
+        displayFrequencyScale.store (scale, std::memory_order_relaxed);
+        endDisplaySettingsUpdate();
+    }
 
-        /** Write index */
-        Array<int> writeIndex;
+    void setDisplayColumnCount (std::size_t count) noexcept
+    {
+        beginDisplaySettingsUpdate();
+        displayColumnCount.store (std::max<std::size_t> (1, count), std::memory_order_relaxed);
+        endDisplaySettingsUpdate();
+    }
 
-        /** Hamming window to apply to buffer */
-        Array<float> window;
+    void setAperiodicDisplayMode (
+        spectrumviewer::AperiodicDisplayMode mode) noexcept
+    {
+        beginDisplaySettingsUpdate();
+        aperiodicDisplayMode.store (mode, std::memory_order_relaxed);
+        endDisplaySettingsUpdate();
+    }
 
-        /** Size of each buffer in samples */
-        int bufferSize = 0;
-
-        /** Step size in samples */
-        int stepSize = 0;
-
-        /** Steps per buffer samples */
-        int stepsPerBuffer = 0;
-
-        /** Number of fft frequencies */
-        int nFreqs;
-
-        /** Keep track of total samples written */
-        long int totalSamplesWritten = 0;
-
-        /** true if buffer size was updated */
-        bool bufferSizeChanged = true;
-
-        /** true if number of freqs was updated */
-        bool numFreqsChanged = true;
-
-        /** Changes buffer size*/
-        void setBufferSize (int bufferSize_, int stepSize_)
-        {
-            if (bufferSize != bufferSize_)
-            {
-                bufferSize = bufferSize_;
-                stepSize = stepSize_;
-                stepsPerBuffer = bufferSize / stepSize;
-                bufferSizeChanged = true;
-            }
-        }
-
-        /** Changes num freqs */
-        void setNumFreqs (int nFreqs_)
-        {
-            if (nFreqs != nFreqs_)
-            {
-                nFreqs = nFreqs_;
-                numFreqsChanged = true;
-            }
-        }
-
-        /** Resets all shared objects and indices */
-        void reset()
-        {
-            for (int i = 0; i < stepsPerBuffer + 5; i++)
-            {
-                incomingSamples[i]->reset();
-                power[i]->reset();
-                writeIndex.set (i, -1 * i * stepSize);
-                totalSamplesWritten = 0;
-            }
-        }
-
-        /** Resizes all buffers */
-        void resize()
-        {
-            if (bufferSizeChanged)
-            {
-                incomingSamples.clear();
-
-                LOGD ("Creating ", stepsPerBuffer + 5, " sample buffers of length ", bufferSize);
-
-                for (int i = 0; i < stepsPerBuffer + 5; i++)
-                {
-                    incomingSamples.add (new AtomicallyShared<FFTWArrayType>());
-                    incomingSamples.getLast()->map ([=] (FFTWArrayType& arr)
-                                                    { arr.resize (bufferSize); });
-                }
-
-                bufferSizeChanged = false;
-
-                window.clear();
-
-                const float N = float (bufferSize);
-                const float PI = 3.1415926535;
-
-                for (int n = 0; n < bufferSize; n++)
-                {
-                    window.add (0.54 - 0.46 * cos (2 * PI * n / N));
-                }
-            }
-
-            power.clear();
-
-            LOGD ("Creating ", stepsPerBuffer + 5, " power buffers of length ", nFreqs);
-
-            for (int i = 0; i < stepsPerBuffer + 5; i++)
-            {
-                power.add (new AtomicallyShared<std::vector<float>>());
-                power.getLast()->map ([=] (std::vector<float>& arr)
-                                      { arr.resize (nFreqs); });
-            }
-
-            numFreqsChanged = false;
-        }
+    /** Returns the frequency step for the currently selected range*/
+    float getFreqStep() const noexcept
+    {
+        const auto active = activeBinWidthHz.load (std::memory_order_acquire);
+        return active > 0.0f ? active : tfrParams.freqStep;
     };
 
-    /** Array of buffers */
-    PowerBuffer powerBuffers[MAX_CHANS];
+    /** Selects and asynchronously prepares an analysis profile. */
+    void setAnalysisProfile (SpectrumAnalysisProfile profile);
 
-    /** Type of visualization */
-    DisplayType displayType;
+    /** Asynchronously starts a non-overlapping Fine-profile capture. */
+    bool startSpectrumCapture (double durationSeconds);
+    void cancelSpectrumCapture();
+    void returnToLive() { cancelSpectrumCapture(); }
+
+    SpectrumCaptureState getCaptureState() const noexcept
+    {
+        return capture.state.load (std::memory_order_acquire);
+    }
+
+    std::size_t getCaptureIncludedWindowCount() const noexcept
+    {
+        return capture.includedWindows.load (std::memory_order_relaxed);
+    }
+
+    std::size_t getCaptureTargetWindowCount() const noexcept
+    {
+        return capture.targetWindows.load (std::memory_order_relaxed);
+    }
+
+    double getCaptureAnalyzedSeconds() const noexcept
+    {
+        return static_cast<double> (getCaptureIncludedWindowCount())
+               * capture.windowSeconds.load (std::memory_order_relaxed);
+    }
+
+    double getCaptureWallSpanSeconds() const noexcept
+    {
+        return capture.wallSpanSeconds.load (std::memory_order_relaxed);
+    }
+
+    std::uint64_t getCaptureFailedWindowCount() const noexcept
+    {
+        return capture.failedWindows.load (std::memory_order_relaxed);
+    }
+
+    std::uint64_t getCaptureShedWindowCount() const noexcept
+    {
+        return capture.shedWindows.load (std::memory_order_relaxed);
+    }
+
+    std::uint64_t getCaptureDiscontinuityCount() const noexcept
+    {
+        return capture.discontinuities.load (std::memory_order_relaxed);
+    }
+
+    std::uint64_t getCaptureId() const noexcept
+    {
+        return capture.requestedId.load (std::memory_order_relaxed);
+    }
+
+    /** Returns true while the worker holds a completed capture that can become
+        the reference. Gate the reference controls on this rather than on the
+        frozen state alone: freezing only means the accumulation finished. */
+    bool hasRetainedCapture() const noexcept
+    {
+        return capture.retainedId.load (std::memory_order_acquire) != 0;
+    }
+
+    /** Marks the completed frozen capture as the comparison reference.
+
+        A reference, captured or imported, lives until it is cleared or
+        replaced. It survives stopping and restarting acquisition, and its
+        compatibility is checked again against each run.
+
+        A true return means the request was accepted, not that it was applied:
+        the worker applies it, and drops it if the frozen capture was released
+        in between. getDroppedReferenceRequestCount() reports that. */
+    bool setCurrentCaptureAsReference();
+    void clearSpectrumReference();
+
+    /** Writes one channel of the current reference to a baseline file.
+        Message thread.
+
+        channel is a position within the reference's channels. The reference
+        itself is unchanged; import the file to compare against it. On failure
+        the reason is also kept for getReferenceFileError(). */
+    juce::Result exportSpectrumReference (const File& file, std::size_t channel);
+
+    /** Reads a baseline file and makes it the comparison reference. Message
+        thread; works whether or not acquisition is running.
+
+        A baseline is compared with every selected channel of any stream, and
+        has to match only the sample rate and the Fine estimator. If the file
+        cannot be used the current reference is kept and the reason is
+        returned and kept. */
+    juce::Result importSpectrumReference (const File& file);
+
+    /** The file the current reference, a baseline, was imported from, or
+        File() if it is not one. A saved session remembers it. Message thread. */
+    File getSpectrumReferenceFile() const { return referenceFile; }
+
+    /** Why the last import or export failed, or empty once one succeeds or the
+        reference is set or cleared. Message thread. */
+    String getReferenceFileError() const { return referenceFileError; }
+
+    /** The current reference, or nullptr. Safe from the message thread. */
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> getSpectrumReference() const;
+
+    /** Why the reference cannot be compared, while getReferenceCompatibility()
+        reports incompatible. */
+    spectrumviewer::SpectrumReferenceMismatch getReferenceMismatch() const noexcept
+    {
+        return referenceMismatch.load (std::memory_order_acquire);
+    }
+    void setSpectrumComparisonMode (spectrumviewer::SpectrumComparisonMode mode) noexcept;
+
+    spectrumviewer::SpectrumComparisonMode getSpectrumComparisonMode() const noexcept
+    {
+        return comparisonMode.load (std::memory_order_relaxed);
+    }
+
+    spectrumviewer::SpectrumReferenceCompatibility getReferenceCompatibility() const noexcept
+    {
+        return referenceCompatibility.load (std::memory_order_acquire);
+    }
+
+    bool hasSpectrumReference() const noexcept
+    {
+        return referenceCaptureId.load (std::memory_order_acquire) != 0;
+    }
+
+    std::uint64_t getReferenceCaptureId() const noexcept
+    {
+        return referenceCaptureId.load (std::memory_order_relaxed);
+    }
+
+    std::int64_t getReferenceCapturedAtMilliseconds() const noexcept
+    {
+        return referenceCapturedAtMilliseconds.load (std::memory_order_relaxed);
+    }
+
+    SpectrumAnalysisProfile getAnalysisProfile() const noexcept
+    {
+        return analysisProfile.load (std::memory_order_relaxed);
+    }
+
+    SpectrumAnalysisReadiness getAnalysisReadiness() const noexcept
+    {
+        return analysisReadiness.load (std::memory_order_acquire);
+    }
+
+    bool isAnalysisConfigurationPending() const noexcept
+    {
+        return configurationPending.load (std::memory_order_acquire);
+    }
+
+    bool hasActiveAnalysis() const noexcept
+    {
+        return activeConfigurationGeneration.load (std::memory_order_acquire) != 0;
+    }
+
+    std::size_t getWarmupSampleCount() const noexcept
+    {
+        return warmupSampleCount.load (std::memory_order_relaxed);
+    }
+
+    std::size_t getWarmupTargetSampleCount() const noexcept
+    {
+        return warmupTargetSampleCount.load (std::memory_order_relaxed);
+    }
+
+    /** Returns whole input blocks dropped because the worker queue was full. */
+    std::uint64_t getDroppedInputBlockCount() const noexcept { return diagnostics.droppedInputBlocks.load (std::memory_order_relaxed); }
+
+    /** Returns input samples discarded as part of full-queue block drops. */
+    std::uint64_t getDroppedInputSampleCount() const noexcept { return diagnostics.droppedInputSamples.load (std::memory_order_relaxed); }
+
+    /** Returns input blocks rejected because their shape or channel mapping was
+        invalid, whether the callback or the worker caught it. */
+    std::uint64_t getRejectedInputBlockCount() const noexcept
+    {
+        return diagnostics.rejectedInputBlocks.load (std::memory_order_relaxed)
+               + diagnostics.invalidMappedInputBlocks.load (std::memory_order_relaxed)
+               + diagnostics.invalidWorkerInputBlocks.load (std::memory_order_relaxed);
+    }
+
+    /** Returns sample-index gaps or overlaps observed by the worker. */
+    std::uint64_t getInputDiscontinuityCount() const noexcept { return diagnostics.inputDiscontinuities.load (std::memory_order_relaxed); }
+
+    /** Returns analysis windows rejected because samples were non-finite. */
+    std::uint64_t getFailedSpectrumWindowCount() const noexcept { return diagnostics.failedSpectrumWindows.load (std::memory_order_relaxed); }
+
+    /** Returns obsolete analysis windows skipped while the input queue was backlogged. */
+    std::uint64_t getShedSpectrumWindowCount() const noexcept
+    {
+        return diagnostics.shedSpectrumWindows.load (std::memory_order_relaxed);
+    }
+
+    /** Returns callback blocks ignored while no prepared runtime was active. */
+    std::uint64_t getUnconfiguredInputBlockCount() const noexcept
+    {
+        return diagnostics.unconfiguredInputBlocks.load (std::memory_order_relaxed);
+    }
+
+    /** Returns samples ignored while initial configuration was being prepared. */
+    std::uint64_t getUnconfiguredInputSampleCount() const noexcept
+    {
+        return diagnostics.unconfiguredInputSamples.load (std::memory_order_relaxed);
+    }
+
+    /** Returns queued blocks discarded across configuration-generation boundaries. */
+    std::uint64_t getStaleConfigurationBlockCount() const noexcept
+    {
+        return diagnostics.staleConfigurationBlocks.load (std::memory_order_relaxed);
+    }
+
+    /** Returns asynchronous configuration attempts that failed. */
+    std::uint64_t getConfigurationFailureCount() const noexcept
+    {
+        return diagnostics.configurationFailures.load (std::memory_order_relaxed);
+    }
+
+    /** Returns reference requests the worker accepted but could not apply,
+        because the frozen capture they named was never retained. */
+    std::uint64_t getDroppedReferenceRequestCount() const noexcept
+    {
+        return diagnostics.droppedReferenceRequests.load (std::memory_order_acquire);
+    }
+
+    /** Consumes all pending display frames and passes only the newest complete frame to consumer. */
+    template <typename Consumer>
+    bool consumeLatestSpectrumFrame (Consumer&& consumer)
+    {
+        auto analysis = tryGetDisplayAnalysis();
+        return analysis != nullptr
+               && analysis->getFrameFifo().tryPopLatest (std::forward<Consumer> (consumer));
+    }
+
+    std::uint64_t getDroppedSpectrumFrameCount() const noexcept
+    {
+        auto analysis = tryGetDisplayAnalysis();
+        return analysis != nullptr ? analysis->getFrameFifo().getDroppedFrameCount() : 0;
+    }
+
+    std::uint64_t getStaleSpectrumFrameCount() const noexcept
+    {
+        auto analysis = tryGetDisplayAnalysis();
+        return analysis != nullptr ? analysis->getFrameFifo().getStaleFrameCount() : 0;
+    }
 
 private:
-    /** Append FFTWArrays to data buffer */
-    void updateDataBufferSize (int size);
+    struct DisplaySettings
+    {
+        std::uint64_t sequence = 0;
+        std::size_t columnCount = 1;
+        spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
+        spectrumviewer::AperiodicDisplayMode aperiodicMode =
+            spectrumviewer::AperiodicDisplayMode::off;
+        double minimumFrequencyHz = 0.0;
+        double maximumFrequencyHz = 0.0;
+    };
 
-    /** Change the size of the data buffer*/
-    void updateDisplayBufferSize (int newSize);
+    void beginDisplaySettingsUpdate() noexcept
+    {
+        displaySettingsSequence.fetch_add (1, std::memory_order_acq_rel);
+    }
 
-    /** Returns true if a given stream ID is available*/
-    bool streamExists (uint16 streamId);
+    void endDisplaySettingsUpdate() noexcept
+    {
+        displaySettingsSequence.fetch_add (1, std::memory_order_release);
+    }
 
-    ScopedPointer<CumulativeTFR> TFR;
+    /** Reads a stable display-settings snapshot, or fails after a bounded
+        number of attempts rather than spinning against a burst of updates. */
+    bool tryReadDisplaySettings (DisplaySettings& settings) const noexcept;
 
-    /** Priority from 0 to 10 */
-    static const int THREAD_PRIORITY = 5;
+    // Both seqlock readers give up after this many attempts. readInputRoute
+    // runs on the audio callback, where spinning is never acceptable;
+    // tryReadDisplaySettings runs on the worker, where it would stall frame
+    // publication.
+    static constexpr int seqlockReadAttempts = 3;
 
-    /** Resets buffers*/
-    void resetTFR();
+    struct InputRouteSnapshot
+    {
+        std::uint16_t streamId = 0;
+        std::size_t channelCount = 0;
+        std::array<int, MAX_CHANS> globalChannelIndices {};
+        std::uint64_t generation = 0;
+    };
+
+    void requestAnalysisConfiguration (bool forCapture = false);
+    void adoptPreparedAnalysis();
+    bool updateRequestedInputRoute (DataStream* stream);
+    void requestInputRouteReplacement();
+    void rejectInputRouteReplacement() noexcept;
+    void discardInvalidatedInputRoute() noexcept;
+    void publishInputRoute (std::uint16_t streamId,
+                            std::size_t channelCount,
+                            const int* globalChannelIndices,
+                            std::uint64_t generation) noexcept;
+    bool readInputRoute (InputRouteSnapshot& route) const noexcept;
+    void clearAcquisitionState();
+    bool stopWorkerSafely (int timeoutMilliseconds) noexcept;
+    void postReferenceRequest (std::uint64_t request) noexcept;
+    void applyReferenceRequest() noexcept;
+    void installReference (std::shared_ptr<const spectrumviewer::CapturedSpectrum> reference,
+                           spectrumviewer::SpectrumReferenceCompatibility compatibility) noexcept;
+    spectrumviewer::SpectrumSourceLabels describeSource (
+        const spectrumviewer::CapturedSpectrum& spectrum);
+
+    // The steps of run(), in the order it takes them. All worker only.
+    void republishFrozenCapture() noexcept;
+    bool processQueuedInput();
+    bool drainHeldCaptureBlock (spectrumviewer::SampleBlockFifo& fifo);
+    void noteInputBlockDuration (std::size_t sampleCount) noexcept;
+    spectrumviewer::BacklogSheddingPolicy::Action chooseSheddingAction (
+        spectrumviewer::BacklogSheddingPolicy& policy,
+        spectrumviewer::SampleBlockFifo& fifo);
+    void recordRejectedBlock (spectrumviewer::SpectrumAnalysisPipeline::AppendStatus status);
+    bool shedObsoleteWindows (spectrumviewer::BacklogSheddingPolicy::Action action);
+    void publishReadyFrames();
+    void addCaptureWindow (const spectrumviewer::SpectrumAnalysisPipeline::FrameView& frame);
+    void updateWindowCounters() noexcept;
+    void trackWarmup (const spectrumviewer::SpectrumAnalysisPipeline::AppendResult& appended) noexcept;
+    void waitForInput();
+
+    bool finalizeCapturedSpectrum();
+    bool publishCapturedSpectrum (bool complete) noexcept;
+    bool publishReducedSpectrum (const float* planarPsd,
+                                 std::size_t channelCount,
+                                 std::size_t binCount,
+                                 const spectrumviewer::SpectrumFrameDescriptor& descriptor,
+                                 std::int64_t firstSample,
+                                 std::uint64_t sequence,
+                                 spectrumviewer::SpectrumCaptureFrameStatus captureStatus = {}) noexcept;
+    std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> tryGetDisplayAnalysis() const noexcept
+    {
+        std::unique_lock<std::mutex> lock (displayAnalysisMutex, std::try_to_lock);
+        return lock.owns_lock() ? displayAnalysis
+                                : std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> {};
+    }
 
     Array<int> channels;
-    Array<Array<int>> bufferIdx; // channels x stepsPerBuffer
 
-    //int bufferSize;
-    //int stepSize;
-    //int stepsPerBuffer;
+    // Depth in whole callback blocks, and the only thing standing between a
+    // worker stall and a discontinuity. A Fine capture assembles 2 s windows,
+    // and one dropped block anywhere inside a window resets history and throws
+    // that whole window away, so the queue has to absorb a complete
+    // estimate-reduce-baseline burst without overflowing.
+    static constexpr std::size_t INPUT_QUEUE_CAPACITY = 32;
+    // GenericProcessor reports JUCE's nominal 128-sample graph quantum, not an
+    // upper bound for stream payloads. Reserve enough room for the largest
+    // callback supported by the GUI's audio settings while retaining a larger
+    // value if a future host supplies one.
+    static constexpr std::size_t MINIMUM_INPUT_BLOCK_CAPACITY = 8192;
+    // Display frames are replaceable latest-state data: one may be read, one
+    // ready, and one provides scheduling tolerance without retaining history.
+    static constexpr std::size_t OUTPUT_QUEUE_CAPACITY = 3;
+    std::unique_ptr<spectrumviewer::SampleBlockFifo> inputFifo;
+    spectrumviewer::AsyncSpectrumAnalysis asynchronousAnalysis;
+    std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> activeAnalysis;
+    mutable std::mutex displayAnalysisMutex;
+    std::shared_ptr<spectrumviewer::PreparedSpectrumAnalysis> displayAnalysis;
+    std::array<int, MAX_CHANS> acquisitionChannels {};
+    std::array<int, MAX_CHANS> acquisitionGlobalChannels {};
+    std::array<std::string, MAX_CHANS> acquisitionChannelUnits {};
+    std::size_t acquisitionChannelCount = 0;
+    uint16 acquisitionStream = 0;
+    std::size_t acquisitionMaximumInputBlockSamples = 0;
+    double acquisitionSampleRateHz = 0.0;
+    std::atomic<std::uint64_t> inputRouteSequence { 0 };
+    std::atomic<std::uint16_t> publishedInputStream { 0 };
+    std::atomic<std::size_t> publishedInputChannelCount { 0 };
+    std::array<std::atomic<int>, MAX_CHANS> publishedGlobalChannels {};
+    std::atomic<std::uint64_t> publishedInputGeneration { 0 };
+    std::atomic<std::uint64_t> activeConfigurationGeneration { 0 };
+    std::atomic<float> activeBinWidthHz { 0.0f };
+    std::atomic<std::size_t> displayColumnCount { 800 };
+    std::atomic<spectrumviewer::FrequencyScale> displayFrequencyScale {
+        spectrumviewer::FrequencyScale::linear
+    };
+    std::atomic<spectrumviewer::AperiodicDisplayMode> aperiodicDisplayMode {
+        spectrumviewer::AperiodicDisplayMode::off
+    };
+    std::atomic<double> displayMinimumFrequencyHz { 0.0 };
+    // A non-positive maximum means the active stream's Nyquist frequency.
+    std::atomic<double> displayMaximumFrequencyHz { 0.0 };
+    // Even values identify stable control-thread snapshots; odd means update in progress.
+    std::atomic<std::uint64_t> displaySettingsSequence { 0 };
+    std::atomic<std::uint64_t> requestedConfigurationGeneration { 0 };
+    std::uint64_t nextConfigurationGeneration = 1;
+    std::atomic<SpectrumAnalysisProfile> analysisProfile { SpectrumAnalysisProfile::fast };
+    std::atomic<SpectrumAnalysisReadiness> analysisReadiness { SpectrumAnalysisReadiness::stopped };
+    std::atomic<bool> configurationPending { false };
+    // A one-shot command from the message thread to the worker: the selection
+    // the live route was built from is no longer routable, so release it. The
+    // worker has to do the releasing because it is the input route seqlock's
+    // only writer while acquisition runs.
+    std::atomic<bool> inputRouteInvalidated { false };
+    std::atomic<bool> acquisitionRunning { false };
+    std::atomic<std::size_t> activeAudioCallbacks { 0 };
+    std::atomic<std::size_t> warmupSampleCount { 0 };
+    std::atomic<std::size_t> warmupTargetSampleCount { 0 };
+
+    /** Counts of input and analysis windows the pipeline lost, rejected or
+        skipped. The callback and the worker write them and the message thread
+        reads them. Reset when acquisition starts and kept after it stops, so a
+        run can still be inspected once it is over. */
+    struct TransportDiagnostics
+    {
+        std::atomic<std::uint64_t> droppedInputBlocks { 0 };
+        std::atomic<std::uint64_t> droppedInputSamples { 0 };
+        std::atomic<std::uint64_t> rejectedInputBlocks { 0 };
+        std::atomic<std::uint64_t> invalidMappedInputBlocks { 0 };
+        // Worker-side counterpart of the two above. Kept separate because
+        // rejectedInputBlocks is overwritten from the FIFO's own count.
+        std::atomic<std::uint64_t> invalidWorkerInputBlocks { 0 };
+        std::atomic<std::uint64_t> inputDiscontinuities { 0 };
+        std::atomic<std::uint64_t> failedSpectrumWindows { 0 };
+        std::atomic<std::uint64_t> shedSpectrumWindows { 0 };
+        std::atomic<std::uint64_t> unconfiguredInputBlocks { 0 };
+        std::atomic<std::uint64_t> unconfiguredInputSamples { 0 };
+        std::atomic<std::uint64_t> staleConfigurationBlocks { 0 };
+        std::atomic<std::uint64_t> configurationFailures { 0 };
+        std::atomic<std::uint64_t> droppedReferenceRequests { 0 };
+
+        void reset() noexcept;
+    };
+
+    /** The capture in progress or on screen.
+
+        The atomics are published to the message thread. The fields after them
+        belong to the worker alone, so only reset() touches them from anywhere
+        else, and only while the worker is stopped. */
+    struct CaptureRuntimeState
+    {
+        std::atomic<SpectrumCaptureState> state { SpectrumCaptureState::live };
+        // What state becomes if the runtime replacing a capture fails to build.
+        std::atomic<SpectrumCaptureState> replacementFailureState {
+            SpectrumCaptureState::frozen
+        };
+        std::atomic<std::uint64_t> requestedId { 0 };
+        // Nonzero only once the worker owns `completed` for that id.
+        std::atomic<std::uint64_t> retainedId { 0 };
+        std::atomic<std::size_t> targetWindows { 0 };
+        std::atomic<std::size_t> includedWindows { 0 };
+        std::atomic<double> windowSeconds { 0.0 };
+        std::atomic<double> wallSpanSeconds { 0.0 };
+        std::atomic<std::uint64_t> failedWindows { 0 };
+        std::atomic<std::uint64_t> shedWindows { 0 };
+        std::atomic<std::uint64_t> discontinuities { 0 };
+
+        // Worker only. The sample span is anchored on included windows, so it
+        // always runs forward and satisfies CapturedSpectrum's metadata
+        // contract.
+        std::shared_ptr<const spectrumviewer::CapturedSpectrum> completed;
+        std::int64_t firstSample = 0;
+        std::int64_t lastSampleExclusive = 0;
+        std::uint64_t lastFrameSequence = 0;
+        std::uint64_t lastPublishedDisplaySettings = 0;
+        std::uint64_t lastPublishedComparisonSettings = 0;
+        bool hasFirstSample = false;
+        bool completionPending = false;
+
+        /** Zeroes the progress and quality counts an accumulation reports.
+            Atomics only, so any thread may call it. */
+        void resetProgress() noexcept;
+
+        /** Forgets the analysed span and publication watermarks of the
+            previous runtime. Worker only. */
+        void resetWindowTracking() noexcept;
+
+        /** Back to live with nothing captured, retained or in progress. Does
+            not touch requestedId, which numbers requests across runtimes. */
+        void reset() noexcept;
+    };
+
+    TransportDiagnostics diagnostics;
+    CaptureRuntimeState capture;
+    std::uint64_t nextCaptureId = 1;
+
+    // Reference commands are published by the message thread and applied by
+    // the spectrum worker, or directly while no worker runs. Spectral arrays
+    // remain worker-owned and immutable.
+    static constexpr std::uint64_t CLEAR_REFERENCE_REQUEST =
+        std::numeric_limits<std::uint64_t>::max();
+    static constexpr std::uint64_t IMPORT_REFERENCE_REQUEST = CLEAR_REFERENCE_REQUEST - 1;
+    std::atomic<std::uint64_t> referenceRequest { 0 };
+    std::atomic<std::uint64_t> comparisonSettingsSequence { 0 };
+    std::atomic<spectrumviewer::SpectrumComparisonMode> comparisonMode {
+        spectrumviewer::SpectrumComparisonMode::absolute
+    };
+    std::atomic<spectrumviewer::SpectrumReferenceCompatibility> referenceCompatibility {
+        spectrumviewer::SpectrumReferenceCompatibility::noReference
+    };
+    std::atomic<std::uint64_t> referenceCaptureId { 0 };
+    std::atomic<std::int64_t> referenceCapturedAtMilliseconds { 0 };
+    std::atomic<spectrumviewer::SpectrumReferenceMismatch> referenceMismatch {
+        spectrumviewer::SpectrumReferenceMismatch::none
+    };
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> spectrumReference;
+
+    // The reference crosses threads twice: an imported one travels from the
+    // message thread to the worker, and the installed one is published back
+    // so it can be exported. Neither side holds this for more than a pointer
+    // copy, and the audio callback never takes it.
+    mutable std::mutex referenceHandoffMutex;
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> pendingImportedReference;
+    std::shared_ptr<const spectrumviewer::CapturedSpectrum> publishedReference;
+
+    // Message thread only.
+    File referenceFile;
+    String referenceFileError;
+
+    // A Fine baseline at 30 kHz is about 330 KB. Anything far larger is not a
+    // reference file, and parsing it would stall the GUI.
+    static constexpr juce::int64 MAXIMUM_REFERENCE_FILE_BYTES = 16 * 1024 * 1024;
+
+    // Worker only: the duration of the last input block, which sets how often
+    // the worker polls for the next one. See waitForInput().
+    double lastInputBlockMilliseconds = 0.0;
 
     uint16 activeStream = 0;
-
-    int numTrials;
-
-    // This is to store data in case of switch and we wish to retrive old data
-    //AtomicallyShared<Array<FFTWArrayType>> dataBufferII;
-    //Array<AtomicallyShared<FFTWArrayType>> updatedDataBuffer;
 
     struct TFRParameters
     {
@@ -299,7 +721,6 @@ private:
     };
 
     TFRParameters tfrParams;
-    std::unique_ptr<BufferResizer> bufferResizer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumViewer);
 };

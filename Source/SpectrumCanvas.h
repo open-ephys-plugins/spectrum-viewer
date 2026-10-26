@@ -26,15 +26,130 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <VisualizerWindowHeaders.h>
 
-#include "AtomicSynchronizer.h"
+#include "AperiodicSpectrumBaseline.h"
+#include "SpectrumAmplitudeRange.h"
+#include "SpectrumDisplaySettings.h"
 #include "SpectrumViewer.h"
 
-#include <DspLib.h>
+#include <cmp_lookandfeel.h>
+
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <vector>
 
 class SpectrumCanvas;
 
 // Component for housing power spectrum & spectrograph plots
-class CanvasPlot : public Component, public Button::Listener
+class TESTABLE FrequencyPlot : public Component,
+                               private AsyncUpdater
+{
+public:
+    FrequencyPlot();
+    ~FrequencyPlot() override;
+
+    /** True when the visible range differs from the default view. */
+    bool isViewZoomed() const noexcept;
+
+    /** Called on the message thread when isViewZoomed() changes. */
+    std::function<void()> onZoomStateChanged;
+
+    void title (const String& text);
+    void xlabel (const String& text);
+    void ylabel (const String& text);
+    void setRange (const XYRange& range);
+    void resetView();
+    void setBackgroundColour (Colour colour);
+    void setGridColour (Colour colour);
+    void setAxisColour (Colour colour);
+
+    void beginLines();
+    void endLines();
+
+    /** Stages a trace in retained storage for one batched renderer update. */
+    void plotLine (const std::vector<float>& x,
+                   const std::vector<float>& y,
+                   Colour colour,
+                   float width = 1.0f,
+                   float opacity = 1.0f);
+
+    /** Removes every series. Their storage is kept for the next frame. */
+    void clear();
+
+    void setFrequencyAxis (spectrumviewer::FrequencyScale scale,
+                           float minimumHz,
+                           float maximumHz,
+                           float minimumDb,
+                           float maximumDb);
+
+    static std::vector<float> transformFrequencies (
+        const std::vector<float>& frequencies,
+        spectrumviewer::FrequencyScale scale);
+
+    /** As above, into existing storage, so a caller that keeps the result
+        does not allocate when the axis is recomputed. */
+    static void transformFrequencies (const std::vector<float>& frequencies,
+                                      spectrumviewer::FrequencyScale scale,
+                                      std::vector<float>& transformed);
+    float frequencyAt (Point<int> point) const noexcept;
+    int getDrawingWidth() const noexcept { return getDrawingBounds().getWidth(); }
+    void paint (Graphics& graphics) override;
+    void resized() override;
+    void mouseWheelMove (const MouseEvent& event, const MouseWheelDetails& wheel) override;
+
+    /** The renderer's child components each have their own cursor, so the
+        cursor is set on whichever one the mouse is over, and only while the
+        mouse is inside the axes. */
+    void mouseMove (const MouseEvent& event) override;
+#if BUILD_TESTS
+    Rectangle<int> getDrawingBoundsForTesting() const { return getDrawingBounds(); }
+    String getXAxisLabelForTesting() const { return xAxisLabel; }
+    String getYAxisLabelForTesting() const { return yAxisLabel; }
+    cmp::Plot* getRendererForTesting() noexcept { return &plot; }
+    std::size_t getSeriesCountForTesting() const noexcept { return publishedSeriesCount; }
+    XYRange getRangeForTesting() const
+    {
+        return getVisibleRange();
+    }
+#endif
+
+private:
+    class PlotComponent final : public cmp::Plot
+    {
+    public:
+        void mouseWheelMove (const MouseEvent&, const MouseWheelDetails&) override {}
+    };
+
+    void handleAsyncUpdate() override;
+
+    Rectangle<int> getDrawingBounds() const noexcept;
+    XYRange getVisibleRange() const noexcept;
+
+    std::unique_ptr<cmp::PlotLookAndFeel> plotLookAndFeel;
+    PlotComponent plot;
+    cmp::SeriesDataList lineSeries;
+    std::vector<std::span<const float>> yValues;
+    std::size_t lineSeriesCount = 0;
+    std::size_t publishedSeriesCount = 0;
+    bool seriesLayoutChanged = true;
+    Colour backgroundColour = Colour (45, 45, 45);
+    MouseCursor crosshairCursor { MouseCursor::CrosshairCursor };
+    String xAxisLabel;
+    String yAxisLabel;
+    spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
+    float minimumFrequencyHz = 0.0f;
+    float maximumFrequencyHz = 1.0f;
+    float minimumAmplitude = -60.0f;
+    float maximumAmplitude = 60.0f;
+    // The frequency axis rarely changes between frames, but the amplitude
+    // range does. False until the first setFrequencyAxis() call.
+    bool frequencyAxisValid = false;
+    bool reportedViewZoomed = false;
+};
+
+class TESTABLE CanvasPlot : public Component,
+                            public Button::Listener
 {
 public:
     /** Constructor */
@@ -56,11 +171,41 @@ public:
 
     void setFrequencyRange (int freqStart, int freqEnd, float freqStep);
 
-    void updatePowerSpectrum (std::vector<float> powerData, int channelIndex);
+    void updatePowerSpectrum (const float* meanPsd,
+                              const float* peakPsd,
+                              std::size_t valueCount,
+                              const float* frequenciesHz,
+                              const String& unit,
+                              spectrumviewer::FrequencyScale scale,
+                              double minimumFrequencyHz,
+                              double maximumFrequencyHz,
+                              int channelIndex,
+                              const float* baselineDb = nullptr,
+                              const float* comparisonData = nullptr,
+                              spectrumviewer::SpectrumComparisonFrameStatus comparison = {});
 
-    void plotPowerSpectrum();
+    void setAmplitudeDisplay (SpectrumAmplitudeDisplay display);
+    void setAperiodicDisplayMode (spectrumviewer::AperiodicDisplayMode mode);
+    void setPeakEnvelopeVisible (bool shouldBeVisible);
 
-    void drawSpectrogram (std::vector<float> powerData);
+    void setAmplitudeRangeMode (spectrumviewer::AmplitudeRangeMode mode);
+    bool setFixedAmplitudeRange (float minimumDb, float maximumDb);
+    spectrumviewer::AmplitudeRangeMode getAmplitudeRangeMode() const noexcept;
+    spectrumviewer::DecibelRange getAmplitudeRange() const noexcept;
+    bool hasAutomaticAmplitudeRange() const noexcept;
+
+    void beginSpectrumFrame (std::uint64_t configurationGeneration,
+                             std::uint64_t sequence,
+                             std::size_t channelCount,
+                             double hopDurationSeconds,
+                             std::uint16_t sourceStreamId = 0,
+                             const int* sourceChannelIndices = nullptr);
+
+    void mouseMove (const MouseEvent& event) override;
+
+    void plotPowerSpectrum (bool updateAutomaticRange = false);
+
+    void drawSpectrogram();
 
     /** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
     void setDisplayType (DisplayType type);
@@ -71,44 +216,165 @@ public:
     /** Clears the plot */
     void clear();
 
+#if BUILD_TESTS
+    std::size_t getFrequencyCountForTesting() const noexcept { return xvalues.size(); }
+    const std::vector<float>& getFrequenciesForTesting() const noexcept { return xvalues; }
+    const std::vector<float>& getMeanTraceForTesting (std::size_t channel) const
+    {
+        return currLinearPower.at (channel);
+    }
+    const std::vector<float>& getPeakTraceForTesting (std::size_t channel) const
+    {
+        return currLinearPeakPower.at (channel);
+    }
+    std::vector<float> getPlottedFrequenciesForTesting() const
+    {
+        return plotFrequencies;
+    }
+    const std::vector<float>& getDbMeanTraceForTesting (std::size_t channel) const
+    {
+        return currPower.at (channel);
+    }
+    const std::vector<float>& getDisplayedDbMeanTraceForTesting (std::size_t channel) const
+    {
+        return displayedPower.at (channel);
+    }
+    const std::vector<float>& getComparisonTraceForTesting (std::size_t channel) const
+    {
+        return currComparison.at (channel);
+    }
+    spectrumviewer::SpectrumComparisonMode getComparisonModeForTesting() const noexcept
+    {
+        return comparisonStatus.mode;
+    }
+    float getMinimumFrequencyForTesting() const noexcept { return displayMinimumFrequencyHz; }
+    float getMaximumFrequencyForTesting() const noexcept { return displayMaximumFrequencyHz; }
+    spectrumviewer::FrequencyScale getFrequencyScaleForTesting() const noexcept
+    {
+        return frequencyScale;
+    }
+    String getXAxisLabelForTesting() const { return plt->getXAxisLabelForTesting(); }
+    String getYAxisLabelForTesting() const { return plt->getYAxisLabelForTesting(); }
+    XYRange getPlotRangeForTesting() { return plt->getRangeForTesting(); }
+    Rectangle<int> getDrawingBoundsForTesting() const
+    {
+        return plt->getDrawingBoundsForTesting().translated (plt->getX(), plt->getY());
+    }
+    double getPendingRangeElapsedSecondsForTesting() const noexcept
+    {
+        return pendingRangeElapsedSeconds;
+    }
+    Array<int> getActiveChannelsForTesting() const { return activeChannels; }
+    std::uint16_t getActiveStreamForTesting() const noexcept { return activeStreamId; }
+#endif
+
     int legendWidth = 150;
 
     DisplayType displayType;
 
 private:
-    std::vector<Colour> chanColors = { Colour (200, 200, 200),
-                                       Colour (230, 159, 0),
-                                       Colour (86, 180, 233),
-                                       Colour (0, 158, 115),
-                                       Colour (240, 228, 66),
-                                       Colour (0, 114, 178),
-                                       Colour (242, 66, 53),
-                                       Colour (204, 121, 167) };
+    void updateAmplitudeAxisLabel();
+    void rebuildDisplayedTraces();
+    void rebuildDisplayedTrace (std::size_t channel);
+
+    /** Brings plotFrequencies and zeroLine up to date with xvalues and the
+        frequency scale. Does nothing when neither has changed. */
+    void refreshPlotFrequencies();
+
+    /** Tells the worker how many display columns to reduce to: the plot's
+        width for the power spectrum, the image's height for the spectrogram,
+        where each column becomes one row. */
+    void publishDisplayColumnCount();
+
+    /** Where the spectrogram image is drawn, in this component's coordinates.
+        The frequency axis sits to its left and the channel caption above it. */
+    Rectangle<int> getSpectrogramArea() const noexcept;
+
+    /** Matches the spectrogram image's height to its drawn area in physical
+        pixels, so the frequency axis stays sharp on a scaled display. The width
+        stays at spectrogramHistoryColumns. Keeps the history already drawn. */
+    void resizeSpectrogramImage();
+
+    // One column per frame, stretched across the drawn area. Fixed rather than
+    // matched to the area, so the same number of frames is on screen at any
+    // window width.
+    static constexpr int spectrogramHistoryColumns = 1000;
+
+    // matplotlib's tab20 without its gray pair: each channel takes a dark
+    // shade, and the reference drawn for it takes the matching light one.
+    std::vector<Colour> chanColors = { Colour (0xff1f77b4), Colour (0xffff7f0e),
+                                       Colour (0xff2ca02c), Colour (0xffd62728),
+                                       Colour (0xff9467bd), Colour (0xff8c564b),
+                                       Colour (0xffe377c2), Colour (0xffbcbd22),
+                                       Colour (0xff17becf) };
+    std::vector<Colour> referenceColors = { Colour (0xffaec7e8), Colour (0xffffbb78),
+                                            Colour (0xff98df8a), Colour (0xffff9896),
+                                            Colour (0xffc5b0d5), Colour (0xffc49c94),
+                                            Colour (0xfff7b6d2), Colour (0xffdbdb8d),
+                                            Colour (0xff9edae5) };
 
     std::unique_ptr<UtilityButton> clearButton;
+    std::unique_ptr<UtilityButton> resetViewButton;
+
+    void updateResetViewButtonVisibility();
 
     SpectrumViewer* processor;
 
     int rowHeight = 50;
 
-    float maxPower = 0.0f;
-
     std::vector<std::vector<float>> currPower; // channels x freqs
+    std::vector<std::vector<float>> currPeakPower;
+    std::vector<std::vector<float>> currBaselineDb;
+    std::vector<std::vector<float>> displayedPower;
+    std::vector<std::vector<float>> displayedPeakPower;
+    std::vector<std::vector<float>> currLinearPower;
+    std::vector<std::vector<float>> currLinearPeakPower;
+    std::vector<std::vector<float>> currComparison;
+    std::vector<String> channelUnits;
+    spectrumviewer::SpectrumAmplitudeRange amplitudeRange;
+    bool amplitudeUnitsChanged = false;
+    spectrumviewer::SpectrumComparisonFrameStatus comparisonStatus;
 
     std::vector<float> xvalues;
 
-    std::unique_ptr<InteractivePlot> plt;
+    // xvalues on the plotted axis, and a 0 dB line for the delta view. Both
+    // are derived from xvalues and cached, since they change only when the
+    // bins or the scale do and are otherwise rebuilt every frame.
+    std::vector<float> plotFrequencies;
+    std::vector<float> zeroLine;
+    spectrumviewer::FrequencyScale plotFrequenciesScale = spectrumviewer::FrequencyScale::linear;
+    bool plotFrequenciesStale = true;
+
+    std::unique_ptr<FrequencyPlot> plt;
+    std::unique_ptr<Label> cursorLabel;
 
     float freqStep;
+    int freqStart = 0;
     int nFreqs;
     int freqEnd;
 
     Array<int> activeChannels;
+    std::uint16_t activeStreamId = 0;
+    SpectrumAmplitudeDisplay amplitudeDisplay = SpectrumAmplitudeDisplay::psd;
+    spectrumviewer::AperiodicDisplayMode aperiodicDisplayMode =
+        spectrumviewer::AperiodicDisplayMode::off;
+    bool peakEnvelopeVisible = true;
+    spectrumviewer::FrequencyScale frequencyScale = spectrumviewer::FrequencyScale::linear;
+    float displayMinimumFrequencyHz = 0.0f;
+    float displayMaximumFrequencyHz = 1000.0f;
+    std::size_t frameChannelCount = 0;
+    std::uint64_t lastConfigurationGeneration = 0;
+    std::uint64_t lastFrameSequence = 0;
+    double pendingRangeElapsedSeconds = 0.0;
+    bool hasFrameTiming = false;
 
-    /** Image to draw*/
+    /** Spectrogram history; the newest column is at x = 0. It shows the first
+        selected channel only. */
     std::unique_ptr<Image> spectrogramImg;
 
-    OwnedArray<OwnedArray<Dsp::Filter>> lowPassFilters;
+    // The viridis colour map, sampled once rather than rebuilt as a gradient
+    // and evaluated per pixel on every frame.
+    std::array<Colour, 256> spectrogramPalette;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CanvasPlot);
 };
@@ -118,17 +384,24 @@ private:
 	Draws the real-time power spectrum
 
 */
-class SpectrumCanvas : public Visualizer
+class TESTABLE SpectrumCanvas : public Visualizer,
+                       public ComboBox::Listener,
+                       public Slider::Listener,
+                       public Button::Listener
 {
 public:
-    /** Constructor */
-    SpectrumCanvas (SpectrumViewer* n);
+    /** Constructor.
+
+        settings outlives the canvas: it is a member of the editor, which
+        destroys the canvas before its own members.
+    */
+    SpectrumCanvas (SpectrumViewer* n, SpectrumDisplaySettings& settings);
 
     /** Destructor */
-    ~SpectrumCanvas() {}
+    ~SpectrumCanvas() override;
 
     /** Called when tab becomes visible again */
-    void refreshState();
+    void refreshState() override;
 
     /** Updates settings */
     void updateSettings() override;
@@ -145,22 +418,211 @@ public:
     /** Draws the canvas */
     void paint (Graphics& g) override;
 
+    /** Draws the Set Ref arrow over the options viewport. */
+    void paintOverChildren (Graphics& g) override;
+
     /** Updates component boundaries */
     void resized() override;
 
-    /** Sets the display type for the canvas (Power Spectrum or Spectrogram)*/
-    void setDisplayType (DisplayType type);
+    /** Pushes every stored display setting into the controls, the plot and the
+        processor. Called at construction and whenever a session is loaded. */
+    void applyDisplaySettings();
+
+    /** Opens or closes the display-options drawer at the bottom of the canvas. */
+    void setOptionsDrawerOpen (bool shouldBeOpen);
+
+    bool isOptionsDrawerOpen() const noexcept { return displaySettings.optionsDrawerOpen; }
 
     CanvasPlot* getPlotPtr() { return canvasPlot.get(); };
 
+#if BUILD_TESTS
+    Component* getMainOptionsBarForTesting() const noexcept { return mainOptionsBar.get(); }
+    Component* getOptionsDrawerForTesting() const noexcept { return optionsDrawer.get(); }
+    Component* getOptionsContentForTesting() const noexcept { return optionsContent.get(); }
+    Component* getOptionsViewportForTesting() const noexcept { return optionsViewport.get(); }
+    Component* getViewportForTesting() const noexcept { return viewport.get(); }
+#endif
+
+    void comboBoxChanged (ComboBox* comboBox) override;
+    void sliderValueChanged (Slider* slider) override;
+    void buttonClicked (Button* button) override;
+
 private:
+    /** Visualizer already owns a Timer, driving refresh() at the plot rate and
+        only while acquisition runs. Capture and reference status must keep
+        updating when it is not, so this drives that at a slower rate. */
+    class StatusTimer final : public Timer
+    {
+    public:
+        explicit StatusTimer (SpectrumCanvas& ownerToUse) : owner (ownerToUse) {}
+        void timerCallback() override { owner.updateStatus(); }
+
+    private:
+        SpectrumCanvas& owner;
+    };
+
+    // The options bars keep their natural width and scroll horizontally when
+    // the canvas is narrower, so every height here is fixed and known.
+    static constexpr int controlHeight = 22;
+    static constexpr int controlSpacing = 12;
+    static constexpr int groupSpacing = 10;
+    static constexpr int groupPadding = 8;
+    // Room the group outline leaves for the title it draws inline at the top.
+    static constexpr int groupTitleHeight = 14;
+    static constexpr int groupRowGap = 6;
+    static constexpr int barPadding = 10;
+    static constexpr int optionsButtonWidth = 64;
+    static constexpr int scrollBarThickness = 12;
+    // A group is a title over two rows of controls; the main bar is one row.
+    static constexpr int groupHeight =
+        groupTitleHeight + 2 * controlHeight + groupRowGap + groupPadding;
+    static constexpr int optionsBarHeight = 2 * barPadding + controlHeight;
+    static constexpr int optionsDrawerHeight = 2 * barPadding + groupHeight;
+
+    /** One titled group of related controls in the options drawer.
+
+        The contents sit on two rows rather than one, which roughly halves how
+        wide the group has to be and so fits far more into a narrow canvas
+        before the drawer has to scroll. Controls that hide themselves - the
+        fixed-range sliders - drop out of both the measured width and the
+        layout, and a group with nothing showing takes no space at all. */
+    class ControlGroup final : public GroupComponent
+    {
+    public:
+        static constexpr int rowCount = 2;
+
+        explicit ControlGroup (const String& titleText);
+
+        /** Adds a label/control pair to one of the group's rows. A null label
+            gives a bare control. */
+        void addPair (int row, Label* label, Component* control,
+                      int labelWidth, int controlWidth);
+
+        /** Width the visible contents need. Zero when nothing is showing. */
+        int getPreferredWidth() const;
+
+        void lookAndFeelChanged() override;
+        void resized() override;
+
+    private:
+        struct Entry
+        {
+            int row;
+            Label* label;
+            Component* control;
+            int labelWidth;
+            int controlWidth;
+
+            bool isShowing() const { return control != nullptr && control->isVisible(); }
+            int width() const { return labelWidth + controlWidth; }
+        };
+
+        /** Width each row's visible entries need, gaps included. */
+        std::array<int, rowCount> getRowWidths() const;
+
+        std::vector<Entry> entries;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ControlGroup);
+    };
+
+    void updateStatus();
+
+    void setDisplayType (DisplayType type);
+    void createControls();
+    void createControlGroups();
+
+    /** Positions the options area and returns the height it occupies. */
+    int layOutControls();
+    void updateAmplitudeRangeControls();
+    void applyAmplitudeRangeToPlot();
+    void applyFrequencyRange();
+    void refreshNyquistRangeItem();
+
+    /** Selects what comparing against a reference needs: Fine analysis, which
+        every reference is made with, and the overlay. */
+    void useReferenceForComparison();
+    void chooseReferenceFileToImport();
+    /** Asks which of the reference's channels to export as a baseline, unless
+        it has only one, then where to save it. */
+    void chooseChannelToExport();
+    void chooseReferenceFileToExport (std::size_t channel);
+    File getReferenceDirectory() const;
+    void updateReferenceStatus (SpectrumCaptureState capture);
+
     SpectrumViewer* processor;
+    SpectrumDisplaySettings& displaySettings;
 
     std::unique_ptr<Viewport> viewport;
     std::unique_ptr<CanvasPlot> canvasPlot;
-    juce::Rectangle<int> canvasBounds;
 
-    DisplayType displayType;
+    // The options area keeps its natural width and scrolls horizontally rather
+    // than compressing controls, so both bars live inside one viewport. The
+    // drawer sits above the main bar and they scroll together.
+    std::unique_ptr<Viewport> optionsViewport;
+    std::unique_ptr<Component> optionsContent;
+    std::unique_ptr<Component> mainOptionsBar;
+    std::unique_ptr<Component> optionsDrawer;
+    std::unique_ptr<Button> showHideOptionsButton;
+
+    std::unique_ptr<Label> displayLabel;
+    std::unique_ptr<ComboBox> displayType;
+    std::unique_ptr<Label> frequencyLabel;
+    std::unique_ptr<ComboBox> frequencyRange;
+    std::unique_ptr<Label> profileLabel;
+    std::unique_ptr<ComboBox> analysisProfile;
+    std::unique_ptr<Label> scaleLabel;
+    std::unique_ptr<ComboBox> frequencyScale;
+    std::unique_ptr<Label> amplitudeLabel;
+    std::unique_ptr<ComboBox> amplitudeDisplay;
+    std::unique_ptr<Label> baselineLabel;
+    std::unique_ptr<ComboBox> baselineDisplay;
+    std::unique_ptr<ToggleButton> peakEnvelope;
+    std::unique_ptr<Label> amplitudeRangeLabel;
+    std::unique_ptr<ComboBox> amplitudeRangeMode;
+    std::unique_ptr<Label> minimumDbLabel;
+    std::unique_ptr<Slider> minimumDb;
+    std::unique_ptr<Label> maximumDbLabel;
+    std::unique_ptr<Slider> maximumDb;
+    std::unique_ptr<Label> automaticRangeLabel;
+    std::unique_ptr<Label> captureDurationLabel;
+    std::unique_ptr<ComboBox> captureDuration;
+    std::unique_ptr<UtilityButton> captureAction;
+    std::unique_ptr<Label> captureStatusLabel;
+    std::unique_ptr<Label> comparisonModeLabel;
+    std::unique_ptr<ComboBox> comparisonMode;
+    std::unique_ptr<UtilityButton> setReferenceAction;
+    std::unique_ptr<UtilityButton> clearReferenceAction;
+    std::unique_ptr<UtilityButton> importReferenceAction;
+    std::unique_ptr<UtilityButton> exportReferenceAction;
+    std::unique_ptr<Label> referenceStatusLabel;
+
+    // Kept alive for as long as its dialog is open. Destroying the canvas
+    // destroys it, which dismisses the dialog without calling back.
+    std::unique_ptr<FileChooser> referenceFileChooser;
+    // Where the last baseline was imported from or exported to, so the next
+    // dialog opens there.
+    File referenceDirectory;
+
+    // The drawer's controls belong to these, in the order they are laid out.
+    std::vector<std::unique_ptr<ControlGroup>> controlGroups;
+    ControlGroup* referenceGroup = nullptr;
+    // Whether Set Ref is enabled, kept here because UtilityButton does not
+    // expose isEnabled(). While true, an arrow points from it to the reference
+    // group.
+    bool setReferenceSuggested = false;
+
+    Array<Range<int>> freqRanges;
+    StatusTimer statusTimer { *this };
+
+    DisplayType currentDisplayType = POWER_SPECTRUM;
+    bool unavailableStateCleared = false;
+    bool applyingSettings = false;
+
+    // Setting a reference is asynchronous, so a request the worker could not
+    // apply surfaces here rather than at the click. Latched until the next
+    // reference is set or cleared, so the message is not lost between polls.
+    std::uint64_t seenDroppedReferenceRequests = 0;
+    bool referenceRequestWasDropped = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumCanvas);
 };

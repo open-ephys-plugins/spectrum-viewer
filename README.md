@@ -15,6 +15,39 @@ The Spectrum Viewer plugin is not included by default in the Open Ephys GUI. To 
 
 Instructions for using the Spectrum Viewer plugin are available [here](https://open-ephys.github.io/gui-docs/User-Manual/Plugins/Spectrum-Viewer.html).
 
+The **Capture** control accumulates 6, 10, 30, or 60 seconds of non-overlapping
+two-second Fine spectra to reduce estimator variance. It averages calibrated
+linear PSDs, updates progressively, and freezes the completed result until
+**Live** is selected. The status reports analyzed versus elapsed span and flags
+failed, shed, or discontinuous windows; captured data is not saved in session
+configuration.
+
+**Set Reference** makes the frozen capture the comparison reference, shown as an
+overlay or as a dB difference. A reference is kept until **Clear Ref**, across
+acquisition runs. A reference captured this session applies to the stream and
+channels it was captured on.
+
+To keep a baseline captured under ideal conditions for later experiments,
+**Export...** asks which of the reference's channels to save and writes that
+channel to a file. **Import...** loads a saved baseline, and every selected
+channel of any stream is then compared with it, as long as the sample rate and
+the Fine analysis settings match; the status tooltip says what to change when
+they do not. Overlay draws the baseline once, in a neutral colour. A baseline
+is already a file, so Export is unavailable while one is loaded. The status
+reads "Session ref" with the capture time, or "Baseline" with its date and
+time. A saved signal chain remembers an imported baseline's location and loads
+it again, rather than storing the spectrum itself; a reference captured in the
+session is not saved.
+
+Baseline files are JSON. The mean PSD and the sample variance are base64
+little-endian float32, one value per frequency bin, so in Python
+`numpy.frombuffer(base64.b64decode(ref["mean_psd"]), "<f4")` recovers the
+spectrum, with `ref["channel"]` describing where it was recorded.
+
+The **Spectrogram** display shows the first selected channel only. Background
+removal applies to it; the background fit, peak envelope, and reference
+comparison are drawn on the power spectrum only.
+
 ## Building from source
 
 First, follow the instructions on [this page](https://open-ephys.github.io/gui-docs/Developer-Guide/Compiling-the-GUI.html) to build the Open Ephys GUI.
@@ -23,7 +56,30 @@ First, follow the instructions on [this page](https://open-ephys.github.io/gui-d
 
 This plugin depends on the `main` branch of the [OpenEphysFFTW](https://github.com/open-ephys-plugins/OpenEphysFFTW/tree/main) library, which must be built and installed first.
 
-Be sure to the `OpenEphysFFTW` and `spectrum-viewer` repositories into a directory at the same level as the `plugin-GUI`, e.g.:
+DPSS taper generation uses a plugin-private symmetric-tridiagonal eigensolver, so
+the plugin has no BLAS or LAPACK dependency.
+
+The power spectrum uses [CustomMatPlot](https://github.com/franshej/CustomMatPlot).
+It is a Git submodule at `ThirdParty/CustomMatPlot`, pinned to revision
+`5486557becd7fbc5ca4bc478610429799539d850`. After cloning this plugin, initialize
+only that submodule:
+
+```bash
+git submodule update --init ThirdParty/CustomMatPlot
+```
+
+Do not use `--recursive`: CustomMatPlot's upstream repository declares a nested
+JUCE submodule that this plugin does not need. CMake compiles only the 2D sources
+against Open Ephys' JUCE, without cloning anything or building another JUCE copy
+or a separate plotting library. A C++20 compiler is required. Once the submodule
+is initialized, configuring the plugin with tests and benchmarks disabled works
+offline; those opt-in targets fetch their own dependencies.
+
+Contributors should start with the [developer guide](DEVELOPMENT.md), which maps
+the runtime data flow, source files, thread boundaries, and real-time invariants.
+
+Clone the `OpenEphysFFTW` and `spectrum-viewer` repositories into a directory at
+the same level as `plugin-GUI`, e.g.:
  
 ```
 Code
@@ -59,7 +115,7 @@ Selecting the `INSTALL` project and manually building it will copy the `.dll` an
 
 ### Linux
 
-**Requirements:** [CMake](https://cmake.org/install/)
+**Requirements:** [CMake](https://cmake.org/install/) and GCC 13 or newer (Ubuntu 24.04 or later)
 
 From the `Build` directory, enter:
 
