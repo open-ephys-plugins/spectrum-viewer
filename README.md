@@ -15,7 +15,7 @@ The Spectrum Viewer plugin is not included by default in the Open Ephys GUI. To 
 
 Instructions for using the Spectrum Viewer plugin are available [here](https://open-ephys.github.io/gui-docs/User-Manual/Plugins/Spectrum-Viewer.html).
 
-The **Capture** control accumulates 10, 30, or 60 seconds of non-overlapping
+The **Capture** control accumulates 6, 10, 30, or 60 seconds of non-overlapping
 two-second Fine spectra to reduce estimator variance. It averages calibrated
 linear PSDs, updates progressively, and freezes the completed result until
 **Live** is selected. The status reports analyzed versus elapsed span and flags

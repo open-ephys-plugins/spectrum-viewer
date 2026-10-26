@@ -54,7 +54,7 @@ struct SpectrumDisplaySettings
     int amplitudeDisplayId = 1; // 1 PSD, 2 ASD
     int aperiodicDisplayId = 1; // 1 off, 2 show fit, 3 remove
     int amplitudeRangeModeId = 1; // 1 automatic, 2 fixed
-    int captureDurationId = 1; // 1 ten seconds, 2 thirty, 3 sixty
+    int captureDurationId = 2; // 1 six seconds, 2 ten, 3 thirty, 4 sixty
     int comparisonModeId = 1; // 1 absolute, 2 overlay, 3 delta dB
     bool peakEnvelopeVisible = true;
     bool optionsDrawerOpen = false;
@@ -75,7 +75,7 @@ struct SpectrumDisplaySettings
         amplitudeDisplayId = jlimit (1, 2, amplitudeDisplayId);
         aperiodicDisplayId = jlimit (1, 3, aperiodicDisplayId);
         amplitudeRangeModeId = jlimit (1, 2, amplitudeRangeModeId);
-        captureDurationId = jlimit (1, 3, captureDurationId);
+        captureDurationId = jlimit (1, 4, captureDurationId);
         comparisonModeId = jlimit (1, 3, comparisonModeId);
 
         if (! std::isfinite (minimumDb) || ! std::isfinite (maximumDb)

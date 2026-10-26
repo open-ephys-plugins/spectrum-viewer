@@ -727,7 +727,7 @@ void SpectrumCanvas::createControls()
 
     captureDurationLabel = makeLabel ("CaptureDurationLabel", "Capture Length");
     captureDuration = makeComboBox (
-        "CaptureDuration", { "10 s", "30 s", "60 s" },
+        "CaptureDuration", { "6 s", "10 s", "30 s", "60 s" },
         "Averages non-overlapping two-second Fine spectra in linear power");
 
     captureAction = std::make_unique<UtilityButton> ("Capture");
@@ -1279,8 +1279,8 @@ void SpectrumCanvas::buttonClicked (Button* button)
         case SpectrumCaptureState::live:
         case SpectrumCaptureState::failed:
         {
-            constexpr double durations[] { 10.0, 30.0, 60.0 };
-            const auto index = jlimit (0, 2, captureDuration->getSelectedItemIndex());
+            constexpr double durations[] { 6.0, 10.0, 30.0, 60.0 };
+            const auto index = jlimit (0, 3, captureDuration->getSelectedItemIndex());
             processor->startSpectrumCapture (durations[index]);
             break;
         }
