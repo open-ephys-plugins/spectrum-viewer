@@ -156,9 +156,9 @@ if(UNIX AND NOT APPLE)
 endif()
 if(APPLE)
 	set(SPECTRUM_VIEWER_NOTICE_DESTINATION
-		"$ENV{HOME}/Library/Application Support/open-ephys/plugins-api10")
+		"$ENV{HOME}/Library/Application Support/open-ephys/shared-api10/notices")
 else()
-	set(SPECTRUM_VIEWER_NOTICE_DESTINATION ${GUI_BIN_DIR}/shared)
+	set(SPECTRUM_VIEWER_NOTICE_DESTINATION ${GUI_BIN_DIR}/shared/notices)
 endif()
 install(FILES THIRD_PARTY_NOTICES.md
 	DESTINATION "${SPECTRUM_VIEWER_NOTICE_DESTINATION}"
