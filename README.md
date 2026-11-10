@@ -19,7 +19,7 @@ Instructions for using the Spectrum Viewer plugin are available [here](https://o
 
 First, follow the instructions on [this page](https://open-ephys.github.io/gui-docs/Developer-Guide/Compiling-the-GUI.html) to build the Open Ephys GUI.
 
-**Important:** This plugin is intended for use with the latest version of the GUI (0.6.0 and higher). The GUI should be compiled from the [`main`](https://github.com/open-ephys/plugin-gui/tree/main) branch, rather than the former `master` branch.
+**Important:** This plugin is intended for use with GUI version 1.0.0 and higher.
 
 This plugin depends on the `main` branch of the [OpenEphysFFTW](https://github.com/open-ephys-plugins/OpenEphysFFTW/tree/main) library, which must be built and installed first.
 
@@ -108,4 +108,4 @@ cmake -G "Xcode" ..
 
 Next, launch Xcode and open the `spectrum-viewer.xcodeproj` file that now lives in the “Build” directory.
 
-Running the `ALL_BUILD` scheme will compile the plugin; running the `INSTALL` scheme will install the `.bundle` file to `/Users/<username>/Library/Application Support/open-ephys/plugins-api8`. The Spectrum Viewer plugin should be available the next time you launch the GUI from Xcode.
+Running the `ALL_BUILD` scheme will compile the plugin; running the `INSTALL` scheme will install the `.bundle` file to `/Users/<username>/Library/Application Support/open-ephys/plugins-api10`. The Spectrum Viewer plugin should be available the next time you launch the GUI from Xcode.

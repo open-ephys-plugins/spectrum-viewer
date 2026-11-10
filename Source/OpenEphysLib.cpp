@@ -38,7 +38,7 @@ extern "C" EXPORT void getLibInfo (Plugin::LibraryInfo* info)
 {
     info->apiVersion = PLUGIN_API_VER;
     info->name = "Spectrum Viewer";
-    info->libVersion = "1.0.1";
+    info->libVersion = "2.0.0";
     info->numPlugins = NUM_PLUGINS;
 }
 
