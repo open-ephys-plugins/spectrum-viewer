@@ -213,7 +213,7 @@ void FrequencyPlot::mouseMove (const MouseEvent& event)
 void FrequencyPlot::mouseWheelMove (const MouseEvent& event, const MouseWheelDetails& wheel)
 {
     const auto frequencyOnly = event.mods.isShiftDown();
-    if (! event.mods.isCtrlDown() && ! frequencyOnly)
+    if (! event.mods.isCommandDown() && ! frequencyOnly)
     {
         Component::mouseWheelMove (event, wheel);
         return;
@@ -1281,22 +1281,24 @@ void SpectrumCanvas::buttonClicked (Button* button)
         AttributedString shortcuts;
         shortcuts.setJustification (Justification::left);
         shortcuts.setWordWrap (AttributedString::WordWrap::byWord);
+        shortcuts.setLineSpacing (1.25f);
         const auto textColour = findColour (ThemeColours::defaultText);
         shortcuts.append ("Power spectrum shortcuts\n\n",
                           FontOptions ("Inter", "Semi Bold", 16.0f), textColour);
         shortcuts.append (
-            "Left-drag: zoom to rectangle\n"
-            "Ctrl/Cmd + scroll: zoom both axes\n"
-            "Shift + scroll: zoom frequency\n"
-            "Ctrl/Cmd + left-drag: pan\n"
-            "Right-click or Reset View: reset\n"
-            "Double-click: add/remove trace point\n"
-            "Drag trace point: follow spectrum\n"
-            "Drag trace label: move label\n\n"
+            String::fromUTF8 (" \xe2\x80\xa2 ") + "Left-drag: zoom to rectangle\n"
+            + String::fromUTF8 (" \xe2\x80\xa2 ") + "Ctrl/Cmd + scroll: zoom both axes\n"
+            + String::fromUTF8 (" \xe2\x80\xa2 ") + "Shift + scroll: zoom frequency\n"
+            + String::fromUTF8 (" \xe2\x80\xa2 ") + "Ctrl/Cmd + left-drag: pan\n"
+            + String::fromUTF8 (" \xe2\x80\xa2 ") + "Right-click or Reset View: reset\n"
+            + String::fromUTF8 (" \xe2\x80\xa2 ") + "Double-click: add/remove trace point\n"
+            + String::fromUTF8 (" \xe2\x80\xa2 ") + "Drag trace point: follow spectrum\n"
+            + String::fromUTF8 (" \xe2\x80\xa2 ") + "Drag trace label: move label\n\n"
             "Click anywhere to dismiss",
             FontOptions ("Inter", "Regular", 15.0f), textColour);
 
         controlsHelpBubble = std::make_unique<BubbleMessageComponent>();
+        controlsHelpBubble->setInterceptsMouseClicks (true, true);
         controlsHelpBubble->setAllowedPlacement (BubbleComponent::above | BubbleComponent::below);
         addChildComponent (controlsHelpBubble.get());
         controlsHelpBubble->showAt (controlsButton.get(), shortcuts, 0);
