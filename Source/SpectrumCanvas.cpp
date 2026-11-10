@@ -1955,11 +1955,13 @@ void CanvasPlot::setDisplayType (DisplayType type)
     {
         plt->setVisible (false);
         clearButton->setVisible (false);
+        cursorLabel->setVisible (false);
     }
     else
     {
         plt->setVisible (true);
         clearButton->setVisible (true);
+        cursorLabel->setVisible (true);
     }
     updateResetViewButtonVisibility();
 
@@ -2326,7 +2328,7 @@ void CanvasPlot::updateAmplitudeAxisLabel()
 
 void CanvasPlot::mouseMove (const MouseEvent& event)
 {
-    if (xvalues.empty() || currLinearPower.empty())
+    if (xvalues.empty() || currLinearPower.empty() || displayType == SPECTROGRAM)
         return;
     const auto frequency = plt->frequencyAt (event.getEventRelativeTo (plt.get()).getPosition());
     if (! std::isfinite (frequency))
