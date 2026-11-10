@@ -2570,8 +2570,7 @@ void CanvasPlot::paint (Graphics& g)
                               ? processor->getChanName (activeStreamId,
                                                         activeChannels[i])
                               : processor->getChanName (activeChannels[i]);
-            if (! channelUnits[static_cast<std::size_t> (i)].isEmpty())
-                chan += " [" + channelUnits[static_cast<std::size_t> (i)] + "]";
+
             g.drawFittedText (chan, left + 45, top, (legendWidth - 20) / 2, swatchSize, Justification::centredLeft, 1);
 
             g.setColour (findColour (ThemeColours::defaultFill));
@@ -2616,15 +2615,26 @@ void CanvasPlot::paint (Graphics& g)
         }
         else
         {
+            tickFrequencies.push_back (displayMinimumFrequencyHz);
             const auto firstDecade = static_cast<int> (
-                std::ceil (std::log10 (displayMinimumFrequencyHz)));
+                std::floor (std::log10 (displayMinimumFrequencyHz)));
             const auto lastDecade = static_cast<int> (
                 std::floor (std::log10 (displayMaximumFrequencyHz)));
             for (auto exponent = firstDecade; exponent <= lastDecade; ++exponent)
-                tickFrequencies.push_back (
-                    std::pow (10.0f, static_cast<float> (exponent)));
+            {
+                const auto decade = std::pow (10.0f, static_cast<float> (exponent));
+                for (const auto multiplier : { 1.0f, 2.0f, 5.0f })
+                {
+                    const auto frequency = multiplier * decade;
+                    if (frequency > displayMinimumFrequencyHz
+                        && frequency < displayMaximumFrequencyHz)
+                        tickFrequencies.push_back (frequency);
+                }
+            }
+            tickFrequencies.push_back (displayMaximumFrequencyHz);
         }
 
+        auto previousLabelY = std::numeric_limits<float>::max();
         for (const auto frequency : tickFrequencies)
         {
             const auto fraction = frequencyScale
@@ -2639,9 +2649,17 @@ void CanvasPlot::paint (Graphics& g)
             const auto ytickloc = areaBottom - fraction * (areaBottom - areaTop);
             g.drawLine (axisX - 10.0f, ytickloc, axisX, ytickloc, 2.0f);
 
-            const auto yTick = frequency >= 1000.0f
-                                   ? String (frequency / 1000.0f, 0) + "k"
-                                   : String (frequency, 0);
+            if (frequencyScale == spectrumviewer::FrequencyScale::logarithmic)
+            {
+                constexpr auto minimumLabelSpacing = static_cast<float> (tickLabelHeight + 2);
+                if (previousLabelY - ytickloc < minimumLabelSpacing
+                    || (frequency != displayMaximumFrequencyHz
+                        && ytickloc - areaTop < minimumLabelSpacing))
+                    continue;
+                previousLabelY = ytickloc;
+            }
+
+            const auto yTick = String (frequency, 0);
 
             g.drawText (yTick,
                         0,

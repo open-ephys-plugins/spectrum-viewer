@@ -269,7 +269,7 @@ public:
     std::uint16_t getActiveStreamForTesting() const noexcept { return activeStreamId; }
 #endif
 
-    int legendWidth = 150;
+    int legendWidth = 135;
 
     DisplayType displayType;
 
