@@ -940,21 +940,26 @@ void SpectrumCanvas::resized()
     const auto controlsHeight = layOutControls();
     const auto width = getWidth();
     const auto height = getHeight();
+    const auto viewportHeight = std::max (0, height - controlsHeight);
 
     int plotWidth, plotHeight;
     if (currentDisplayType == POWER_SPECTRUM)
     {
         // Below this width the plot scrolls rather than shrinking into
         // unreadability; the viewport already provides the scrollbars.
-        constexpr int minimumPlotWidth = 800;
-        constexpr int minimumPlotHeight = 600;
+        constexpr int minimumPlotWidth = 600;
+        constexpr int minimumPlotHeight = 400;
         constexpr int plotMargin = 40;
         constexpr int plotVerticalMargin = 50;
 
         const auto availableWidth = width - canvasPlot->legendWidth - plotMargin;
         plotWidth = std::max (minimumPlotWidth, availableWidth);
 
-        const auto availableHeight = height - controlsHeight - plotVerticalMargin;
+        const auto horizontalScrollbarHeight =
+            plotWidth + canvasPlot->legendWidth + plotMargin > width
+                ? viewport->getScrollBarThickness() : 0;
+        const auto availableHeight =
+            viewportHeight - horizontalScrollbarHeight - plotVerticalMargin;
         plotHeight = std::max (minimumPlotHeight, availableHeight);
 
         canvasPlot->setBounds (0, 0,
@@ -966,7 +971,7 @@ void SpectrumCanvas::resized()
         canvasPlot->setBounds (0, 0, width, height - controlsHeight);
     }
 
-    viewport->setBounds (0, 0, width, std::max (0, height - controlsHeight));
+    viewport->setBounds (0, 0, width, viewportHeight);
 }
 
 int SpectrumCanvas::layOutControls()
@@ -2477,19 +2482,23 @@ void CanvasPlot::paint (Graphics& g)
         if (activeChannels.size() == 0)
             return;
 
-        int left = getWidth() - legendWidth - 10;
-        int top = 60;
+        const auto left = getWidth() - legendWidth - 10;
+        constexpr int legendTop = 70;
+        const auto spacing = std::min (rowHeight,
+                                        std::max (0, getHeight() - legendTop)
+                                            / activeChannels.size());
+        const auto swatchSize = std::min (30, spacing);
 
         g.setFont (FontOptions ("Inter", "Semi Bold", 16.0f));
 
         for (int i = 0; i < activeChannels.size(); i++)
         {
-            top = (i + 1) * rowHeight + 10;
+            const auto top = legendTop + i * spacing;
 
             // paint() must never throw: an exception escaping a JUCE paint call
             // terminates the host. Wrap rather than index past the palette.
             g.setColour (chanColors[static_cast<std::size_t> (i) % chanColors.size()]);
-            g.fillRect (left, top + 10, 30, 30);
+            g.fillRect (left, top, swatchSize, swatchSize);
 
             g.setColour (findColour (ThemeColours::controlPanelText));
             String chan = hasFrameTiming
@@ -2498,10 +2507,10 @@ void CanvasPlot::paint (Graphics& g)
                               : processor->getChanName (activeChannels[i]);
             if (! channelUnits[static_cast<std::size_t> (i)].isEmpty())
                 chan += " [" + channelUnits[static_cast<std::size_t> (i)] + "]";
-            g.drawFittedText (chan, left + 45, top + 10, (legendWidth - 20) / 2, 30, Justification::centredLeft, 1);
+            g.drawFittedText (chan, left + 45, top, (legendWidth - 20) / 2, swatchSize, Justification::centredLeft, 1);
 
             g.setColour (findColour (ThemeColours::defaultFill));
-            g.drawRect (left, top + 10, 30, 30, 2);
+            g.drawRect (left, top, swatchSize, swatchSize, 2);
         }
     }
     else
