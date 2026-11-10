@@ -6,7 +6,7 @@ on:
       fftw_ref:
         description: OpenEphysFFTW branch, tag, or SHA to build against
         required: false
-        default: float-batched-r2c
+        default: main
   push:
     branches:
       - main
@@ -18,7 +18,7 @@ on:
 
 env:
   # Restore this default to main after the prerequisite FFTW PR merges.
-  OPENEPHYS_FFTW_REF: ${{ inputs.fftw_ref || 'float-batched-r2c' }}
+  OPENEPHYS_FFTW_REF: ${{ inputs.fftw_ref || 'main' }}
 
 permissions:
   contents: read
@@ -85,7 +85,7 @@ jobs:
       run: |
         mkdir -p ci-artifact/plugins ci-artifact/shared/notices
         cp Build/Release/spectrum-viewer.dll ci-artifact/plugins/
-        find ../../plugin-GUI/Build/Release/shared -maxdepth 1 -type f -iname '*fftw*.dll' -exec cp '{}' ci-artifact/shared/notices/ \;
+        find ../../plugin-GUI/Build/Release/shared -maxdepth 1 -type f -iname '*fftw*.dll' -exec cp '{}' ci-artifact/shared/ \;
         cp THIRD_PARTY_NOTICES.md ci-artifact/shared/notices/SpectrumViewer-THIRD_PARTY_NOTICES.md
         test "$(find ci-artifact/shared -maxdepth 1 -type f -iname '*fftw*.dll' | wc -l)" -ge 3
       shell: bash

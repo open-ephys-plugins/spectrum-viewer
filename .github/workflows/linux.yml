@@ -6,7 +6,7 @@ on:
       fftw_ref:
         description: OpenEphysFFTW branch, tag, or SHA to build against
         required: false
-        default: float-batched-r2c
+        default: main
   push:
     branches:
       - main
@@ -18,7 +18,7 @@ on:
 
 env:
   # Restore this default to main after the prerequisite FFTW PR merges.
-  OPENEPHYS_FFTW_REF: ${{ inputs.fftw_ref || 'float-batched-r2c' }}
+  OPENEPHYS_FFTW_REF: ${{ inputs.fftw_ref || 'main' }}
 
 permissions:
   contents: read
