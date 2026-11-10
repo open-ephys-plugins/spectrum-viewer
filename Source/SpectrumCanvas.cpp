@@ -306,8 +306,11 @@ void FrequencyPlot::ylabel (const String& text)
 
 void FrequencyPlot::setRange (const XYRange& range)
 {
-    setFrequencyAxis (spectrumviewer::FrequencyScale::linear,
-                      range.xmin, range.xmax, range.ymin, range.ymax);
+    const auto minimumHz = frequencyScale == spectrumviewer::FrequencyScale::logarithmic
+                               && range.xmin <= 0.0f
+                               ? std::min (10.0f, range.xmax / 10.0f) : range.xmin;
+    setFrequencyAxis (frequencyScale,
+                      minimumHz, range.xmax, range.ymin, range.ymax);
 }
 
 void FrequencyPlot::resetView()
@@ -936,6 +939,9 @@ void SpectrumCanvas::applyFrequencyRange()
 
     canvasPlot->setFrequencyRange (range.getStart(), range.getEnd(),
                                    processor->getFreqStep());
+    canvasPlot->setFrequencyScale (displaySettings.frequencyScaleId == 2
+                                      ? spectrumviewer::FrequencyScale::logarithmic
+                                      : spectrumviewer::FrequencyScale::linear);
 }
 
 void SpectrumCanvas::resized()
@@ -1216,6 +1222,9 @@ void SpectrumCanvas::comboBoxChanged (ComboBox* cb)
         processor->setFrequencyScale (displaySettings.frequencyScaleId == 2
                                           ? spectrumviewer::FrequencyScale::logarithmic
                                           : spectrumviewer::FrequencyScale::linear);
+        canvasPlot->setFrequencyScale (displaySettings.frequencyScaleId == 2
+                          ? spectrumviewer::FrequencyScale::logarithmic
+                          : spectrumviewer::FrequencyScale::linear);
     }
     else if (cb == amplitudeDisplay.get())
     {
@@ -1969,10 +1978,7 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
     }
     plotFrequenciesStale = true;
 
-    const auto amplitude = amplitudeRange.getCurrentRange();
-    XYRange range { (float) freqStart_, (float) freqEnd_,
-                    amplitude.minimum, amplitude.maximum };
-    plt->setRange (range);
+    setFrequencyScale (frequencyScale);
 
     for (int ch = 0; ch < MAX_CHANS; ch++)
     {
@@ -1985,6 +1991,23 @@ void CanvasPlot::setFrequencyRange (int freqStart_, int freqEnd_, float freqStep
         currLinearPeakPower[ch].assign (static_cast<std::size_t> (std::max (0, nFreqs)), 0.0f);
         currComparison[ch].clear();
     }
+}
+
+void CanvasPlot::setFrequencyScale (spectrumviewer::FrequencyScale scale)
+{
+    frequencyScale = scale;
+    displayMinimumFrequencyHz = static_cast<float> (freqStart);
+    displayMaximumFrequencyHz = static_cast<float> (freqEnd);
+    if (scale == spectrumviewer::FrequencyScale::logarithmic
+        && displayMinimumFrequencyHz <= 0.0f)
+        displayMinimumFrequencyHz = std::min (10.0f, displayMaximumFrequencyHz / 10.0f);
+
+    const auto amplitude = amplitudeRange.getCurrentRange();
+    plt->setFrequencyAxis (scale,
+                           displayMinimumFrequencyHz, displayMaximumFrequencyHz,
+                           amplitude.minimum, amplitude.maximum);
+    updateResetViewButtonVisibility();
+    repaint();
 }
 
 void CanvasPlot::setDisplayType (DisplayType type)

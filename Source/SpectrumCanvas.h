@@ -170,6 +170,7 @@ public:
     void updateActiveChans();
 
     void setFrequencyRange (int freqStart, int freqEnd, float freqStep);
+    void setFrequencyScale (spectrumviewer::FrequencyScale scale);
 
     void updatePowerSpectrum (const float* meanPsd,
                               const float* peakPsd,
