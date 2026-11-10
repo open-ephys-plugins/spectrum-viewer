@@ -15,39 +15,6 @@ The Spectrum Viewer plugin is not included by default in the Open Ephys GUI. To 
 
 Instructions for using the Spectrum Viewer plugin are available [here](https://open-ephys.github.io/gui-docs/User-Manual/Plugins/Spectrum-Viewer.html).
 
-The **Capture** control accumulates 6, 10, 30, or 60 seconds of non-overlapping
-two-second Fine spectra to reduce estimator variance. It averages calibrated
-linear PSDs, updates progressively, and freezes the completed result until
-**Live** is selected. The status reports analyzed versus elapsed span and flags
-failed, shed, or discontinuous windows; captured data is not saved in session
-configuration.
-
-**Set Reference** makes the frozen capture the comparison reference, shown as an
-overlay or as a dB difference. A reference is kept until **Clear Ref**, across
-acquisition runs. A reference captured this session applies to the stream and
-channels it was captured on.
-
-To keep a baseline captured under ideal conditions for later experiments,
-**Export...** asks which of the reference's channels to save and writes that
-channel to a file. **Import...** loads a saved baseline, and every selected
-channel of any stream is then compared with it, as long as the sample rate and
-the Fine analysis settings match; the status tooltip says what to change when
-they do not. Overlay draws the baseline once, in a neutral colour. A baseline
-is already a file, so Export is unavailable while one is loaded. The status
-reads "Session ref" with the capture time, or "Baseline" with its date and
-time. A saved signal chain remembers an imported baseline's location and loads
-it again, rather than storing the spectrum itself; a reference captured in the
-session is not saved.
-
-Baseline files are JSON. The mean PSD and the sample variance are base64
-little-endian float32, one value per frequency bin, so in Python
-`numpy.frombuffer(base64.b64decode(ref["mean_psd"]), "<f4")` recovers the
-spectrum, with `ref["channel"]` describing where it was recorded.
-
-The **Spectrogram** display shows the first selected channel only. Background
-removal applies to it; the background fit, peak envelope, and reference
-comparison are drawn on the power spectrum only.
-
 ## Building from source
 
 First, follow the instructions on [this page](https://open-ephys.github.io/gui-docs/Developer-Guide/Compiling-the-GUI.html) to build the Open Ephys GUI.
@@ -142,5 +109,4 @@ cmake -G "Xcode" ..
 Next, launch Xcode and open the `spectrum-viewer.xcodeproj` file that now lives in the “Build” directory.
 
 Running the `ALL_BUILD` scheme will compile the plugin; running the `INSTALL` scheme will install the `.bundle` file to `/Users/<username>/Library/Application Support/open-ephys/plugins-api8`. The Spectrum Viewer plugin should be available the next time you launch the GUI from Xcode.
-
 

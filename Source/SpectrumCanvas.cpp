@@ -738,7 +738,7 @@ void SpectrumCanvas::createControls()
 
     comparisonModeLabel = makeLabel ("SpectrumComparisonModeLabel", "Comparison");
     comparisonMode = makeComboBox ("SpectrumComparisonMode",
-                                   { "Absolute", "Overlay", "Delta" });
+                                   { "Hide", "Overlay", "Delta" });
 
     baselineLabel = makeLabel ("AperiodicDisplayLabel", "Background");
     baselineDisplay = makeComboBox (
