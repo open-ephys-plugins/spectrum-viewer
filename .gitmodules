@@ -1,0 +1,4 @@
+[submodule "CustomMatPlot"]
+	path = ThirdParty/CustomMatPlot
+	url = https://github.com/franshej/CustomMatPlot.git
+	fetchRecurseSubmodules = false
