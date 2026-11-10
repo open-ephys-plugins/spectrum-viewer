@@ -563,6 +563,8 @@ private:
     std::unique_ptr<Component> mainOptionsBar;
     std::unique_ptr<Component> optionsDrawer;
     std::unique_ptr<Button> showHideOptionsButton;
+    std::unique_ptr<UtilityButton> controlsButton;
+    std::unique_ptr<BubbleMessageComponent> controlsHelpBubble;
 
     std::unique_ptr<Label> displayLabel;
     std::unique_ptr<ComboBox> displayType;

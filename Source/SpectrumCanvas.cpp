@@ -705,6 +705,11 @@ void SpectrumCanvas::createControls()
                            (Component*) amplitudeLabel.get(), (Component*) amplitudeDisplay.get() })
         mainOptionsBar->addAndMakeVisible (control);
 
+    controlsButton = std::make_unique<UtilityButton> ("Shortcuts");
+    controlsButton->setTooltip ("Mouse and keyboard shortcuts");
+    controlsButton->addListener (this);
+    mainOptionsBar->addAndMakeVisible (controlsButton.get());
+
     amplitudeRangeLabel = makeLabel ("AmplitudeRangeLabel", "dB Range");
     amplitudeRangeMode = makeComboBox ("AmplitudeRangeMode", { "Auto", "Fixed" });
 
@@ -935,6 +940,8 @@ void SpectrumCanvas::applyFrequencyRange()
 
 void SpectrumCanvas::resized()
 {
+    controlsHelpBubble.reset();
+
     // The bars wrap, so how much height they need depends on the width. Lay
     // them out first and give the viewport whatever is left.
     const auto controlsHeight = layOutControls();
@@ -995,6 +1002,10 @@ int SpectrumCanvas::layOutControls()
     addMainPair (frequencyLabel.get(), frequencyRange.get(), 106, 130);
     addMainPair (scaleLabel.get(), frequencyScale.get(), 100, 90);
     addMainPair (amplitudeLabel.get(), amplitudeDisplay.get(), 50, 80);
+    constexpr int controlsButtonWidth = 80;
+    mainRow.items.add (rowItem (*controlsButton, controlsButtonWidth,
+                                controlHeight, 2 *controlSpacing));
+    mainRowWidth += 2 * controlSpacing + controlsButtonWidth;
 
     FlexBox drawerRow;
     drawerRow.alignItems = FlexBox::AlignItems::flexStart;
@@ -1264,6 +1275,33 @@ void SpectrumCanvas::buttonClicked (Button* button)
 {
     if (applyingSettings)
         return;
+
+    if (button == controlsButton.get())
+    {
+        AttributedString shortcuts;
+        shortcuts.setJustification (Justification::left);
+        shortcuts.setWordWrap (AttributedString::WordWrap::byWord);
+        const auto textColour = findColour (ThemeColours::defaultText);
+        shortcuts.append ("Power spectrum shortcuts\n\n",
+                          FontOptions ("Inter", "Semi Bold", 16.0f), textColour);
+        shortcuts.append (
+            "Left-drag: zoom to rectangle\n"
+            "Ctrl/Cmd + scroll: zoom both axes\n"
+            "Shift + scroll: zoom frequency\n"
+            "Ctrl/Cmd + left-drag: pan\n"
+            "Right-click or Reset View: reset\n"
+            "Double-click: add/remove trace point\n"
+            "Drag trace point: follow spectrum\n"
+            "Drag trace label: move label\n\n"
+            "Click anywhere to dismiss",
+            FontOptions ("Inter", "Regular", 15.0f), textColour);
+
+        controlsHelpBubble = std::make_unique<BubbleMessageComponent>();
+        controlsHelpBubble->setAllowedPlacement (BubbleComponent::above | BubbleComponent::below);
+        addChildComponent (controlsHelpBubble.get());
+        controlsHelpBubble->showAt (controlsButton.get(), shortcuts, 0);
+        return;
+    }
 
     if (button == peakEnvelope.get())
     {
